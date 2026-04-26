@@ -1,0 +1,14 @@
+# AVP-2 tier declaration for PlausiDen-Salesman.
+# See: https://github.com/thepictishbeast/PlausiDen-AVP-Doctrine
+
+[targets]
+# Per-version-band tier we commit to passing before release.
+"0.1" = "tier-1"   # existence proof + dependency audit
+"0.3" = "tier-2"   # failure resilience under fault injection
+"0.5" = "tier-3"   # full adversarial security incl. reply-injection fuzz
+"1.0" = "tier-4"   # UX/UI adversarial sweep added
+
+[ship_decisions]
+# Ship-decision log lives in CHANGELOG.md per release; this section
+# records currently-accepted residual risks.
+none_yet = true

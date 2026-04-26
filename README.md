@@ -1,0 +1,53 @@
+<!-- repo-label: product -->
+<!-- repo-class: outreach-and-spoof-training-engine -->
+<!-- repo-consumes: PlausiDen-CRM, PlausiDen-Mail, PlausiDen-AI (LFI), PlausiDen-Obs, PlausiDen-Audits, PlausiDen-AVP-Doctrine -->
+<!-- repo-consumed-by: PlausiDen-Suite (distribution) -->
+
+# PlausiDen-Salesman
+
+> **SCOPE PENDING ALIGNMENT.** See [`SCOPE.md`](SCOPE.md) for the strawman
+> interpretation; the project owner will redirect or confirm before any
+> meaningful implementation begins. This README will be rewritten once
+> scope is locked.
+
+Outreach + spoof-training engine for the PlausiDen ecosystem. Designed as
+a sister to PlausiDen-CRM (pipeline / customer relationship state) and
+PlausiDen-Mail (delivery channel).
+
+## Why this exists
+
+Two simultaneous needs the user has framed:
+
+1. **Real outbound sales** — generate personalized outreach (email,
+   LinkedIn message, call script) for PlausiDen's own go-to-market.
+2. **Spoof-training + compliance-testing** — the same engine generates
+   indistinguishable phishing / social-engineering exercises that
+   defenders use to train recipients to spot manipulation.
+
+The same primitives serve both: synthetic-but-realistic personalization,
+multi-channel delivery, response tracking, audit trail. Whether the
+output is "real outreach" or "training exercise" is a per-campaign tag.
+
+## Stance
+
+- Local-first, sovereignty-respecting, AVP-2 audited.
+- LFI-driven personalization (no SaaS LLM in the data path).
+- Every outreach is logged + attestable (PlausiDen-Obs).
+- Compliance-test mode produces signed receipts: who got the test,
+  what they did, when. Forms the audit trail for security-team reports.
+
+## Status
+
+Scaffold only — initial commit. **Read [`SCOPE.md`](SCOPE.md) before
+contributing or assigning.**
+
+## Sister repos
+
+- [PlausiDen-CRM](https://github.com/thepictishbeast/PlausiDen-CRM) (TBD) — pipeline + relationship state
+- [PlausiDen-Mail](https://github.com/thepictishbeast/PlausiDen-Mail) (TBD) — outbound delivery channel
+- [PlausiDen-AI](https://github.com/thepictishbeast/PlausiDen-AI) — LFI-driven personalization source
+- [PlausiDen-Audits](https://github.com/thepictishbeast/PlausiDen-Audits) — CI-time audit gates
+- [PlausiDen-Obs](https://github.com/thepictishbeast/PlausiDen-Obs) — structured logging + secrets
+- [PlausiDen-AVP-Doctrine](https://github.com/thepictishbeast/PlausiDen-AVP-Doctrine) — validation tier targets
+- [PlausiDen-Meta](https://github.com/thepictishbeast/PlausiDen-Meta) — ecosystem charter
+- [PlausiDen-Runner](https://github.com/thepictishbeast/PlausiDen-Runner) — self-hosted CI

@@ -1,0 +1,35 @@
+# CI for PlausiDen-Salesman.
+#
+# Runs on the self-hosted runner pool (PlausiDen-Runner). Fast checks
+# only until phase 0.1 has real code; this is mostly a placeholder so
+# the runner is wired from day one.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  lint:
+    name: shell + markdown
+    runs-on: [self-hosted, linux, x64, plausiden]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify SCOPE.md exists + non-empty
+        run: |
+          test -s SCOPE.md
+          test -s CLAUDE.md
+          test -s SECURITY.md
+      - name: shellcheck (when scripts exist)
+        run: |
+          if [ -d scripts ]; then
+            sudo apt-get -qq install -y shellcheck
+            shellcheck scripts/*.sh 2>/dev/null || true
+          fi
