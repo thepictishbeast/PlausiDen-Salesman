@@ -1,0 +1,23 @@
+[package]
+name = "salesman-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "salesman"
+path = "src/main.rs"
+
+[dependencies]
+salesman-core = { path = "../salesman-core" }
+salesman-llm = { path = "../salesman-llm" }
+salesman-tools = { path = "../salesman-tools" }
+salesman-orchestrator = { path = "../salesman-orchestrator" }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
