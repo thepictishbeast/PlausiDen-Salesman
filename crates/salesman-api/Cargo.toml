@@ -6,4 +6,26 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[[bin]]
+name = "salesman-api"
+path = "src/main.rs"
+
 [dependencies]
+salesman-core = { path = "../salesman-core" }
+salesman-state = { path = "../salesman-state" }
+salesman-receipts = { path = "../salesman-receipts" }
+salesman-detector = { path = "../salesman-detector" }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+hex = { workspace = true }
+base64 = { workspace = true }
+subtle = { workspace = true }
