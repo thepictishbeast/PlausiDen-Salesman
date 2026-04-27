@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 salesman-core = { path = "../salesman-core" }
+salesman-receipts = { path = "../salesman-receipts" }
 sqlx = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

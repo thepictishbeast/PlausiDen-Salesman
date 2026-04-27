@@ -2009,6 +2009,8 @@ dependencies = [
  "salesman-discovery",
  "salesman-llm",
  "salesman-orchestrator",
+ "salesman-outreach",
+ "salesman-receipts",
  "salesman-state",
  "salesman-tools",
  "serde_json",
@@ -2016,6 +2018,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -2148,6 +2151,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "salesman-core",
+ "salesman-receipts",
  "serde",
  "serde_json",
  "sqlx",

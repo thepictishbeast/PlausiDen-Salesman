@@ -13,6 +13,8 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use salesman_content::DraftColdEmailTool;
 use salesman_discovery::{CsvSeed, CsvSeedTool, HomepageFetchTool, HomepageFetcher};
+use salesman_outreach::{SmtpConfig, SmtpSender};
+use salesman_receipts::{Signer, default_seed_path};
 use salesman_llm::claude::ClaudeBackend;
 use salesman_llm::gemini::GeminiBackend;
 use salesman_llm::{LlmBackend, LlmRouter, Message, Role, RouteHint};
@@ -73,6 +75,51 @@ enum Cmd {
         /// Concurrency cap (don't hammer one host).
         #[arg(long, default_value_t = 4)]
         concurrency: u32,
+    },
+    /// Approve a draft (move from awaiting_approval → approved).
+    Approve {
+        #[arg(long)]
+        touch: String,
+    },
+    /// Reject a draft (move from awaiting_approval → rejected).
+    Reject {
+        #[arg(long)]
+        touch: String,
+    },
+    /// Add an email or domain to the suppression list (idempotent).
+    Suppress {
+        /// Either an email or a bare domain.
+        #[arg(long)]
+        target: String,
+        /// 'email' or 'domain'. Auto-detected by '@' presence if omitted.
+        #[arg(long)]
+        kind: Option<String>,
+        #[arg(long, default_value = "operator-issued")]
+        reason: String,
+    },
+    /// Send approved drafts. DEFAULT IS DRY-RUN. Pass --for-real to send.
+    SendPending {
+        #[arg(long)]
+        campaign: String,
+        #[arg(long, default_value_t = false)]
+        for_real: bool,
+        /// Per-recipient rate-cap window (hours).
+        #[arg(long, default_value_t = 720)]
+        per_recipient_window_hours: i64,
+        /// Per-recipient max touches in window.
+        #[arg(long, default_value_t = 5)]
+        per_recipient_max: i64,
+        /// Per-domain rate-cap window (hours).
+        #[arg(long, default_value_t = 1)]
+        per_domain_window_hours: i64,
+        /// Per-domain max touches in window.
+        #[arg(long, default_value_t = 10)]
+        per_domain_max: i64,
+    },
+    /// Verify the receipt chain (audit).
+    Audit {
+        #[arg(long, default_value_t = 100)]
+        limit: i64,
     },
     /// Generate cold-email drafts for every prospect in a campaign.
     /// Drafts land in `awaiting_approval` — never auto-sent.
@@ -146,6 +193,13 @@ fn parse_hint(s: &str) -> RouteHint {
         "sovereign" | "lfi" => RouteHint::Sovereign,
         _ => RouteHint::Reasoning,
     }
+}
+
+fn parse_touch_id(s: &str) -> Result<salesman_core::TouchId> {
+    let u: uuid::Uuid = s
+        .parse()
+        .with_context(|| format!("not a valid uuid: {s}"))?;
+    Ok(salesman_core::TouchId(u))
 }
 
 async fn require_state(database_url: Option<&str>) -> Result<State> {
@@ -415,6 +469,175 @@ async fn main() -> Result<()> {
                     println!();
                 }
             }
+        }
+
+        Cmd::Approve { touch } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let touch_id = parse_touch_id(&touch)?;
+            let n = state.approve_touch(touch_id).await?;
+            if n == 0 {
+                anyhow::bail!("touch {touch} not found OR not in awaiting_approval state");
+            }
+            println!("approved touch {touch}");
+        }
+
+        Cmd::Reject { touch } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let touch_id = parse_touch_id(&touch)?;
+            let n = state.reject_touch(touch_id).await?;
+            if n == 0 {
+                anyhow::bail!("touch {touch} not found OR not in awaiting_approval state");
+            }
+            println!("rejected touch {touch}");
+        }
+
+        Cmd::Suppress { target, kind, reason } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let kind = kind.unwrap_or_else(|| {
+                if target.contains('@') { "email".into() } else { "domain".into() }
+            });
+            state.add_suppression(&target, &kind, &reason, "manual").await?;
+            let n = state.count_suppressions().await?;
+            println!("suppressed {kind}={target} ({reason}); total suppressions: {n}");
+        }
+
+        Cmd::Audit { limit } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let receipts = state.list_recent_receipts(limit).await?;
+            println!("=== {} most recent receipts ===", receipts.len());
+            let signer = Signer::load_or_generate(&default_seed_path(), "salesman-default-1")?;
+            let vk = signer.verifying_key();
+            let mut bad = 0u32;
+            for r in &receipts {
+                let ok = salesman_receipts::verify_receipt(r, &vk).is_ok();
+                if !ok { bad += 1; }
+                println!(
+                    "{} | {} | {} | {} | sig={}",
+                    r.created_at.to_rfc3339(),
+                    r.event_kind,
+                    salesman_receipts::hash_to_hex(&r.hash[..8.min(r.hash.len())]),
+                    if ok { "OK" } else { "BAD" },
+                    salesman_receipts::hash_to_hex(&r.signature[..8.min(r.signature.len())])
+                );
+            }
+            if bad > 0 {
+                println!("\n!! {bad} receipts FAILED verification — investigate immediately");
+            }
+        }
+
+        Cmd::SendPending {
+            campaign,
+            for_real,
+            per_recipient_window_hours,
+            per_recipient_max,
+            per_domain_window_hours,
+            per_domain_max,
+        } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let campaign_id = state
+                .ensure_campaign(&campaign, "(send-only)", "(unspecified)")
+                .await?;
+            let approved = state.list_approved_touches(campaign_id).await?;
+
+            // Real-send mode requires SMTP env. Dry-run is fine without it.
+            let sender = if for_real {
+                let cfg = SmtpConfig::from_env()?;
+                Some(SmtpSender::new(cfg)?)
+            } else { None };
+
+            let signer = if for_real {
+                Some(Signer::load_or_generate(&default_seed_path(), "salesman-default-1")?)
+            } else { None };
+
+            let mut sent = 0u32;
+            let mut blocked_supp = 0u32;
+            let mut blocked_rate = 0u32;
+            let mut blocked_no_to = 0u32;
+            let mut errored = 0u32;
+
+            for t in &approved {
+                let to = match state.touch_to_address(t.touch_id).await? {
+                    Some(addr) => addr,
+                    None => {
+                        blocked_no_to += 1;
+                        tracing::warn!(touch=%t.touch_id, company=%t.company, "no to-address (no primary contact email) — skipping");
+                        continue;
+                    }
+                };
+                if state.is_suppressed(&to).await? {
+                    blocked_supp += 1;
+                    tracing::warn!(to=%to, "suppressed — skipping");
+                    continue;
+                }
+                let n_recipient = state
+                    .count_touches_to_email_since(&to, per_recipient_window_hours)
+                    .await?;
+                if n_recipient >= per_recipient_max {
+                    blocked_rate += 1;
+                    tracing::warn!(to=%to, n=%n_recipient, "per-recipient cap hit — skipping");
+                    continue;
+                }
+                let domain = to.rsplit_once('@').map(|(_, d)| d.to_string()).unwrap_or_default();
+                let n_domain = state
+                    .count_touches_to_domain_since(&domain, per_domain_window_hours)
+                    .await?;
+                if n_domain >= per_domain_max {
+                    blocked_rate += 1;
+                    tracing::warn!(domain=%domain, n=%n_domain, "per-domain cap hit — skipping");
+                    continue;
+                }
+
+                if !for_real {
+                    println!(
+                        "[DRY-RUN] would send: to={to} subject={:?} touch={}",
+                        t.subject, t.touch_id
+                    );
+                    continue;
+                }
+
+                let sender = sender.as_ref().expect("for_real implies sender");
+                let signer = signer.as_ref().expect("for_real implies signer");
+
+                let subject = t.subject.clone().unwrap_or_default();
+                let outcome = match sender.send_email(&to, &subject, &t.body).await {
+                    Ok(o) => o,
+                    Err(e) => {
+                        errored += 1;
+                        tracing::warn!(to=%to, "%e" = %e, "smtp send failed");
+                        continue;
+                    }
+                };
+
+                // Build + persist receipt + mark sent.
+                let prev_hash = state.get_last_hash(signer.key_id()).await?;
+                let payload = serde_json::json!({
+                    "kind": "send.email",
+                    "touch_id": t.touch_id,
+                    "to": outcome.to,
+                    "from": outcome.from,
+                    "subject": outcome.subject,
+                    "smtp_response_code": outcome.smtp_response_code,
+                    "smtp_message_id": outcome.smtp_message_id,
+                });
+                let receipt = signer.sign_event("send.email", payload, &prev_hash)?;
+                let receipt_id = receipt.id;
+                state.insert_receipt(&receipt).await?;
+                let n = state.mark_touch_sent(t.touch_id, receipt_id, outcome.sent_at).await?;
+                if n == 1 {
+                    sent += 1;
+                    println!("sent: to={to} touch={} receipt={receipt_id}", t.touch_id);
+                } else {
+                    tracing::warn!(touch=%t.touch_id, "mark_touch_sent affected 0 rows — race?");
+                }
+            }
+
+            println!(
+                "send-pending `{campaign}` ({}): approved={} sent={sent} \
+                 blocked_supp={blocked_supp} blocked_rate={blocked_rate} \
+                 blocked_no_to={blocked_no_to} errored={errored}",
+                if for_real { "REAL" } else { "DRY-RUN" },
+                approved.len()
+            );
         }
 
         Cmd::Halt { reason } => {

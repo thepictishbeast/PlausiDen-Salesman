@@ -6,7 +6,11 @@
 use crate::State;
 use chrono::Utc;
 use salesman_core::model::{CampaignStatus, TechSignal};
-use salesman_core::{Campaign, CampaignId, Company, CompanyId, Error, Prospect, ProspectId, Result};
+use salesman_core::{
+    Campaign, CampaignId, Company, CompanyId, Error, Prospect, ProspectId, Result, TouchId,
+    TouchOutcome,
+};
+use salesman_receipts::Receipt;
 use sqlx::Row;
 
 #[derive(Debug, Clone)]
@@ -352,6 +356,296 @@ impl State {
             });
         }
         Ok(out)
+    }
+
+    // -----------------------------------------------------------------
+    // touch transitions
+    // -----------------------------------------------------------------
+
+    /// Move a touch from `awaiting_approval` → `approved`. No-op (returns
+    /// 0) if the touch is in any other state. Caller checks rows-affected.
+    pub async fn approve_touch(&self, touch_id: TouchId) -> Result<u64> {
+        let result = sqlx::query(
+            "UPDATE touches SET outcome = $2 \
+             WHERE id = $1 AND outcome = 'awaiting_approval'",
+        )
+        .bind(touch_id.0)
+        .bind(TouchOutcome::Approved.to_string())
+        .execute(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(result.rows_affected())
+    }
+
+    /// Move a touch from `awaiting_approval` → `rejected`.
+    pub async fn reject_touch(&self, touch_id: TouchId) -> Result<u64> {
+        let result = sqlx::query(
+            "UPDATE touches SET outcome = $2 \
+             WHERE id = $1 AND outcome = 'awaiting_approval'",
+        )
+        .bind(touch_id.0)
+        .bind(TouchOutcome::Rejected.to_string())
+        .execute(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(result.rows_affected())
+    }
+
+    /// Move a touch from `approved` → `sent`. Records sent_at and a
+    /// receipt_id linkage. Strict — does not transition from any other
+    /// state.
+    pub async fn mark_touch_sent(
+        &self,
+        touch_id: TouchId,
+        receipt_id: salesman_core::ReceiptId,
+        sent_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64> {
+        let result = sqlx::query(
+            "UPDATE touches SET outcome = $2, sent_at = $3, receipt_id = $4 \
+             WHERE id = $1 AND outcome = 'approved'",
+        )
+        .bind(touch_id.0)
+        .bind(TouchOutcome::Sent.to_string())
+        .bind(sent_at)
+        .bind(receipt_id.0)
+        .execute(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(result.rows_affected())
+    }
+
+    /// List touches in `approved` state for a campaign — these are
+    /// the work queue for `send-pending`.
+    pub async fn list_approved_touches(
+        &self,
+        campaign_id: CampaignId,
+    ) -> Result<Vec<TouchSummary>> {
+        let rows = sqlx::query(
+            "SELECT t.id, t.prospect_id, t.subject, t.body, t.channel, t.queued_at,
+                    c.display_name AS company
+             FROM touches t
+             JOIN prospects p ON p.id = t.prospect_id
+             JOIN companies c ON c.id = p.company_id
+             WHERE p.campaign_id = $1 AND t.outcome = 'approved'
+             ORDER BY t.queued_at",
+        )
+        .bind(campaign_id.0)
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            out.push(TouchSummary {
+                touch_id: TouchId(r.try_get("id").unwrap_or_else(|_| uuid::Uuid::nil())),
+                prospect_id: ProspectId(r.try_get("prospect_id").unwrap_or_else(|_| uuid::Uuid::nil())),
+                company: r.try_get("company").unwrap_or_default(),
+                channel: r.try_get("channel").unwrap_or_default(),
+                subject: r.try_get("subject").unwrap_or(None),
+                body: r.try_get("body").unwrap_or_default(),
+                queued_at: r.try_get("queued_at").unwrap_or_else(|_| chrono::Utc::now()),
+            });
+        }
+        Ok(out)
+    }
+
+    /// Look up the to-address for a touch via the prospect's primary
+    /// contact (or fall back to None — caller decides what to do).
+    pub async fn touch_to_address(&self, touch_id: TouchId) -> Result<Option<String>> {
+        let row = sqlx::query(
+            "SELECT ct.email AS to_email
+             FROM touches t
+             JOIN prospects p ON p.id = t.prospect_id
+             LEFT JOIN contacts ct ON ct.id = p.primary_contact_id
+             WHERE t.id = $1",
+        )
+        .bind(touch_id.0)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(row.and_then(|r| r.try_get::<Option<String>, _>("to_email").unwrap_or(None)))
+    }
+
+    // -----------------------------------------------------------------
+    // suppressions
+    // -----------------------------------------------------------------
+
+    /// Idempotent insert. `target` is either a full email or a domain.
+    /// `target_kind` MUST be "email" or "domain".
+    pub async fn add_suppression(
+        &self,
+        target: &str,
+        target_kind: &str,
+        reason: &str,
+        source: &str,
+    ) -> Result<()> {
+        if target_kind != "email" && target_kind != "domain" {
+            return Err(Error::Validation(format!(
+                "target_kind must be 'email' or 'domain', got `{target_kind}`"
+            )));
+        }
+        sqlx::query(
+            "INSERT INTO suppressions (id, target, target_kind, reason, source) \
+             VALUES ($1, $2, $3, $4, $5) \
+             ON CONFLICT (target) DO NOTHING",
+        )
+        .bind(uuid::Uuid::now_v7())
+        .bind(target)
+        .bind(target_kind)
+        .bind(reason)
+        .bind(source)
+        .execute(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(())
+    }
+
+    /// True if either the full email is suppressed OR its domain is.
+    /// Case-insensitive thanks to CITEXT on the column.
+    pub async fn is_suppressed(&self, email: &str) -> Result<bool> {
+        let domain = email.rsplit_once('@').map(|(_, d)| d).unwrap_or(email);
+        let row = sqlx::query(
+            "SELECT EXISTS (
+                SELECT 1 FROM suppressions
+                WHERE (target_kind = 'email'  AND target = $1)
+                   OR (target_kind = 'domain' AND target = $2)
+             ) AS hit",
+        )
+        .bind(email)
+        .bind(domain)
+        .fetch_one(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(row.try_get::<bool, _>("hit").unwrap_or(false))
+    }
+
+    /// Count suppressions (for operator visibility).
+    pub async fn count_suppressions(&self) -> Result<i64> {
+        let row = sqlx::query("SELECT COUNT(*)::BIGINT AS n FROM suppressions")
+            .fetch_one(self.pool())
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(row.try_get::<i64, _>("n").map_err(|e| Error::Db(e.to_string()))?)
+    }
+
+    // -----------------------------------------------------------------
+    // receipts
+    // -----------------------------------------------------------------
+
+    /// Insert a receipt row. Caller already constructed + signed it.
+    pub async fn insert_receipt(&self, r: &Receipt) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO receipts \
+             (id, event_kind, event_payload, prev_hash, hash, signature, signing_key_id, created_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        )
+        .bind(r.id.0)
+        .bind(&r.event_kind)
+        .bind(&r.event_payload)
+        .bind(&r.prev_hash)
+        .bind(&r.hash)
+        .bind(&r.signature)
+        .bind(&r.signing_key_id)
+        .bind(r.created_at)
+        .execute(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Latest receipt's hash, scoped to a signing key (chains are
+    /// per-key). Returns 32-zero bytes if no prior receipt for this key.
+    pub async fn get_last_hash(&self, signing_key_id: &str) -> Result<Vec<u8>> {
+        let row = sqlx::query(
+            "SELECT hash FROM receipts \
+             WHERE signing_key_id = $1 \
+             ORDER BY created_at DESC \
+             LIMIT 1",
+        )
+        .bind(signing_key_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(row
+            .and_then(|r| r.try_get::<Vec<u8>, _>("hash").ok())
+            .unwrap_or_else(|| vec![0u8; 32]))
+    }
+
+    /// Pull recent receipts (audit view).
+    pub async fn list_recent_receipts(&self, limit: i64) -> Result<Vec<Receipt>> {
+        let rows = sqlx::query(
+            "SELECT id, event_kind, event_payload, prev_hash, hash, signature, signing_key_id, created_at \
+             FROM receipts \
+             ORDER BY created_at DESC \
+             LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            out.push(Receipt {
+                id: salesman_core::ReceiptId(r.try_get("id").unwrap_or_else(|_| uuid::Uuid::nil())),
+                event_kind: r.try_get("event_kind").unwrap_or_default(),
+                event_payload: r.try_get("event_payload").unwrap_or(serde_json::Value::Null),
+                prev_hash: r.try_get("prev_hash").unwrap_or_default(),
+                hash: r.try_get("hash").unwrap_or_default(),
+                signature: r.try_get("signature").unwrap_or_default(),
+                signing_key_id: r.try_get("signing_key_id").unwrap_or_default(),
+                created_at: r.try_get("created_at").unwrap_or_else(|_| chrono::Utc::now()),
+            });
+        }
+        Ok(out)
+    }
+
+    // -----------------------------------------------------------------
+    // rate-cap helpers
+    // -----------------------------------------------------------------
+
+    /// Count touches (any outcome) sent to `to_email` in the last
+    /// `window_hours` — used to enforce per-recipient rate caps.
+    pub async fn count_touches_to_email_since(
+        &self,
+        to_email: &str,
+        window_hours: i64,
+    ) -> Result<i64> {
+        let row = sqlx::query(
+            "SELECT COUNT(*)::BIGINT AS n
+             FROM touches t
+             JOIN prospects p ON p.id = t.prospect_id
+             LEFT JOIN contacts ct ON ct.id = p.primary_contact_id
+             WHERE ct.email = $1 AND t.sent_at IS NOT NULL
+               AND t.sent_at > NOW() - ($2 || ' hours')::INTERVAL",
+        )
+        .bind(to_email)
+        .bind(window_hours.to_string())
+        .fetch_one(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(row.try_get::<i64, _>("n").unwrap_or(0))
+    }
+
+    /// Count touches sent to any address in `domain` in the last
+    /// `window_hours` — per-domain rate cap.
+    pub async fn count_touches_to_domain_since(
+        &self,
+        domain: &str,
+        window_hours: i64,
+    ) -> Result<i64> {
+        let row = sqlx::query(
+            "SELECT COUNT(*)::BIGINT AS n
+             FROM touches t
+             JOIN prospects p ON p.id = t.prospect_id
+             LEFT JOIN contacts ct ON ct.id = p.primary_contact_id
+             WHERE ct.email LIKE '%@' || $1 AND t.sent_at IS NOT NULL
+               AND t.sent_at > NOW() - ($2 || ' hours')::INTERVAL",
+        )
+        .bind(domain)
+        .bind(window_hours.to_string())
+        .fetch_one(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(row.try_get::<i64, _>("n").unwrap_or(0))
     }
 
     /// List companies linked to a campaign via `prospects`.

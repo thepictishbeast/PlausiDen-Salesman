@@ -18,6 +18,8 @@ salesman-orchestrator = { path = "../salesman-orchestrator" }
 salesman-state = { path = "../salesman-state" }
 salesman-discovery = { path = "../salesman-discovery" }
 salesman-content = { path = "../salesman-content" }
+salesman-outreach = { path = "../salesman-outreach" }
+salesman-receipts = { path = "../salesman-receipts" }
 clap = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
@@ -25,3 +27,4 @@ tracing-subscriber = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 url = { workspace = true }
+uuid = { workspace = true }
