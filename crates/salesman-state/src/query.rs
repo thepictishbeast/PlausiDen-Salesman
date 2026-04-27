@@ -1853,6 +1853,77 @@ impl State {
         })
     }
 
+    /// All replies in the last `hours` whose kind is in `kinds`.
+    /// Used by `salesman alerts` to triage what just landed.
+    /// `kinds` is a small `IN` set (e.g. ["engaged","question"]).
+    pub async fn list_replies_since_with_kinds(
+        &self,
+        hours: i64,
+        kinds: &[&str],
+    ) -> Result<Vec<ReplyRow>> {
+        if kinds.is_empty() {
+            return Ok(vec![]);
+        }
+        // Build a parameterized IN clause: ($2, $3, ...)
+        let placeholders: Vec<String> = (0..kinds.len()).map(|i| format!("${}", i + 2)).collect();
+        let q = format!(
+            "SELECT r.from_address, r.subject, r.body, r.kind, r.received_at
+             FROM replies r
+             WHERE r.received_at > NOW() - ($1 || ' hours')::INTERVAL
+               AND r.kind IN ({})
+             ORDER BY r.received_at DESC
+             LIMIT 200",
+            placeholders.join(",")
+        );
+        let mut q = sqlx::query(&q).bind(hours.to_string());
+        for k in kinds {
+            q = q.bind(*k);
+        }
+        let rows = q
+            .fetch_all(self.pool())
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| ReplyRow {
+                from_address: r.try_get("from_address").unwrap_or_default(),
+                subject: r.try_get("subject").unwrap_or(None),
+                body: r.try_get("body").unwrap_or_default(),
+                kind: r.try_get("kind").unwrap_or_default(),
+                received_at: r
+                    .try_get("received_at")
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+            })
+            .collect())
+    }
+
+    /// All suppressions added in the last `hours`. Used by `alerts`
+    /// to surface bounce-rate spikes / opt-out clusters.
+    pub async fn list_suppressions_since(&self, hours: i64) -> Result<Vec<SuppressionRow>> {
+        let rows = sqlx::query(
+            "SELECT id, target, target_kind, reason, source, added_at
+             FROM suppressions
+             WHERE added_at > NOW() - ($1 || ' hours')::INTERVAL
+             ORDER BY added_at DESC
+             LIMIT 200",
+        )
+        .bind(hours.to_string())
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| SuppressionRow {
+                id: r.try_get("id").unwrap_or_else(|_| uuid::Uuid::nil()),
+                target: r.try_get("target").unwrap_or_default(),
+                target_kind: r.try_get("target_kind").unwrap_or_default(),
+                reason: r.try_get("reason").unwrap_or_default(),
+                source: r.try_get("source").unwrap_or_default(),
+                added_at: r.try_get("added_at").unwrap_or_else(|_| chrono::Utc::now()),
+            })
+            .collect())
+    }
+
     /// Most recent replies for a campaign — for the inbox view.
     pub async fn list_recent_replies_for_campaign(
         &self,

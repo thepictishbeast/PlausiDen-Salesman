@@ -303,6 +303,14 @@ enum Cmd {
         #[arg(long, default_value_t = 24)]
         since_hours: i64,
     },
+    /// Triaged digest of the IMPORTANT recent activity — positive
+    /// replies, opt-outs, bounces, auto-suppressions. Run this
+    /// regularly (manually or via cron) to know what just landed
+    /// without scrolling the full inbox.
+    Alerts {
+        #[arg(long, default_value_t = 24)]
+        since_hours: i64,
+    },
     /// Print LLM cost report over a time window. Default is by
     /// (backend, model); pass `--by purpose` to roll up by the
     /// chat_for(purpose) tag instead — useful for answering
@@ -1834,6 +1842,116 @@ async fn main() -> Result<()> {
             } else {
                 println!("{}", s.render_text());
             }
+        }
+
+        Cmd::Alerts { since_hours } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let positive = state
+                .list_replies_since_with_kinds(since_hours, &["engaged", "question"])
+                .await
+                .unwrap_or_default();
+            let optouts = state
+                .list_replies_since_with_kinds(since_hours, &["optout"])
+                .await
+                .unwrap_or_default();
+            let supp_recent = state
+                .list_suppressions_since(since_hours)
+                .await
+                .unwrap_or_default();
+            let bounces: Vec<_> = supp_recent
+                .iter()
+                .filter(|s| s.source == "bounce")
+                .collect();
+
+            if cli.json {
+                let v = serde_json::json!({
+                    "since_hours": since_hours,
+                    "positive_replies": positive.iter().map(|r| serde_json::json!({
+                        "received_at": r.received_at.to_rfc3339(),
+                        "from": r.from_address,
+                        "kind": r.kind,
+                        "subject": r.subject,
+                    })).collect::<Vec<_>>(),
+                    "optout_replies": optouts.iter().map(|r| serde_json::json!({
+                        "received_at": r.received_at.to_rfc3339(),
+                        "from": r.from_address,
+                        "subject": r.subject,
+                    })).collect::<Vec<_>>(),
+                    "bounces": bounces.iter().map(|s| serde_json::json!({
+                        "added_at": s.added_at.to_rfc3339(),
+                        "target": s.target,
+                        "reason": s.reason,
+                    })).collect::<Vec<_>>(),
+                });
+                println!("{}", serde_json::to_string_pretty(&v)?);
+                return Ok(());
+            }
+
+            println!(
+                "salesman alerts — last {since_hours}h ({})\n",
+                chrono::Utc::now().to_rfc3339()
+            );
+            println!("=== positive replies ({}): engaged + question ===", positive.len());
+            if positive.is_empty() {
+                println!("  (none — quiet)");
+            } else {
+                for r in &positive {
+                    println!(
+                        "  {} | {} | {} | {}",
+                        r.received_at.format("%Y-%m-%d %H:%M:%SZ"),
+                        r.kind,
+                        r.from_address,
+                        r.subject.as_deref().unwrap_or("(no subject)"),
+                    );
+                }
+            }
+            println!();
+            println!("=== opt-outs ({}) ===", optouts.len());
+            if optouts.is_empty() {
+                println!("  (none — clean)");
+            } else {
+                for r in &optouts {
+                    println!(
+                        "  {} | {} | {}",
+                        r.received_at.format("%Y-%m-%d %H:%M:%SZ"),
+                        r.from_address,
+                        r.subject.as_deref().unwrap_or("(no subject)"),
+                    );
+                }
+            }
+            println!();
+            println!("=== auto-suppressed bounces ({}) ===", bounces.len());
+            if bounces.is_empty() {
+                println!("  (none — list quality OK)");
+            } else {
+                for s in &bounces {
+                    let r = if s.reason.chars().count() > 80 {
+                        format!("{}…", s.reason.chars().take(79).collect::<String>())
+                    } else {
+                        s.reason.clone()
+                    };
+                    println!(
+                        "  {} | {} | {}",
+                        s.added_at.format("%Y-%m-%d %H:%M:%SZ"),
+                        s.target,
+                        r,
+                    );
+                }
+            }
+            println!();
+            // Summary banner — fast triage line for ops at a glance.
+            let banner = if !positive.is_empty() {
+                format!("⤴ {} positive reply(ies) — review!", positive.len())
+            } else if !optouts.is_empty() || bounces.len() > 3 {
+                format!(
+                    "⚠ {} opt-out(s) + {} bounce(s) — investigate list quality",
+                    optouts.len(),
+                    bounces.len()
+                )
+            } else {
+                "→ nothing important; carry on".to_string()
+            };
+            println!("{banner}");
         }
 
         Cmd::Score {
