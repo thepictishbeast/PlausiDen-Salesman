@@ -280,7 +280,11 @@ enum Cmd {
     Backends,
 }
 
-fn build_router(claude_model: &str, gemini_model: &str) -> LlmRouter {
+fn build_router(
+    claude_model: &str,
+    gemini_model: &str,
+    sink: Option<Arc<dyn salesman_llm::LlmCallSink>>,
+) -> LlmRouter {
     let mut router = LlmRouter::new();
     if let Ok(b) = ClaudeBackend::from_env(claude_model) {
         let kind = b.kind();
@@ -295,6 +299,10 @@ fn build_router(claude_model: &str, gemini_model: &str) -> LlmRouter {
         tracing::info!(%kind, model = %gemini_model, "registered Gemini backend");
     } else {
         tracing::info!("GEMINI_API_KEY not set — Gemini backend not registered");
+    }
+    if let Some(sink) = sink {
+        router = router.with_sink(sink);
+        tracing::info!("LLM cost ledger sink attached");
     }
     router
 }
@@ -389,6 +397,22 @@ async fn require_state(database_url: Option<&str>) -> Result<State> {
     Ok(state)
 }
 
+/// If the caller already pre-connected (state_arc is Some), reuse it —
+/// avoids a second Postgres connect + skips the migrations check.
+/// Allowed-dead because not every command path uses it yet; the
+/// pre-connect at startup ALSO wires the LlmCallSink onto the
+/// router, which is the primary reason for the up-front connect.
+#[allow(dead_code)]
+async fn state_or_connect(
+    state_arc: &Option<Arc<State>>,
+    database_url: Option<&str>,
+) -> Result<State> {
+    if let Some(s) = state_arc {
+        return Ok((**s).clone());
+    }
+    require_state(database_url).await
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -399,7 +423,25 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
-    let router = Arc::new(build_router(&cli.claude_model, &cli.gemini_model));
+
+    // Connect to state up front IF a URL is provided. State doubles as
+    // the LlmCallSink so router automatically records cost on every
+    // chat() / chat_for() call.
+    let state_arc: Option<Arc<State>> = if let Some(url) = &cli.database_url {
+        match State::connect(url).await {
+            Ok(s) => Some(Arc::new(s)),
+            Err(e) => {
+                tracing::warn!("%e" = %e, "DB pre-connect failed; commands needing state will retry");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let sink: Option<Arc<dyn salesman_llm::LlmCallSink>> =
+        state_arc.as_ref().map(|s| Arc::clone(s) as Arc<dyn salesman_llm::LlmCallSink>);
+
+    let router = Arc::new(build_router(&cli.claude_model, &cli.gemini_model, sink));
     let tools = Arc::new(build_tools(router.clone()));
 
     match cli.cmd {
