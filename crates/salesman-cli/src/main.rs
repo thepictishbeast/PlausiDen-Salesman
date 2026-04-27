@@ -18,6 +18,12 @@ enum CostsBy {
     Purpose,
 }
 
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum TemplateStatsBy {
+    Template,
+    Segment,
+}
+
 #[derive(Subcommand, Debug)]
 enum CadenceCmd {
     /// List currently-paused prospect-sequences with their reason.
@@ -472,8 +478,19 @@ enum Cmd {
         #[arg(long, default_value = "model")]
         by: CostsBy,
     },
-    /// Per-template performance stats (drafted / sent / replied / engaged).
-    TemplateStats,
+    /// Per-template performance stats (drafted / sent / replied /
+    /// engaged). Pass `--by segment` to break down each template
+    /// across the prospect's industry — answers "which template
+    /// wins for security CISOs vs devops engineers vs data leaders."
+    /// Templates with sent ≥ 10 and engaged_rate < half the
+    /// best-performer in the same segment are flagged with ⚠ for
+    /// the operator to consider pausing.
+    TemplateStats {
+        /// Group rows by `template` (default) or
+        /// `segment` (per-template per-industry breakdown).
+        #[arg(long, default_value = "template")]
+        by: TemplateStatsBy,
+    },
     /// Score a body of text through the AI detector.
     Score {
         #[arg(long)]
@@ -2480,27 +2497,94 @@ async fn main() -> Result<()> {
             }
         }
 
-        Cmd::TemplateStats => {
+        Cmd::TemplateStats { by } => {
             let state = require_state(cli.database_url.as_deref()).await?;
-            let stats = state.template_stats().await?;
-            if stats.is_empty() {
-                println!("no template-tagged touches yet");
-            } else {
-                println!(
-                    "{:<24} {:>8} {:>6} {:>8} {:>8} {:>8}",
-                    "template", "drafted", "sent", "replied", "engaged", "reply%"
-                );
-                println!("{}", "-".repeat(70));
-                for s in &stats {
+            match by {
+                TemplateStatsBy::Template => {
+                    let stats = state.template_stats().await?;
+                    if stats.is_empty() {
+                        println!("no template-tagged touches yet");
+                    } else {
+                        println!(
+                            "{:<24} {:>8} {:>6} {:>8} {:>8} {:>8}",
+                            "template", "drafted", "sent", "replied", "engaged", "reply%"
+                        );
+                        println!("{}", "-".repeat(70));
+                        for s in &stats {
+                            println!(
+                                "{:<24} {:>8} {:>6} {:>8} {:>8} {:>7.1}%",
+                                s.template_key,
+                                s.drafted,
+                                s.sent,
+                                s.replied,
+                                s.engaged_replied,
+                                s.reply_rate() * 100.0
+                            );
+                        }
+                    }
+                }
+                TemplateStatsBy::Segment => {
+                    let rows = state.template_stats_by_segment().await?;
+                    if rows.is_empty() {
+                        println!("no template-tagged touches yet");
+                        return Ok(());
+                    }
+                    // Compute, per template, the BEST engaged_rate
+                    // across segments. Then flag any segment whose
+                    // engaged_rate < half the best (with sent ≥10
+                    // floor — small samples flagged are noise).
+                    let mut best_per_template: std::collections::BTreeMap<String, f32> =
+                        std::collections::BTreeMap::new();
+                    for (tk, _seg, s) in &rows {
+                        if s.sent >= 10 {
+                            let cur = best_per_template.entry(tk.clone()).or_insert(0.0);
+                            if s.engaged_rate() > *cur {
+                                *cur = s.engaged_rate();
+                            }
+                        }
+                    }
                     println!(
-                        "{:<24} {:>8} {:>6} {:>8} {:>8} {:>7.1}%",
-                        s.template_key,
-                        s.drafted,
-                        s.sent,
-                        s.replied,
-                        s.engaged_replied,
-                        s.reply_rate() * 100.0
+                        "{:<24} {:<24} {:>8} {:>6} {:>8} {:>8} {:>8}",
+                        "template", "segment", "drafted", "sent", "replied", "engaged", "reply%"
                     );
+                    println!("{}", "-".repeat(100));
+                    let mut underperformers: Vec<(String, String, f32)> = Vec::new();
+                    for (tk, seg, s) in &rows {
+                        let best = best_per_template.get(tk).copied().unwrap_or(0.0);
+                        let weak = s.sent >= 10
+                            && best > 0.0
+                            && s.engaged_rate() < best * 0.5;
+                        let marker = if weak { " ⚠" } else { "" };
+                        println!(
+                            "{:<24} {:<24} {:>8} {:>6} {:>8} {:>8} {:>6.1}%{marker}",
+                            truncate_name(tk, 24),
+                            truncate_name(seg, 24),
+                            s.drafted,
+                            s.sent,
+                            s.replied,
+                            s.engaged_replied,
+                            s.reply_rate() * 100.0,
+                        );
+                        if weak {
+                            underperformers.push((tk.clone(), seg.clone(), s.engaged_rate()));
+                        }
+                    }
+                    if !underperformers.is_empty() {
+                        println!();
+                        println!(
+                            "⚠ {} (template, segment) pair(s) are underperforming. \
+                             Consider pausing or re-tuning.",
+                            underperformers.len()
+                        );
+                        for (tk, seg, rate) in &underperformers {
+                            println!(
+                                "    {} in `{}` — engaged_rate {:.1}%",
+                                tk,
+                                seg,
+                                rate * 100.0
+                            );
+                        }
+                    }
                 }
             }
         }

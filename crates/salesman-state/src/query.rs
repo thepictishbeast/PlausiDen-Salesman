@@ -787,6 +787,49 @@ impl State {
     /// Per-template performance: drafted, sent, replied (any kind),
     /// engaged-replied. The bandit reads this to weight template
     /// selection.
+    /// Same shape as template_stats, but joined with companies so
+    /// each row is (template_key, segment) where `segment` is the
+    /// company's industry. Lets the operator answer "which template
+    /// wins for security CISOs vs devops engineers."
+    pub async fn template_stats_by_segment(
+        &self,
+    ) -> Result<Vec<(String, String, TemplateStat)>> {
+        let rows = sqlx::query(
+            "SELECT
+               t.template_key,
+               COALESCE(c.industry, '(unknown)') AS segment,
+               COUNT(*) FILTER (WHERE t.outcome != 'rejected')::BIGINT AS drafted,
+               COUNT(*) FILTER (WHERE t.outcome = 'sent')::BIGINT     AS sent,
+               COUNT(DISTINCT r.id) FILTER (WHERE r.id IS NOT NULL)::BIGINT AS replied,
+               COUNT(DISTINCT r.id) FILTER (WHERE r.kind = 'engaged')::BIGINT AS engaged_replied
+             FROM touches t
+             JOIN prospects p ON p.id = t.prospect_id
+             JOIN companies c ON c.id = p.company_id
+             LEFT JOIN replies r ON r.touch_id = t.id
+             WHERE t.template_key IS NOT NULL
+             GROUP BY t.template_key, COALESCE(c.industry, '(unknown)')
+             ORDER BY drafted DESC",
+        )
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                let template_key: String = r.try_get("template_key").unwrap_or_default();
+                let segment: String = r.try_get("segment").unwrap_or_default();
+                let stat = TemplateStat {
+                    template_key: template_key.clone(),
+                    drafted: r.try_get("drafted").unwrap_or(0),
+                    sent: r.try_get("sent").unwrap_or(0),
+                    replied: r.try_get("replied").unwrap_or(0),
+                    engaged_replied: r.try_get("engaged_replied").unwrap_or(0),
+                };
+                (template_key, segment, stat)
+            })
+            .collect())
+    }
+
     pub async fn template_stats(&self) -> Result<Vec<TemplateStat>> {
         let rows = sqlx::query(
             "SELECT
