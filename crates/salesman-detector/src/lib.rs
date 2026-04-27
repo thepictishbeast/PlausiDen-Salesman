@@ -87,6 +87,7 @@ pub fn score_with_facts(
     check_marketing_superlative_density(body, &mut hits);
     if let Some(f) = facts {
         check_fabricated_numeric_claims(body, f, &mut hits);
+        check_personalization_missing(body, f, &mut hits);
     } else {
         check_unanchored_numeric_claims(body, &mut hits);
     }
@@ -487,6 +488,116 @@ fn haystack_contains_number(haystack: &str, digits: &str) -> bool {
     false
 }
 
+/// Personalization-quality gate: a draft must reference at least
+/// ONE substantive fact about the prospect — company name, industry,
+/// a tech_signals token, or a meaningful word from description.
+/// If the body matches none of those, the draft is generic. Generic
+/// cold emails close zero deals; flag at weight 0.70 so the operator
+/// either rejects or strengthens before sending.
+///
+/// BUG ASSUMPTION: substring matching is naïve. A draft that says
+/// "we've been thinking about your team's posture" might match
+/// "posture" in a tech_signals fact about "security posture
+/// monitoring" — fine. False POSITIVES (saying generic when the
+/// draft is fine) are uncomfortable but recoverable via override.
+/// False NEGATIVES (saying personalized when the draft is generic)
+/// are the real risk; we keep the bar low (one match passes).
+fn check_personalization_missing(body: &str, facts: &serde_json::Value, out: &mut Vec<SignalHit>) {
+    let body_lc = body.to_ascii_lowercase();
+    let mut anchors: Vec<String> = Vec::new();
+    if let Some(name) = facts.get("company").and_then(|v| v.as_str()) {
+        for tok in meaningful_tokens(name) {
+            anchors.push(tok);
+        }
+    }
+    if let Some(industry) = facts.get("industry").and_then(|v| v.as_str()) {
+        for tok in meaningful_tokens(industry) {
+            anchors.push(tok);
+        }
+    }
+    if let Some(arr) = facts.get("tech_signals").and_then(|v| v.as_array()) {
+        for s in arr.iter().filter_map(|v| v.as_str()) {
+            for tok in meaningful_tokens(s) {
+                anchors.push(tok);
+            }
+        }
+    } else if let Some(s) = facts.get("tech_signals").and_then(|v| v.as_str()) {
+        for tok in meaningful_tokens(s) {
+            anchors.push(tok);
+        }
+    }
+    if let Some(desc) = facts.get("description").and_then(|v| v.as_str()) {
+        for tok in meaningful_tokens(desc) {
+            anchors.push(tok);
+        }
+    }
+    if anchors.is_empty() {
+        // No facts to anchor on → can't fairly grade personalization.
+        return;
+    }
+    let any_match = anchors.iter().any(|a| body_lc.contains(a));
+    if !any_match {
+        let preview: Vec<&str> = anchors.iter().take(5).map(String::as_str).collect();
+        out.push(SignalHit {
+            name: "personalization_missing".into(),
+            weight: 0.70,
+            evidence: format!(
+                "draft references none of the prospect's facts; expected at \
+                 least one of (sample): {preview:?}"
+            ),
+        });
+    }
+}
+
+/// Lower-case + strip non-alpha boundary; keep tokens of length ≥ 4
+/// that aren't on the stop-word list. Used by personalization-missing
+/// to extract anchorable facts from string fields.
+fn meaningful_tokens(s: &str) -> Vec<String> {
+    const STOP: &[&str] = &[
+        "the",
+        "and",
+        "for",
+        "with",
+        "from",
+        "their",
+        "your",
+        "this",
+        "that",
+        "have",
+        "company",
+        "platform",
+        "service",
+        "services",
+        "solutions",
+        "solution",
+        "technology",
+        "technologies",
+        "team",
+        "teams",
+        "based",
+        "industry",
+        "business",
+        "global",
+        "leading",
+        "founded",
+        "headquartered",
+        "provides",
+        "offers",
+        "delivers",
+        "enables",
+        "helps",
+        "into",
+        "about",
+        "across",
+        "around",
+    ];
+    let lc = s.to_ascii_lowercase();
+    lc.split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| t.len() >= 4 && !STOP.contains(t))
+        .map(|t| t.to_string())
+        .collect()
+}
+
 /// Density of marketing-superlative words. One is fine; three+
 /// concentrated in one message is a strong LLM tell — no human
 /// writer reaches for "industry-leading" + "world-class" +
@@ -857,5 +968,86 @@ mod tests {
         assert!(haystack_contains_number("ARR $40,000", "40000"));
         // Empty needle never matches.
         assert!(!haystack_contains_number("anything", ""));
+    }
+
+    // -----------------------------------------------------------------
+    // U46: personalization-quality gate
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn personalized_draft_passes() {
+        // Body name-checks "Acme" (company) and "Postgres" (tech).
+        let body = "Saw Acme is on Postgres — the upgrade-ladder play \
+                    we ran for a peer in healthcare-tech turned a 3-day \
+                    cutover into a 30-minute one. Reply STOP and I won't follow up.";
+        let facts = serde_json::json!({
+            "company": "Acme",
+            "industry": "Healthcare technology",
+            "tech_signals": ["Postgres", "AWS"],
+            "description": "Acme builds clinical workflow tools.",
+        });
+        let r = score_with_facts(body, None, Some(&facts));
+        assert!(
+            !r.hits.iter().any(|h| h.name == "personalization_missing"),
+            "got reasons={:?}",
+            r.reasons()
+        );
+    }
+
+    #[test]
+    fn generic_draft_fails_personalization() {
+        // Body says nothing about the prospect.
+        let body = "We help teams improve their security posture. Worth a chat? \
+                    Reply STOP and I won't follow up.";
+        let facts = serde_json::json!({
+            "company": "Acme",
+            "industry": "Healthcare technology",
+            "tech_signals": ["Postgres", "AWS"],
+            "description": "Acme builds clinical workflow tools.",
+        });
+        let r = score_with_facts(body, None, Some(&facts));
+        assert!(
+            r.hits.iter().any(|h| h.name == "personalization_missing"),
+            "expected personalization_missing hit; got {:?}",
+            r.reasons()
+        );
+        assert!(
+            r.score >= 0.65,
+            "expected fail-grade score; got {}",
+            r.score
+        );
+    }
+
+    #[test]
+    fn personalization_skipped_when_facts_have_no_anchors() {
+        // Empty facts → no anchors → skip the gate (no false-positive).
+        let body = "We help teams improve their security posture. \
+                    Reply STOP and I won't follow up.";
+        let facts = serde_json::json!({
+            "company": "",
+            "industry": null,
+            "tech_signals": [],
+            "description": "",
+        });
+        let r = score_with_facts(body, None, Some(&facts));
+        assert!(
+            !r.hits.iter().any(|h| h.name == "personalization_missing"),
+            "should not fire on empty facts; got {:?}",
+            r.reasons()
+        );
+    }
+
+    #[test]
+    fn meaningful_tokens_strips_stopwords_and_short() {
+        let toks = meaningful_tokens("Healthcare technology platform team");
+        // "technology", "platform", "team" are stopwords; "Healthcare" stays.
+        assert!(toks.contains(&"healthcare".to_string()));
+        assert!(!toks.contains(&"technology".to_string()));
+        assert!(!toks.contains(&"team".to_string()));
+        // Length-3 tokens dropped.
+        let toks2 = meaningful_tokens("AI ML K8s Postgres");
+        assert!(toks2.contains(&"postgres".to_string()));
+        assert!(!toks2.contains(&"ai".to_string()));
+        assert!(!toks2.contains(&"ml".to_string()));
     }
 }
