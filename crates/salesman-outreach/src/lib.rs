@@ -14,7 +14,9 @@
 //! SECURITY: SMTP password held in `Zeroizing<String>`.
 #![forbid(unsafe_code)]
 
+pub mod bounce;
 pub mod unsubscribe;
+pub use bounce::{SmtpFailure, classify as classify_smtp_failure};
 pub use unsubscribe::UnsubscribeTokens;
 
 use lettre::message::header::{Header, HeaderName, HeaderValue};

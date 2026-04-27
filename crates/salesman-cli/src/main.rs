@@ -1088,6 +1088,7 @@ async fn main() -> Result<()> {
             let mut blocked_rate = 0u32;
             let mut blocked_no_to = 0u32;
             let mut errored = 0u32;
+            let mut bounced = 0u32;
             let mut attempted = 0u32;
             let mut hit_max_batch = false;
 
@@ -1143,8 +1144,48 @@ async fn main() -> Result<()> {
                 let outcome = match sender.send_email(&to, &subject, &t.body).await {
                     Ok(o) => o,
                     Err(e) => {
-                        errored += 1;
-                        tracing::warn!(to=%to, "%e" = %e, "smtp send failed");
+                        let err_text = format!("{e}");
+                        let failure = salesman_outreach::classify_smtp_failure(&err_text);
+                        if failure.should_auto_suppress() {
+                            // Hard bounce: the recipient mailbox / domain is gone.
+                            // Add to global suppression so we never retry, and log
+                            // a structured event the operator can audit later.
+                            match state
+                                .add_suppression(
+                                    &to,
+                                    "email",
+                                    &format!("auto-suppress on hard bounce: {failure}"),
+                                    failure.suppression_source(),
+                                )
+                                .await
+                            {
+                                Ok(()) => {
+                                    bounced += 1;
+                                    tracing::warn!(
+                                        to=%to,
+                                        failure=%failure,
+                                        "hard bounce — auto-suppressed",
+                                    );
+                                    println!(
+                                        "bounced+suppressed: to={to} touch={} reason={failure}",
+                                        t.touch_id
+                                    );
+                                }
+                                Err(supp_err) => {
+                                    errored += 1;
+                                    tracing::error!(
+                                        to=%to, failure=%failure, "%e" = %supp_err,
+                                        "could not record auto-suppression on bounce",
+                                    );
+                                }
+                            }
+                        } else {
+                            errored += 1;
+                            tracing::warn!(
+                                to=%to, classification=%failure, "%e" = %err_text,
+                                "smtp send failed",
+                            );
+                        }
                         continue;
                     }
                 };
@@ -1175,7 +1216,7 @@ async fn main() -> Result<()> {
             println!(
                 "send-pending `{campaign}` ({}): approved={} attempted={attempted} sent={sent} \
                  blocked_supp={blocked_supp} blocked_rate={blocked_rate} \
-                 blocked_no_to={blocked_no_to} errored={errored}{}",
+                 blocked_no_to={blocked_no_to} bounced={bounced} errored={errored}{}",
                 if for_real { "REAL" } else { "DRY-RUN" },
                 approved.len(),
                 if hit_max_batch {
