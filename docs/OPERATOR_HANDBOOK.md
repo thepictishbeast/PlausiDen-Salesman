@@ -188,6 +188,7 @@ salesman send-pending --campaign cyber-smb --for-real \
 | `--per-domain-window-hours N` | 1 | Window for per-domain cap |
 | `--confirm-typed` | off | Operator must TYPE campaign name to proceed |
 | `--no-pause` | off | Skip 5s pre-send pause (CI/scripts only) |
+| `--test-send-to <addr>` | off | Send EXACTLY ONE message redirected to `<addr>` for proof; touch stays `approved` for the real run |
 
 A pre-flight summary prints BEFORE any SMTP work — review it
 carefully. After 5 seconds (or after typed confirmation if
@@ -303,6 +304,19 @@ salesman status
 
 Reports: db reachable, LLM backends registered, signing key present,
 SMTP/IMAP env presence.
+
+### `doctor`
+Comprehensive human-readable diagnostic. Strong superset of `status`
+with optional connection probes.
+
+```bash
+salesman doctor
+salesman doctor --probe-smtp --probe-imap   # actually try the connections
+```
+
+Per-check OK/WARN/FAIL lines with a final GREEN/YELLOW/RED verdict.
+Exit 1 on RED. Useful as the FIRST thing to run after editing
+`/etc/salesman.env`, or in a daily cron.
 
 ### `render-site`
 Markdown → static HTML with index + sitemap.
