@@ -113,7 +113,7 @@ impl Tool for SeoMetaTool {
             temperature: 0.2,
         };
 
-        let resp = self.router.chat(RouteHint::Reasoning, req).await?;
+        let resp = self.router.chat_for(RouteHint::Reasoning, "seo_meta", req).await?;
         let raw = resp.message.content.trim();
         let meta = parse_seo(raw)
             .map_err(|e| Error::Tool {

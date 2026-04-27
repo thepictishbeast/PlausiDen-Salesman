@@ -135,7 +135,7 @@ impl Tool for ReplyClassifyTool {
             temperature: 0.0,
         };
 
-        let resp = self.router.chat(RouteHint::Bulk, req).await?;
+        let resp = self.router.chat_for(RouteHint::Bulk, "classify_reply", req).await?;
         let parsed = parse_classification(&resp.message.content)
             .unwrap_or_else(|e| {
                 warn!("%e" = %e, "classifier output unparseable; falling back to heuristic");

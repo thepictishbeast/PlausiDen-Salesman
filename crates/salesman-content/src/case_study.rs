@@ -131,7 +131,7 @@ impl Tool for CaseStudyDraftTool {
             temperature: 0.4,
         };
 
-        let resp = self.router.chat(RouteHint::Reasoning, req).await?;
+        let resp = self.router.chat_for(RouteHint::Reasoning, "case_study", req).await?;
         Ok(json!({
             "markdown": resp.message.content.trim(),
             "customer_name": customer_name,

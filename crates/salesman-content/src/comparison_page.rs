@@ -144,7 +144,7 @@ impl Tool for ComparisonPageTool {
             temperature: 0.4,
         };
 
-        let resp = self.router.chat(RouteHint::DeepReasoning, req).await?;
+        let resp = self.router.chat_for(RouteHint::DeepReasoning, "comparison_page", req).await?;
         let markdown = resp.message.content.trim().to_string();
 
         Ok(json!({

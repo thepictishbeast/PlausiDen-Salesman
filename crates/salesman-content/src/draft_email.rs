@@ -220,7 +220,7 @@ impl Tool for DraftColdEmailTool {
                 temperature: 0.55 + (attempt as f32) * 0.05,
             };
 
-            let resp = self.router.chat(RouteHint::Reasoning, req).await?;
+            let resp = self.router.chat_for(RouteHint::Reasoning, "draft_cold_email", req).await?;
             let raw = resp.message.content.trim();
             let draft = parse_draft(raw).map_err(|e| Error::Tool {
                 tool: "content.draft_cold_email".into(),
