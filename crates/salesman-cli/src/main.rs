@@ -30,7 +30,7 @@ use salesman_llm::claude::ClaudeBackend;
 use salesman_llm::gemini::GeminiBackend;
 use salesman_llm::{LlmBackend, LlmRouter, Message, Role, RouteHint};
 use salesman_orchestrator::Orchestrator;
-use salesman_state::State;
+use salesman_state::{State, TouchSummary};
 use salesman_tools::{EchoTool, ToolRegistry};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -283,6 +283,22 @@ enum Cmd {
         campaign: String,
         #[arg(long, default_value_t = false)]
         confirm_typed: bool,
+    },
+    /// Per-campaign pre-flight check before `send-pending --for-real`.
+    /// Verifies signing key, unsubscribe minter, SMTP, LLM backends,
+    /// campaign + prospects + drafts ready to go, no obvious test
+    /// addresses in the queue, and prints 3 sample drafts for the
+    /// operator to eyeball. Exits 1 if anything is blocking.
+    Preflight {
+        #[arg(long)]
+        campaign: String,
+        /// Skip the SMTP / IMAP TCP probe (faster; only checks env
+        /// vars are populated).
+        #[arg(long, default_value_t = false)]
+        no_probe: bool,
+        /// Number of draft samples to print at the end. 0 disables.
+        #[arg(long, default_value_t = 3)]
+        sample_drafts: usize,
     },
     /// Render a directory of markdown to a static HTML site.
     RenderSite {
@@ -1705,6 +1721,205 @@ async fn main() -> Result<()> {
                 }
             }
             println!("queue-clear: rejected {rejected} touches");
+        }
+
+        Cmd::Preflight {
+            campaign,
+            no_probe,
+            sample_drafts,
+        } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            println!("salesman preflight `{campaign}` — {}", chrono::Utc::now().to_rfc3339());
+            println!("==========================================\n");
+
+            let mut blockers: Vec<String> = Vec::new();
+            let mut warnings: Vec<String> = Vec::new();
+
+            macro_rules! check {
+                ($label:expr, $body:expr) => {{
+                    print!("[ {:<22} ]  ", $label);
+                    let r: Result<Result<(), String>, anyhow::Error> = $body;
+                    match r {
+                        Ok(Ok(())) => println!("OK"),
+                        Ok(Err(e)) => {
+                            println!("BLOCK  {e}");
+                            blockers.push(format!("{}: {e}", $label));
+                        }
+                        Err(e) => {
+                            println!("WARN   {e}");
+                            warnings.push(format!("{}: {e}", $label));
+                        }
+                    }
+                }};
+            }
+
+            // --- signing key
+            check!("signing key", Ok::<_, anyhow::Error>({
+                let seed = salesman_receipts::default_seed_path();
+                if seed.exists() {
+                    Ok(())
+                } else {
+                    Err(format!("seed file not present at {}", seed.display()))
+                }
+            }));
+
+            // --- unsubscribe minter
+            check!("unsubscribe minter", Ok::<_, anyhow::Error>({
+                match salesman_outreach::UnsubscribeTokens::from_env() {
+                    Ok(t) => {
+                        if t.base_url().starts_with("https://") {
+                            Ok(())
+                        } else if t.base_url().starts_with("http://localhost")
+                            || t.base_url().starts_with("http://127.0.0.1")
+                        {
+                            Err(
+                                "base URL is http://localhost — fine for dev, NOT for production"
+                                    .into(),
+                            )
+                        } else {
+                            Err("base URL must be HTTPS for Gmail/Yahoo to honor it".into())
+                        }
+                    }
+                    Err(e) => Err(format!("not configured: {e}")),
+                }
+            }));
+
+            // --- SMTP env
+            check!("smtp env", Ok::<_, anyhow::Error>({
+                match SmtpConfig::from_env() {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(format!("{e}")),
+                }
+            }));
+
+            // --- SMTP probe (TCP only; no auth, no SEND)
+            if !no_probe {
+                check!("smtp connect", Ok::<_, anyhow::Error>({
+                    match SmtpConfig::from_env() {
+                        Ok(cfg) => {
+                            let connect = tokio::net::TcpStream::connect((cfg.host.as_str(), cfg.port));
+                            let r = tokio::time::timeout(
+                                std::time::Duration::from_secs(5),
+                                connect,
+                            )
+                            .await;
+                            match r {
+                                Ok(Ok(_)) => Ok(()),
+                                Ok(Err(e)) => Err(format!("tcp: {e}")),
+                                Err(_) => Err("timeout (5s)".into()),
+                            }
+                        }
+                        Err(e) => Err(format!("{e}")),
+                    }
+                }));
+            }
+
+            // --- LLM backends
+            check!("llm backends", Ok::<_, anyhow::Error>({
+                let kinds = router.registered_kinds();
+                if kinds.is_empty() {
+                    Err("no backends registered (set ANTHROPIC_API_KEY and/or GEMINI_API_KEY)".into())
+                } else {
+                    Ok(())
+                }
+            }));
+
+            // --- campaign + prospects
+            let cid = state
+                .ensure_campaign(&campaign, "(preflight)", "(unspecified)")
+                .await?;
+            let pending_drafts = state.list_drafts_awaiting_approval(cid).await?;
+            check!("campaign + drafts", Ok::<_, anyhow::Error>({
+                if pending_drafts.is_empty() {
+                    Err(format!(
+                        "no awaiting-approval drafts in `{campaign}` — \
+                         run `salesman draft --campaign {campaign}` first"
+                    ))
+                } else {
+                    Ok(())
+                }
+            }));
+
+            // --- test/demo prospects in queue
+            check!("queue hygiene", Ok::<_, anyhow::Error>({
+                let bad: Vec<&TouchSummary> = pending_drafts
+                    .iter()
+                    .filter(|t| {
+                        let c = t.company.to_ascii_lowercase();
+                        c.contains("test")
+                            || c.contains("example")
+                            || c.contains("demo")
+                            || c == "(testing)"
+                            || c.starts_with("acme")
+                    })
+                    .collect();
+                if bad.is_empty() {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "{} draft(s) target obvious test companies (acme/test/demo/example) — \
+                         queue-clear and re-discover from a real CSV",
+                        bad.len()
+                    ))
+                }
+            }));
+
+            // --- AI-detector pass on drafts
+            if !pending_drafts.is_empty() {
+                let mut high_score = 0u32;
+                let mut max_seen = 0.0f32;
+                for t in &pending_drafts {
+                    let s = salesman_detector::score(&t.body, t.subject.as_deref());
+                    if s.score > max_seen {
+                        max_seen = s.score;
+                    }
+                    if s.score >= 0.6 {
+                        high_score += 1;
+                    }
+                }
+                check!("detector ensemble", Ok::<_, anyhow::Error>({
+                    if high_score == 0 {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "{}/{} draft(s) score ≥0.6 on the AI-detector ensemble (max {:.2}) \
+                             — review and regenerate before sending",
+                            high_score, pending_drafts.len(), max_seen
+                        ))
+                    }
+                }));
+            }
+
+            // --- sample drafts
+            if sample_drafts > 0 && !pending_drafts.is_empty() {
+                println!("\nSample drafts (first {} of {}):",
+                    sample_drafts.min(pending_drafts.len()),
+                    pending_drafts.len());
+                println!("{}", "-".repeat(60));
+                for t in pending_drafts.iter().take(sample_drafts) {
+                    println!("\n[{}] subject: {:?}", t.company, t.subject.as_deref().unwrap_or(""));
+                    let snippet: String = t.body.chars().take(280).collect();
+                    println!("{snippet}{}", if t.body.chars().count() > 280 { "..." } else { "" });
+                }
+                println!("{}", "-".repeat(60));
+            }
+
+            println!();
+            println!("==========================================");
+            if blockers.is_empty() && warnings.is_empty() {
+                println!("VERDICT: READY — safe to `salesman send-pending --campaign {campaign} --for-real --confirm-typed`");
+            } else if blockers.is_empty() {
+                println!("VERDICT: READY-WITH-WARNINGS ({})", warnings.len());
+                for w in &warnings {
+                    println!("  - {w}");
+                }
+            } else {
+                println!("VERDICT: BLOCKED — {} blocker(s), {} warning(s)", blockers.len(), warnings.len());
+                for b in &blockers {
+                    println!("  - {b}");
+                }
+                anyhow::bail!("preflight blocked");
+            }
         }
 
         Cmd::Doctor { probe_smtp, probe_imap } => {
