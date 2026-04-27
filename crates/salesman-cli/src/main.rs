@@ -186,6 +186,15 @@ enum Cmd {
         #[arg(long)]
         sequence: String,
     },
+    /// Tick all due prospect sequences — emits draft Touches for
+    /// each prospect whose next_due_at has passed.
+    TickSequences {
+        #[arg(long, default_value_t = 100)]
+        batch: i64,
+        /// PlausiDen product to anchor templates against.
+        #[arg(long, default_value = "Sentinel")]
+        product: String,
+    },
     /// Generate cold-email drafts for every prospect in a campaign.
     /// Drafts land in `awaiting_approval` — never auto-sent.
     Draft {
@@ -1020,6 +1029,77 @@ async fn main() -> Result<()> {
             for p in &pages {
                 println!("  {} → {}", p.slug, p.output_path.display());
             }
+        }
+
+        Cmd::TickSequences { batch, product } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            if router.registered_kinds().is_empty() {
+                anyhow::bail!("no LLM backends registered (set ANTHROPIC_API_KEY and/or GEMINI_API_KEY)");
+            }
+            let due = state.list_due_prospects(batch).await?;
+            if due.is_empty() {
+                println!("no prospects due");
+                return Ok(());
+            }
+            let draft_tool = DraftColdEmailTool::new(
+                router.clone(),
+                "the PlausiDen team",
+                "PlausiDen",
+                "Plausible deniability + sovereign data tools for SMB security teams.",
+            );
+            let mut ok = 0u32;
+            let mut err = 0u32;
+            for d in &due {
+                // Pull prospect facts via existing list_prospects_with_facts_for_campaign,
+                // but we have only prospect_id. Use a per-prospect fetch via raw SQL.
+                let row = sqlx::query(
+                    "SELECT c.display_name, c.homepage, c.industry, c.description, c.tech_signals
+                     FROM prospects p JOIN companies c ON c.id = p.company_id
+                     WHERE p.id = $1",
+                )
+                .bind(d.prospect_id.0)
+                .fetch_optional(state.pool())
+                .await?;
+                let Some(row) = row else {
+                    tracing::warn!(prospect = %d.prospect_id, "no facts; skipping");
+                    err += 1;
+                    continue;
+                };
+                let prospect_json = serde_json::json!({
+                    "display_name": row.try_get::<String, _>("display_name").unwrap_or_default(),
+                    "homepage":     row.try_get::<Option<String>, _>("homepage").unwrap_or(None),
+                    "industry":     row.try_get::<Option<String>, _>("industry").unwrap_or(None),
+                    "description":  row.try_get::<Option<String>, _>("description").unwrap_or(None),
+                    "tech_signals": row.try_get::<serde_json::Value, _>("tech_signals").unwrap_or(serde_json::Value::Array(vec![])),
+                });
+                let tool_args = serde_json::json!({
+                    "prospect": prospect_json,
+                    "product":  product,
+                    "angle_hint": format!("step {} of sequence (template: {})", d.current_step, d.template_key),
+                });
+                match salesman_tools::Tool::invoke(&draft_tool, salesman_core::ToolArgs(tool_args)).await {
+                    Ok(v) => {
+                        let subject = v.get("subject").and_then(|x| x.as_str()).unwrap_or("");
+                        let body = v.get("body").and_then(|x| x.as_str()).unwrap_or("");
+                        if let Err(e) = state
+                            .insert_touch_draft(d.prospect_id, salesman_core::TouchChannel::Email, Some(subject), body)
+                            .await
+                        {
+                            tracing::warn!(prospect = %d.prospect_id, "%e" = %e, "draft persist failed");
+                            err += 1;
+                            continue;
+                        }
+                        // advance the sequence — schedules next_due_at for the *next* step
+                        let _advanced = state.advance_prospect_in_sequence(d.prospect_id).await?;
+                        ok += 1;
+                    }
+                    Err(e) => {
+                        tracing::warn!(prospect = %d.prospect_id, "%e" = %e, "draft generation failed");
+                        err += 1;
+                    }
+                }
+            }
+            println!("tick-sequences: due={} drafted={ok} errored={err}", due.len());
         }
 
         Cmd::Halt { reason } => {
