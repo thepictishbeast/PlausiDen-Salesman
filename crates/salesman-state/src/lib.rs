@@ -6,13 +6,15 @@
 //! inside the call.
 #![forbid(unsafe_code)]
 
+use async_trait::async_trait;
 use salesman_core::{Error, Result};
+use salesman_llm::{BackendKind, LlmCallSink};
 use sqlx::postgres::{PgPool, PgPoolOptions};
 
 pub mod query;
 pub use query::{
-    DueProspect, PipelineSummary, ProspectWithFacts, ReplyRow, SequenceStepInput, TouchSummary,
-    UnclassifiedReply,
+    CostSummaryRow, DueProspect, LlmCallRecord, PipelineSummary, ProspectWithFacts, ReplyRow,
+    SequenceStepInput, TouchSummary, UnclassifiedReply,
 };
 
 /// Thin wrapper around a Postgres connection pool. Created at startup,
@@ -41,5 +43,36 @@ impl State {
 
     pub fn pool(&self) -> &PgPool {
         &self.pool
+    }
+}
+
+#[async_trait]
+impl LlmCallSink for State {
+    async fn record_call(
+        &self,
+        backend: BackendKind,
+        model: String,
+        prompt_tokens: u32,
+        output_tokens: u32,
+        cache_hit_tokens: u32,
+        latency_ms: u64,
+        cost_micro_usd: u64,
+        purpose: String,
+    ) {
+        let rec = query::LlmCallRecord {
+            backend: backend.to_string(),
+            model,
+            prompt_tokens,
+            output_tokens,
+            cache_hit_tokens,
+            latency_ms,
+            cost_micro_usd,
+            purpose,
+            related_id: None,
+            related_kind: None,
+        };
+        if let Err(e) = self.insert_llm_call(&rec).await {
+            tracing::warn!("%e" = %e, "llm cost ledger insert failed (non-fatal)");
+        }
     }
 }

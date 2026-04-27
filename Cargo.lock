@@ -2764,6 +2764,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "salesman-core",
+ "salesman-llm",
  "salesman-receipts",
  "serde",
  "serde_json",

@@ -42,6 +42,33 @@ pub struct DueProspect {
 }
 
 #[derive(Debug, Clone)]
+pub struct LlmCallRecord {
+    pub backend: String,
+    pub model: String,
+    pub prompt_tokens: u32,
+    pub output_tokens: u32,
+    pub cache_hit_tokens: u32,
+    pub latency_ms: u64,
+    pub cost_micro_usd: u64,
+    pub purpose: String,
+    pub related_id: Option<uuid::Uuid>,
+    pub related_kind: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CostSummaryRow {
+    pub backend: String,
+    pub model: String,
+    pub count: i64,
+    pub prompt_tokens: i64,
+    pub output_tokens: i64,
+    pub cache_hit_tokens: i64,
+    pub cost_micro_usd: i64,
+    pub avg_latency_ms: i64,
+    pub p95_latency_ms: i64,
+}
+
+#[derive(Debug, Clone)]
 pub struct PipelineSummary {
     pub companies: i64,
     pub prospects: i64,
@@ -1060,6 +1087,73 @@ impl State {
             });
         }
         Ok(out)
+    }
+
+    // -----------------------------------------------------------------
+    // llm cost ledger
+    // -----------------------------------------------------------------
+
+    /// Record one LLM call in `llm_calls`. Cost is computed by the
+    /// caller (uses salesman_llm::compute_cost_micro_usd).
+    pub async fn insert_llm_call(&self, c: &LlmCallRecord) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO llm_calls
+             (id, backend, model, prompt_tokens, output_tokens,
+              cache_hit_tokens, latency_ms, cost_micro_usd, purpose,
+              related_id, related_kind)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+        )
+        .bind(uuid::Uuid::now_v7())
+        .bind(&c.backend)
+        .bind(&c.model)
+        .bind(c.prompt_tokens as i32)
+        .bind(c.output_tokens as i32)
+        .bind(c.cache_hit_tokens as i32)
+        .bind(c.latency_ms as i32)
+        .bind(c.cost_micro_usd as i64)
+        .bind(&c.purpose)
+        .bind(c.related_id)
+        .bind(&c.related_kind)
+        .execute(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Roll-up by (backend, model) over a recent window.
+    pub async fn cost_summary(&self, since_hours: i64) -> Result<Vec<CostSummaryRow>> {
+        let rows = sqlx::query(
+            "SELECT backend, model,
+                    COUNT(*)::BIGINT          AS n,
+                    SUM(prompt_tokens)::BIGINT  AS prompt,
+                    SUM(output_tokens)::BIGINT  AS output,
+                    SUM(cache_hit_tokens)::BIGINT AS cache_hit,
+                    SUM(cost_micro_usd)::BIGINT AS micro_usd,
+                    AVG(latency_ms)::BIGINT   AS avg_latency,
+                    PERCENTILE_DISC(0.95) WITHIN GROUP (ORDER BY latency_ms)::BIGINT AS p95_latency
+             FROM llm_calls
+             WHERE created_at > NOW() - ($1 || ' hours')::INTERVAL
+             GROUP BY backend, model
+             ORDER BY micro_usd DESC",
+        )
+        .bind(since_hours.to_string())
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| CostSummaryRow {
+                backend: r.try_get("backend").unwrap_or_default(),
+                model: r.try_get("model").unwrap_or_default(),
+                count: r.try_get("n").unwrap_or(0),
+                prompt_tokens: r.try_get("prompt").unwrap_or(0),
+                output_tokens: r.try_get("output").unwrap_or(0),
+                cache_hit_tokens: r.try_get("cache_hit").unwrap_or(0),
+                cost_micro_usd: r.try_get("micro_usd").unwrap_or(0),
+                avg_latency_ms: r.try_get("avg_latency").unwrap_or(0),
+                p95_latency_ms: r.try_get("p95_latency").unwrap_or(0),
+            })
+            .collect())
     }
 
     // -----------------------------------------------------------------

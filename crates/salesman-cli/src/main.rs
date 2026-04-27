@@ -156,6 +156,11 @@ enum Cmd {
         #[arg(long, default_value_t = 24)]
         since_hours: i64,
     },
+    /// Print LLM cost report by (backend, model) over a time window.
+    Costs {
+        #[arg(long, default_value_t = 24)]
+        since_hours: i64,
+    },
     /// Health probe — JSON output. Exit 1 if any required component
     /// is missing.
     Status,
@@ -909,6 +914,43 @@ async fn main() -> Result<()> {
             let state = require_state(cli.database_url.as_deref()).await?;
             let s = state.pipeline_summary(since_hours).await?;
             println!("{}", s.render_text());
+        }
+
+        Cmd::Costs { since_hours } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let rows = state.cost_summary(since_hours).await?;
+            if rows.is_empty() {
+                println!("No LLM calls in the last {since_hours}h.");
+            } else {
+                println!("LLM cost report — last {since_hours}h\n");
+                println!(
+                    "{:<10} {:<28} {:>6} {:>10} {:>10} {:>10} {:>10} {:>8} {:>8}",
+                    "backend", "model", "calls", "prompt", "output", "cache", "cost USD", "avg ms", "p95 ms"
+                );
+                println!("{}", "-".repeat(110));
+                let mut total_micro_usd: i64 = 0;
+                for r in &rows {
+                    println!(
+                        "{:<10} {:<28} {:>6} {:>10} {:>10} {:>10} {:>10.4} {:>8} {:>8}",
+                        r.backend,
+                        r.model,
+                        r.count,
+                        r.prompt_tokens,
+                        r.output_tokens,
+                        r.cache_hit_tokens,
+                        (r.cost_micro_usd as f64) / 1_000_000.0,
+                        r.avg_latency_ms,
+                        r.p95_latency_ms,
+                    );
+                    total_micro_usd += r.cost_micro_usd;
+                }
+                println!("{}", "-".repeat(110));
+                println!(
+                    "TOTAL: ${:.4} USD across {} models",
+                    (total_micro_usd as f64) / 1_000_000.0,
+                    rows.len()
+                );
+            }
         }
 
         Cmd::Status => {

@@ -14,10 +14,12 @@
 
 pub mod claude;
 pub mod gemini;
+pub mod rates;
 pub mod router;
 pub mod types;
 
-pub use router::{LlmRouter, RouteHint};
+pub use rates::{compute_cost_micro_usd, lookup_rate, Rate};
+pub use router::{LlmCallSink, LlmRouter, RouteHint};
 pub use types::{BackendKind, ChatRequest, ChatResponse, Message, Role, Usage};
 
 use async_trait::async_trait;
