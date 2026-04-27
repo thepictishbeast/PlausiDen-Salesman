@@ -17,6 +17,7 @@ use salesman_discovery::{
     HomepageFetcher,
 };
 use salesman_outreach::{SmtpConfig, SmtpSender};
+use sqlx::Row;
 use salesman_reply::{ImapConfig, ImapPoller};
 use salesman_receipts::{Signer, default_seed_path};
 use salesman_llm::claude::ClaudeBackend;
@@ -155,6 +156,22 @@ enum Cmd {
         #[arg(long, default_value_t = 24)]
         since_hours: i64,
     },
+    /// Define a multi-touch sequence from a TOML file.
+    DefineSequence {
+        #[arg(long)]
+        campaign: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        from_toml: PathBuf,
+    },
+    /// Assign a sequence to every prospect in a campaign.
+    AssignSequence {
+        #[arg(long)]
+        campaign: String,
+        #[arg(long)]
+        sequence: String,
+    },
     /// Generate cold-email drafts for every prospect in a campaign.
     /// Drafts land in `awaiting_approval` — never auto-sent.
     Draft {
@@ -236,6 +253,35 @@ fn parse_hint(s: &str) -> RouteHint {
 }
 
 use std::str::FromStr;
+
+#[derive(Debug, serde::Deserialize)]
+struct SequenceFile {
+    steps: Vec<SequenceStepFile>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SequenceStepFile {
+    template_key: String,
+    #[serde(default)]
+    channel: Option<String>,
+    #[serde(default)]
+    delay_days: Option<u32>,
+}
+
+async fn sqlx_lookup_sequence(
+    state: &State,
+    campaign_id: salesman_core::CampaignId,
+    name: &str,
+) -> Result<uuid::Uuid> {
+    let row = sqlx::query("SELECT id FROM sequences WHERE campaign_id = $1 AND name = $2")
+        .bind(campaign_id.0)
+        .bind(name)
+        .fetch_optional(state.pool())
+        .await?;
+    let row = row.ok_or_else(|| anyhow::anyhow!("sequence `{name}` not found in campaign"))?;
+    let id: uuid::Uuid = row.try_get("id")?;
+    Ok(id)
+}
 
 fn parse_touch_id(s: &str) -> Result<salesman_core::TouchId> {
     let u: uuid::Uuid = s
@@ -836,6 +882,50 @@ async fn main() -> Result<()> {
             let state = require_state(cli.database_url.as_deref()).await?;
             let s = state.pipeline_summary(since_hours).await?;
             println!("{}", s.render_text());
+        }
+
+        Cmd::DefineSequence {
+            campaign,
+            name,
+            from_toml,
+        } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let toml_text = std::fs::read_to_string(&from_toml)
+                .with_context(|| format!("read {}", from_toml.display()))?;
+            let parsed: SequenceFile = toml::from_str(&toml_text)
+                .with_context(|| format!("parse {}", from_toml.display()))?;
+            if parsed.steps.is_empty() {
+                anyhow::bail!("sequence file has no steps");
+            }
+            let campaign_id = state
+                .ensure_campaign(&campaign, "(sequence-only)", "(unspecified)")
+                .await?;
+            let inputs: Vec<salesman_state::SequenceStepInput> = parsed
+                .steps
+                .into_iter()
+                .map(|s| salesman_state::SequenceStepInput {
+                    channel: s.channel.unwrap_or_else(|| "email".into()),
+                    template_key: s.template_key,
+                    delay_days: s.delay_days.unwrap_or(0),
+                })
+                .collect();
+            let sid = state
+                .create_sequence(campaign_id, &name, &inputs)
+                .await?;
+            println!("created sequence `{name}` (id={sid}) with {} step(s)", inputs.len());
+        }
+
+        Cmd::AssignSequence { campaign, sequence } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let campaign_id = state
+                .ensure_campaign(&campaign, "(assign-only)", "(unspecified)")
+                .await?;
+            // Look up sequence by (campaign, name).
+            let sid = sqlx_lookup_sequence(&state, campaign_id, &sequence).await?;
+            let n = state
+                .assign_sequence_to_campaign(campaign_id, sid)
+                .await?;
+            println!("assigned sequence `{sequence}` to {n} new prospects (idempotent)");
         }
 
         Cmd::Halt { reason } => {

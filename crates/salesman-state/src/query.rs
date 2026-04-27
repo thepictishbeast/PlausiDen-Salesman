@@ -26,6 +26,22 @@ pub struct ProspectWithFacts {
 }
 
 #[derive(Debug, Clone)]
+pub struct SequenceStepInput {
+    pub channel: String,
+    pub template_key: String,
+    pub delay_days: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct DueProspect {
+    pub prospect_id: ProspectId,
+    pub sequence_id: uuid::Uuid,
+    pub current_step: u32,
+    pub template_key: String,
+    pub channel: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct PipelineSummary {
     pub companies: i64,
     pub prospects: i64,
@@ -747,6 +763,170 @@ impl State {
             summary.push_str("no transition (kind doesn't drive a state change)");
         }
         Ok(summary)
+    }
+
+    // -----------------------------------------------------------------
+    // sequences
+    // -----------------------------------------------------------------
+
+    /// Create a sequence + its steps in one transaction.
+    pub async fn create_sequence(
+        &self,
+        campaign_id: CampaignId,
+        name: &str,
+        steps: &[SequenceStepInput],
+    ) -> Result<uuid::Uuid> {
+        if steps.is_empty() {
+            return Err(Error::Validation("sequence must have at least one step".into()));
+        }
+        let mut tx = self.pool().begin().await.map_err(|e| Error::Db(e.to_string()))?;
+        let sequence_id = uuid::Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO sequences (id, campaign_id, name) VALUES ($1, $2, $3)",
+        )
+        .bind(sequence_id)
+        .bind(campaign_id.0)
+        .bind(name)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+
+        for (idx, s) in steps.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO sequence_steps (id, sequence_id, position, channel, template_key, delay_days) \
+                 VALUES ($1, $2, $3, $4, $5, $6)",
+            )
+            .bind(uuid::Uuid::now_v7())
+            .bind(sequence_id)
+            .bind(idx as i32)
+            .bind(&s.channel)
+            .bind(&s.template_key)
+            .bind(s.delay_days as i32)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
+        }
+        tx.commit().await.map_err(|e| Error::Db(e.to_string()))?;
+        Ok(sequence_id)
+    }
+
+    /// Assign every prospect in a campaign to a sequence at step 0.
+    pub async fn assign_sequence_to_campaign(
+        &self,
+        campaign_id: CampaignId,
+        sequence_id: uuid::Uuid,
+    ) -> Result<u64> {
+        let result = sqlx::query(
+            "INSERT INTO prospect_sequence_state \
+             (prospect_id, sequence_id, current_step, next_due_at, last_advanced_at) \
+             SELECT p.id, $2, 0, NOW(), NOW() \
+             FROM prospects p \
+             WHERE p.campaign_id = $1 \
+             ON CONFLICT (prospect_id) DO NOTHING",
+        )
+        .bind(campaign_id.0)
+        .bind(sequence_id)
+        .execute(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(result.rows_affected())
+    }
+
+    /// Advance a prospect through its sequence after a successful send.
+    /// Loads the step's delay, schedules next_due_at = NOW + delay.
+    /// Returns true if advanced, false if already at the last step.
+    pub async fn advance_prospect_in_sequence(
+        &self,
+        prospect_id: ProspectId,
+    ) -> Result<bool> {
+        let row = sqlx::query(
+            "SELECT pss.sequence_id, pss.current_step,
+                    (SELECT MAX(position) FROM sequence_steps WHERE sequence_id = pss.sequence_id) AS max_pos,
+                    (SELECT delay_days FROM sequence_steps
+                     WHERE sequence_id = pss.sequence_id AND position = pss.current_step + 1
+                     LIMIT 1) AS next_delay
+             FROM prospect_sequence_state pss
+             WHERE pss.prospect_id = $1",
+        )
+        .bind(prospect_id.0)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+
+        let Some(row) = row else { return Ok(false) };
+        let current: i32 = row.try_get("current_step").unwrap_or(0);
+        let max_pos: Option<i32> = row.try_get("max_pos").ok();
+        let next_delay: Option<i32> = row.try_get("next_delay").ok();
+
+        if Some(current) >= max_pos {
+            return Ok(false); // already at last step
+        }
+        let delay = next_delay.unwrap_or(0).max(0) as i64;
+
+        sqlx::query(
+            "UPDATE prospect_sequence_state \
+             SET current_step = current_step + 1, \
+                 next_due_at = NOW() + ($2 || ' days')::INTERVAL, \
+                 last_advanced_at = NOW() \
+             WHERE prospect_id = $1",
+        )
+        .bind(prospect_id.0)
+        .bind(delay.to_string())
+        .execute(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(true)
+    }
+
+    /// Pause a prospect's sequence (e.g. on negative reply).
+    pub async fn pause_prospect_sequence(
+        &self,
+        prospect_id: ProspectId,
+        reason: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE prospect_sequence_state \
+             SET paused = TRUE, paused_reason = $2 \
+             WHERE prospect_id = $1",
+        )
+        .bind(prospect_id.0)
+        .bind(reason)
+        .execute(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(())
+    }
+
+    /// List prospect-sequence-states whose next_due_at has passed and
+    /// are not paused — the work queue for the sequence scheduler.
+    pub async fn list_due_prospects(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<DueProspect>> {
+        let rows = sqlx::query(
+            "SELECT pss.prospect_id, pss.sequence_id, pss.current_step,
+                    s.template_key, s.channel, s.delay_days
+             FROM prospect_sequence_state pss
+             JOIN sequence_steps s
+               ON s.sequence_id = pss.sequence_id AND s.position = pss.current_step
+             WHERE pss.next_due_at <= NOW() AND NOT pss.paused
+             ORDER BY pss.next_due_at
+             LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| DueProspect {
+                prospect_id: ProspectId(r.try_get("prospect_id").unwrap_or_else(|_| uuid::Uuid::nil())),
+                sequence_id: r.try_get("sequence_id").unwrap_or_else(|_| uuid::Uuid::nil()),
+                current_step: r.try_get::<i32, _>("current_step").unwrap_or(0) as u32,
+                template_key: r.try_get("template_key").unwrap_or_default(),
+                channel: r.try_get("channel").unwrap_or_default(),
+            })
+            .collect())
     }
 
     // -----------------------------------------------------------------
