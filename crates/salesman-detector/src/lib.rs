@@ -229,7 +229,9 @@ fn check_unanchored_numeric_claims(body: &str, out: &mut Vec<SignalHit>) {
         if c.is_ascii_digit() {
             // Read the run of digits + optional ',' or '.'.
             let start = i;
-            while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b',' || bytes[i] == b'.') {
+            while i < bytes.len()
+                && (bytes[i].is_ascii_digit() || bytes[i] == b',' || bytes[i] == b'.')
+            {
                 i += 1;
             }
             if i >= bytes.len() {
@@ -246,25 +248,13 @@ fn check_unanchored_numeric_claims(body: &str, out: &mut Vec<SignalHit>) {
             }
             let suffix = bytes[j];
             // Must be % | x | K | M | "th" | preceded by $.
-            let mut matched = false;
-            if after == b'%' || suffix == b'%' {
-                matched = true;
-            } else if (after == b'x' || after == b'X')
-                && (i + 1 >= bytes.len() || !bytes[i + 1].is_ascii_alphanumeric())
-            {
-                // "3x" but not "3xa".
-                matched = true;
-            } else if (suffix == b'x' || suffix == b'X')
-                && (j + 1 >= bytes.len() || !bytes[j + 1].is_ascii_alphanumeric())
-            {
-                matched = true;
-            } else if start > 0 && bytes[start - 1] == b'$' {
-                matched = true;
-            } else if (suffix == b'K' || suffix == b'M' || suffix == b'B')
-                && (j + 1 >= bytes.len() || !bytes[j + 1].is_ascii_alphanumeric())
-            {
-                matched = true;
-            }
+            let next_after_i_ok = i + 1 >= bytes.len() || !bytes[i + 1].is_ascii_alphanumeric();
+            let next_after_j_ok = j + 1 >= bytes.len() || !bytes[j + 1].is_ascii_alphanumeric();
+            let matched = (after == b'%' || suffix == b'%')
+                || ((after == b'x' || after == b'X') && next_after_i_ok)
+                || ((suffix == b'x' || suffix == b'X') && next_after_j_ok)
+                || (start > 0 && bytes[start - 1] == b'$')
+                || ((suffix == b'K' || suffix == b'M' || suffix == b'B') && next_after_j_ok);
             if matched {
                 hits += 1;
                 let lo = start.saturating_sub(20);
@@ -369,7 +359,11 @@ fn check_empty_hedge_phrases(body: &str, out: &mut Vec<SignalHit>) {
         "whenever you have a moment",
         "whenever you have a chance",
     ];
-    let hits: Vec<&str> = PATTERNS.iter().filter(|p| s.contains(*p)).copied().collect();
+    let hits: Vec<&str> = PATTERNS
+        .iter()
+        .filter(|p| s.contains(*p))
+        .copied()
+        .collect();
     if hits.len() >= 2 {
         let weight = if hits.len() >= 3 { 0.75 } else { 0.6 };
         out.push(SignalHit {

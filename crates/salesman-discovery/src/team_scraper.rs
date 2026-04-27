@@ -157,8 +157,7 @@ impl TeamScraper {
                 }
                 let guesses = self.guesser.guess(&first, &last, &domain);
                 if let Some(top) = guesses.first() {
-                    let confidence =
-                        (role_score * 0.6 + top.prior * 0.4).clamp(0.0, 1.0);
+                    let confidence = (role_score * 0.6 + top.prior * 0.4).clamp(0.0, 1.0);
                     out.push(BuyerCandidate {
                         name: name.clone(),
                         role: role.clone(),
@@ -204,13 +203,10 @@ impl TeamScraper {
         if !resp.status().is_success() {
             return Ok(None);
         }
-        let body = resp
-            .text()
-            .await
-            .map_err(|e| Error::Tool {
-                tool: "discovery.team_scraper".into(),
-                message: format!("body: {e}"),
-            })?;
+        let body = resp.text().await.map_err(|e| Error::Tool {
+            tool: "discovery.team_scraper".into(),
+            message: format!("body: {e}"),
+        })?;
         // Cap body to 1 MB to bound work + memory
         let trimmed = if body.len() > 1_048_576 {
             body[..1_048_576].to_string()
@@ -441,9 +437,6 @@ mod tests {
 
     #[test]
     fn strip_html_collapses_internal_whitespace() {
-        assert_eq!(
-            strip_html("<p>Hi  \n\t there</p>"),
-            "Hi there"
-        );
+        assert_eq!(strip_html("<p>Hi  \n\t there</p>"), "Hi there");
     }
 }

@@ -310,8 +310,9 @@ fn extract_list_brands(raw: &str, exclude: &[String]) -> Vec<String> {
             continue;
         }
         // Strip the bullet/number prefix.
-        let body = trimmed
-            .trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ')' || c == '-' || c == '*' || c.is_whitespace());
+        let body = trimmed.trim_start_matches(|c: char| {
+            c.is_ascii_digit() || c == '.' || c == ')' || c == '-' || c == '*' || c.is_whitespace()
+        });
         // Title-Case word detector: find runs of words that start
         // with uppercase. Take the first 1-3 such words after the
         // bullet as the candidate brand.
@@ -324,7 +325,9 @@ fn extract_list_brands(raw: &str, exclude: &[String]) -> Vec<String> {
             }
             let first = stripped.chars().next().unwrap_or(' ');
             if first.is_ascii_uppercase()
-                || (first == '"' && stripped.len() > 1 && stripped.chars().nth(1).unwrap_or(' ').is_ascii_uppercase())
+                || (first == '"'
+                    && stripped.len() > 1
+                    && stripped.chars().nth(1).unwrap_or(' ').is_ascii_uppercase())
             {
                 buf.push(stripped.trim_matches('"').to_string());
             } else if !buf.is_empty() {
@@ -411,10 +414,7 @@ mod tests {
             position_in_numbered_list(raw, &["Jane Doe Realty".into()]),
             Some(2)
         );
-        assert_eq!(
-            position_in_numbered_list(raw, &["Acme".into()]),
-            Some(0)
-        );
+        assert_eq!(position_in_numbered_list(raw, &["Acme".into()]), Some(0));
         assert_eq!(
             position_in_numbered_list(raw, &["Nonexistent".into()]),
             None

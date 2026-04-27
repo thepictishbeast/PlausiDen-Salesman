@@ -193,13 +193,19 @@ impl DraftReplyTool {
         out.push_str(&serde_json::to_string_pretty(prospect).unwrap_or_default());
         out.push_str("\n\n");
         if let (Some(sub), Some(body)) = (outbound_subject, outbound_body) {
-            out.push_str(&format!("Original outbound (your earlier message):\n> Subject: {sub}\n> {}\n\n",
-                body.lines().take(40).collect::<Vec<_>>().join("\n> ")));
+            out.push_str(&format!(
+                "Original outbound (your earlier message):\n> Subject: {sub}\n> {}\n\n",
+                body.lines().take(40).collect::<Vec<_>>().join("\n> ")
+            ));
         }
         out.push_str(&format!(
             "Inbound reply (classified as `{inbound_kind}`):\n> Subject: {sub}\n> {body}\n\n",
             sub = inbound_subject.unwrap_or("(no subject)"),
-            body = inbound_body.lines().take(80).collect::<Vec<_>>().join("\n> "),
+            body = inbound_body
+                .lines()
+                .take(80)
+                .collect::<Vec<_>>()
+                .join("\n> "),
         ));
         out.push_str("Draft the reply now.\n");
         out
@@ -306,7 +312,10 @@ impl Tool for DraftReplyTool {
         // Refuse to draft on terminal kinds. The classifier already
         // suppressed optout/bounce; spam shouldn't get a reply.
         const TERMINAL: &[&str] = &["optout", "bounce", "spam", "out_of_office"];
-        if TERMINAL.iter().any(|t| t.eq_ignore_ascii_case(&inbound_kind)) {
+        if TERMINAL
+            .iter()
+            .any(|t| t.eq_ignore_ascii_case(&inbound_kind))
+        {
             return Err(Error::Validation(format!(
                 "draft_reply: refusing to draft a reply to kind=`{inbound_kind}` (terminal)"
             )));
@@ -326,9 +335,7 @@ impl Tool for DraftReplyTool {
             self.meeting_system_prompt(cal_v)
         } else if let Some(obj) = objection_match.as_ref() {
             self.objection_system_prompt(obj)
-        } else if pricing_shaped
-            && let Some(cat) = pricing_catalog.as_deref()
-        {
+        } else if pricing_shaped && let Some(cat) = pricing_catalog.as_deref() {
             self.pricing_system_prompt(cat)
         } else {
             self.system_prompt()
@@ -433,9 +440,11 @@ impl ObjectionLibrary {
     /// body (case-insensitive). Returns None if no rule fires.
     pub fn match_inbound(&self, inbound: &str) -> Option<&ObjectionEntry> {
         let lc = inbound.to_ascii_lowercase();
-        self.objections
-            .iter()
-            .find(|o| o.matches.iter().any(|m| lc.contains(&m.to_ascii_lowercase())))
+        self.objections.iter().find(|o| {
+            o.matches
+                .iter()
+                .any(|m| lc.contains(&m.to_ascii_lowercase()))
+        })
     }
 
     /// Render the matched entry as a JSON object the drafter can
@@ -453,8 +462,8 @@ impl ObjectionLibrary {
 
 /// Load an objection library from TOML.
 pub fn load_objections_toml(text: &str) -> Result<ObjectionLibrary> {
-    let lib: ObjectionLibrary = toml::from_str(text)
-        .map_err(|e| Error::Validation(format!("objections parse: {e}")))?;
+    let lib: ObjectionLibrary =
+        toml::from_str(text).map_err(|e| Error::Validation(format!("objections parse: {e}")))?;
     Ok(lib)
 }
 
@@ -483,11 +492,7 @@ fn default_duration_minutes() -> u32 {
 
 impl MeetingCalendar {
     /// Filter to upcoming slots (start > now) and take the first N.
-    pub fn upcoming(
-        &self,
-        now: chrono::DateTime<chrono::Utc>,
-        take: usize,
-    ) -> Vec<&MeetingSlot> {
+    pub fn upcoming(&self, now: chrono::DateTime<chrono::Utc>, take: usize) -> Vec<&MeetingSlot> {
         self.slots
             .iter()
             .filter(|s| s.start.with_timezone(&chrono::Utc) > now)
@@ -496,11 +501,7 @@ impl MeetingCalendar {
     }
 
     /// Render to a JSON value the drafter ingests.
-    pub fn to_drafter_value(
-        &self,
-        now: chrono::DateTime<chrono::Utc>,
-        take: usize,
-    ) -> Value {
+    pub fn to_drafter_value(&self, now: chrono::DateTime<chrono::Utc>, take: usize) -> Value {
         let upcoming = self.upcoming(now, take);
         json!({
             "duration_minutes": self.duration_minutes,
@@ -516,8 +517,8 @@ impl MeetingCalendar {
 
 /// Load a meeting-calendar from TOML.
 pub fn load_calendar_toml(text: &str) -> Result<MeetingCalendar> {
-    let cal: MeetingCalendar = toml::from_str(text)
-        .map_err(|e| Error::Validation(format!("calendar parse: {e}")))?;
+    let cal: MeetingCalendar =
+        toml::from_str(text).map_err(|e| Error::Validation(format!("calendar parse: {e}")))?;
     Ok(cal)
 }
 
@@ -603,7 +604,8 @@ mod tests {
 
     #[test]
     fn parse_clean_json() {
-        let raw = r#"{"subject":"Re: pricing","body":"Hi.","intent":"send-pricing","confidence":0.7}"#;
+        let raw =
+            r#"{"subject":"Re: pricing","body":"Hi.","intent":"send-pricing","confidence":0.7}"#;
         let d = parse_reply(raw).unwrap();
         assert_eq!(d.subject, "Re: pricing");
         assert_eq!(d.intent, "send-pricing");

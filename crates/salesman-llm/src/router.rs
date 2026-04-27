@@ -105,20 +105,18 @@ impl LlmRouter {
     /// correctness requirement.
     pub fn with_operator_brief_from_env(mut self) -> Self {
         match std::env::var("SALESMAN_OPERATOR_BRIEF") {
-            Ok(path) if !path.trim().is_empty() => {
-                match std::fs::read_to_string(&path) {
-                    Ok(text) => {
-                        let trimmed = text.trim().to_string();
-                        if !trimmed.is_empty() {
-                            self.operator_brief = Some(trimmed);
-                            tracing::info!(path = %path, "operator brief loaded");
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(path = %path, "%e" = %e, "operator brief read failed; proceeding without");
+            Ok(path) if !path.trim().is_empty() => match std::fs::read_to_string(&path) {
+                Ok(text) => {
+                    let trimmed = text.trim().to_string();
+                    if !trimmed.is_empty() {
+                        self.operator_brief = Some(trimmed);
+                        tracing::info!(path = %path, "operator brief loaded");
                     }
                 }
-            }
+                Err(e) => {
+                    tracing::warn!(path = %path, "%e" = %e, "operator brief read failed; proceeding without");
+                }
+            },
             _ => {}
         }
         self
@@ -263,7 +261,11 @@ mod tests {
         apply_operator_brief(&mut r, "PlausiDen sells security tools.");
         assert!(matches!(r.messages[0].role, Role::System));
         assert!(r.messages[0].content.contains("Operator brief"));
-        assert!(r.messages[0].content.contains("PlausiDen sells security tools."));
+        assert!(
+            r.messages[0]
+                .content
+                .contains("PlausiDen sells security tools.")
+        );
         assert!(r.messages[0].content.contains("Be concise.")); // original kept
         assert_eq!(r.messages.len(), 2); // didn't insert a new one
     }

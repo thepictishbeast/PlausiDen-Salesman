@@ -292,6 +292,30 @@ pub struct TouchSummary {
     pub subject: Option<String>,
     pub body: String,
     pub queued_at: chrono::DateTime<chrono::Utc>,
+    /// Provenance JSONB { backend, model, via_fallback, purpose }.
+    /// None for legacy touches drafted before migration 0005.
+    pub produced_by: Option<serde_json::Value>,
+}
+
+impl TouchSummary {
+    /// True when produced_by.via_fallback is explicitly true. False
+    /// for either-not-set or false. Used by the send-pending
+    /// `--require-primary` gate.
+    pub fn via_fallback(&self) -> bool {
+        self.produced_by
+            .as_ref()
+            .and_then(|v| v.get("via_fallback"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+
+    /// `backend/model` short string for display.
+    pub fn produced_by_short(&self) -> Option<String> {
+        let pb = self.produced_by.as_ref()?;
+        let backend = pb.get("backend").and_then(|v| v.as_str()).unwrap_or("?");
+        let model = pb.get("model").and_then(|v| v.as_str()).unwrap_or("?");
+        Some(format!("{backend}/{model}"))
+    }
 }
 
 /// A single trigger event surfaced by the trigger-scanner. The
@@ -313,6 +337,19 @@ impl TriggerEventRow {
     pub fn rank(&self) -> f32 {
         self.recency_score * self.relevance_score
     }
+}
+
+/// Input shape for `insert_trigger_event`. Groups the per-event
+/// fields so the public function stays under the seven-arg lint.
+#[derive(Debug, Clone)]
+pub struct TriggerEventInsert<'a> {
+    pub prospect_id: ProspectId,
+    pub source: &'a str,
+    pub headline: &'a str,
+    pub url: Option<&'a str>,
+    pub recency_score: f32,
+    pub relevance_score: f32,
+    pub raw: &'a serde_json::Value,
 }
 
 impl State {
@@ -508,18 +545,14 @@ impl State {
         .fetch_one(&mut *tx)
         .await
         .map_err(|e| Error::Db(e.to_string()))?;
-        let contact_id: uuid::Uuid = row
-            .try_get("id")
-            .map_err(|e| Error::Db(e.to_string()))?;
+        let contact_id: uuid::Uuid = row.try_get("id").map_err(|e| Error::Db(e.to_string()))?;
         sqlx::query("UPDATE prospects SET primary_contact_id = $2 WHERE id = $1")
             .bind(prospect_id.0)
             .bind(contact_id)
             .execute(&mut *tx)
             .await
             .map_err(|e| Error::Db(e.to_string()))?;
-        tx.commit()
-            .await
-            .map_err(|e| Error::Db(e.to_string()))?;
+        tx.commit().await.map_err(|e| Error::Db(e.to_string()))?;
         Ok(contact_id)
     }
 
@@ -697,10 +730,8 @@ impl State {
         body: &str,
         template_key: Option<&str>,
     ) -> Result<salesman_core::TouchId> {
-        self.insert_touch_draft_full(
-            prospect_id, channel, subject, body, template_key, None,
-        )
-        .await
+        self.insert_touch_draft_full(prospect_id, channel, subject, body, template_key, None)
+            .await
     }
 
     /// Full-form draft insert. `produced_by` is a JSON object recording
@@ -784,17 +815,21 @@ impl State {
         Ok(best)
     }
 
-    /// Per-template performance: drafted, sent, replied (any kind),
-    /// engaged-replied. The bandit reads this to weight template
-    /// selection.
-
     /// All known contacts at a company. Used by account-based
     /// fanout to surface OTHER stakeholders the operator can pursue
     /// when a prospect engages. Returns (id, name, title, email, source).
     pub async fn list_contacts_for_company(
         &self,
         company_id: CompanyId,
-    ) -> Result<Vec<(uuid::Uuid, Option<String>, Option<String>, Option<String>, String)>> {
+    ) -> Result<
+        Vec<(
+            uuid::Uuid,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            String,
+        )>,
+    > {
         let rows = sqlx::query(
             "SELECT id, name, title, email, source \
              FROM contacts \
@@ -837,8 +872,14 @@ impl State {
         .map_err(|e| Error::Db(e.to_string()))?;
         Ok(row.map(|r| {
             (
-                CompanyId(r.try_get("company_id").unwrap_or_else(|_| uuid::Uuid::nil())),
-                CampaignId(r.try_get("campaign_id").unwrap_or_else(|_| uuid::Uuid::nil())),
+                CompanyId(
+                    r.try_get("company_id")
+                        .unwrap_or_else(|_| uuid::Uuid::nil()),
+                ),
+                CampaignId(
+                    r.try_get("campaign_id")
+                        .unwrap_or_else(|_| uuid::Uuid::nil()),
+                ),
                 r.try_get("display_name").unwrap_or_default(),
             )
         }))
@@ -895,9 +936,7 @@ impl State {
     /// each row is (template_key, segment) where `segment` is the
     /// company's industry. Lets the operator answer "which template
     /// wins for security CISOs vs devops engineers."
-    pub async fn template_stats_by_segment(
-        &self,
-    ) -> Result<Vec<(String, String, TemplateStat)>> {
+    pub async fn template_stats_by_segment(&self) -> Result<Vec<(String, String, TemplateStat)>> {
         let rows = sqlx::query(
             "SELECT
                t.template_key,
@@ -970,7 +1009,7 @@ impl State {
     ) -> Result<Vec<TouchSummary>> {
         let rows = sqlx::query(
             "SELECT t.id, t.prospect_id, t.subject, t.body, t.channel, t.queued_at,
-                    c.display_name AS company
+                    t.produced_by, c.display_name AS company
              FROM touches t
              JOIN prospects p ON p.id = t.prospect_id
              JOIN companies c ON c.id = p.company_id
@@ -999,6 +1038,7 @@ impl State {
                 queued_at: r
                     .try_get("queued_at")
                     .unwrap_or_else(|_| chrono::Utc::now()),
+                produced_by: r.try_get("produced_by").ok().flatten(),
             });
         }
         Ok(out)
@@ -1080,7 +1120,7 @@ impl State {
     ) -> Result<Vec<TouchSummary>> {
         let rows = sqlx::query(
             "SELECT t.id, t.prospect_id, t.subject, t.body, t.channel, t.queued_at,
-                    c.display_name AS company
+                    t.produced_by, c.display_name AS company
              FROM touches t
              JOIN prospects p ON p.id = t.prospect_id
              JOIN companies c ON c.id = p.company_id
@@ -1106,6 +1146,7 @@ impl State {
                 queued_at: r
                     .try_get("queued_at")
                     .unwrap_or_else(|_| chrono::Utc::now()),
+                produced_by: r.try_get("produced_by").ok().flatten(),
             });
         }
         Ok(out)
@@ -1654,8 +1695,10 @@ impl State {
         Ok(rows
             .into_iter()
             .map(|r| {
-                let prospect_id =
-                    ProspectId(r.try_get("prospect_id").unwrap_or_else(|_| uuid::Uuid::nil()));
+                let prospect_id = ProspectId(
+                    r.try_get("prospect_id")
+                        .unwrap_or_else(|_| uuid::Uuid::nil()),
+                );
                 let comps: Vec<String> = r
                     .try_get::<Option<serde_json::Value>, _>("comps")
                     .unwrap_or(None)
@@ -1711,12 +1754,20 @@ impl State {
         Ok(rows
             .into_iter()
             .map(|r| ProspectWithFacts {
-                prospect_id: ProspectId(r.try_get("prospect_id").unwrap_or_else(|_| uuid::Uuid::nil())),
-                company_id: CompanyId(r.try_get("company_id").unwrap_or_else(|_| uuid::Uuid::nil())),
+                prospect_id: ProspectId(
+                    r.try_get("prospect_id")
+                        .unwrap_or_else(|_| uuid::Uuid::nil()),
+                ),
+                company_id: CompanyId(
+                    r.try_get("company_id")
+                        .unwrap_or_else(|_| uuid::Uuid::nil()),
+                ),
                 display_name: r.try_get("display_name").unwrap_or_default(),
                 homepage: r.try_get::<Option<String>, _>("homepage").unwrap_or(None),
                 industry: r.try_get::<Option<String>, _>("industry").unwrap_or(None),
-                description: r.try_get::<Option<String>, _>("description").unwrap_or(None),
+                description: r
+                    .try_get::<Option<String>, _>("description")
+                    .unwrap_or(None),
                 tech_signals: r
                     .try_get::<Option<serde_json::Value>, _>("tech_signals")
                     .unwrap_or(None)
@@ -2562,16 +2613,7 @@ impl State {
     /// (prospect, source, url) so re-running the scanner doesn't
     /// produce duplicates. Returns true when a row was actually
     /// inserted, false on conflict.
-    pub async fn insert_trigger_event(
-        &self,
-        prospect_id: ProspectId,
-        source: &str,
-        headline: &str,
-        url: Option<&str>,
-        recency_score: f32,
-        relevance_score: f32,
-        raw: &serde_json::Value,
-    ) -> Result<bool> {
+    pub async fn insert_trigger_event(&self, ev: TriggerEventInsert<'_>) -> Result<bool> {
         let row = sqlx::query(
             "INSERT INTO trigger_events
              (id, prospect_id, source, headline, url, recency_score, relevance_score, raw)
@@ -2580,13 +2622,13 @@ impl State {
              RETURNING id",
         )
         .bind(uuid::Uuid::now_v7())
-        .bind(prospect_id.0)
-        .bind(source)
-        .bind(headline)
-        .bind(url)
-        .bind(recency_score)
-        .bind(relevance_score)
-        .bind(raw)
+        .bind(ev.prospect_id.0)
+        .bind(ev.source)
+        .bind(ev.headline)
+        .bind(ev.url)
+        .bind(ev.recency_score)
+        .bind(ev.relevance_score)
+        .bind(ev.raw)
         .fetch_optional(self.pool())
         .await
         .map_err(|e| Error::Db(e.to_string()))?;

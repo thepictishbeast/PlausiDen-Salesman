@@ -243,8 +243,8 @@ pub fn load_catalog_toml(text: &str) -> Result<Vec<ProductEntry>> {
         #[serde(default)]
         products: Vec<ProductEntry>,
     }
-    let parsed: Wrapped = toml::from_str(text)
-        .map_err(|e| Error::Validation(format!("catalog parse: {e}")))?;
+    let parsed: Wrapped =
+        toml::from_str(text).map_err(|e| Error::Validation(format!("catalog parse: {e}")))?;
     if parsed.products.is_empty() {
         return Err(Error::Validation("catalog has no products".into()));
     }
@@ -266,7 +266,8 @@ mod tests {
 
     #[test]
     fn parse_fenced_json() {
-        let raw = "```json\n{\"picked_product\":\"X\",\"picked_angle\":\"y\",\"rationale\":\"z\"}\n```";
+        let raw =
+            "```json\n{\"picked_product\":\"X\",\"picked_angle\":\"y\",\"rationale\":\"z\"}\n```";
         let p = parse_pick(raw).unwrap();
         assert_eq!(p.picked_product, "X");
     }

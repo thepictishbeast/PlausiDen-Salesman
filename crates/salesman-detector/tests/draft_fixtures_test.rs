@@ -27,7 +27,9 @@ const APPROVAL_THRESHOLD: f32 = 0.6;
 fn parse_fixture(text: &str) -> (Option<String>, String) {
     let mut lines = text.lines();
     let header = lines.next().unwrap_or("");
-    let subject = header.strip_prefix("subject:").map(|s| s.trim().to_string());
+    let subject = header
+        .strip_prefix("subject:")
+        .map(|s| s.trim().to_string());
     let _separator = lines.next();
     let body = lines.collect::<Vec<_>>().join("\n");
     (subject, body)
@@ -39,9 +41,7 @@ fn every_draft_fixture_passes_detector() {
     let entries: Vec<_> = fs::read_dir(&dir)
         .expect("read draft_fixtures dir")
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path().extension().and_then(|x| x.to_str()) == Some("txt")
-        })
+        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("txt"))
         .collect();
 
     assert!(
