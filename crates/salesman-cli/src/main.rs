@@ -2571,6 +2571,34 @@ async fn main() -> Result<()> {
                     String::new()
                 };
 
+                // U55: inline webhook ping when a positive intent
+                // signal lands. Speed of response is a closing-deals
+                // multiplier — the operator should see "engaged" reply
+                // alerts the moment they classify, not when the next
+                // alerts cron runs an hour later. SALESMAN_ALERT_WEBHOOK_URL
+                // controls; missing env = no-op.
+                if matches!(kind_str.as_str(), "engaged" | "question")
+                    && let Ok(url) = std::env::var("SALESMAN_ALERT_WEBHOOK_URL")
+                    && !url.trim().is_empty()
+                {
+                    let preview: String = r
+                        .body
+                        .chars()
+                        .take(180)
+                        .collect::<String>()
+                        .replace('\n', " ");
+                    let text = format!(
+                        "[{}] reply from {}: \"{}…\" — review: salesman draft-replies",
+                        kind_str, r.from_address, preview
+                    );
+                    if let Err(e) = post_alert_webhook(&url, &text).await {
+                        tracing::warn!(
+                            reply = %r.reply_id, "%e" = %e,
+                            "inline alert webhook failed (best-effort)",
+                        );
+                    }
+                }
+
                 println!(
                     "[{}] {} → {}: {}{competitor_note}{interest_note}",
                     r.from_address, kind_str, r.reply_id, summary
