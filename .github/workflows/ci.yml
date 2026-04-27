@@ -70,7 +70,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: All authoritative docs present
         run: |
-          for f in PLAN.md ROADMAP.md AUDIT.md FOSS_AUDIT.md HUMAN_IN_THE_LOOP.md OWNER_BLOCKERS.md docs/EMAIL_DELIVERABILITY.md docs/OPERATOR_HANDBOOK.md; do
+          for f in PLAN.md ROADMAP.md AUDIT.md FOSS_AUDIT.md HUMAN_IN_THE_LOOP.md OWNER_BLOCKERS.md docs/EMAIL_DELIVERABILITY.md docs/OPERATOR_HANDBOOK.md docs/DEPLOYMENT_GUIDE.md; do
             test -s "$f" || { echo "missing or empty: $f"; exit 1; }
           done
       - name: ADR template + at least 5 ADRs
@@ -88,3 +88,32 @@ jobs:
         run: sudo apt-get -qq install -y shellcheck
       - name: lint scripts/
         run: shellcheck scripts/*.sh
+
+  cli_help:
+    name: CLI help smoke test (parse-only)
+    runs-on: [self-hosted, linux, x64, plausiden]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build CLI
+        run: cargo build -p salesman-cli --bin salesman
+      # Catches subcommand-definition breakage even when DB-touching
+      # tests can't run on CI. Every reputation-critical command must
+      # at least parse and render its own --help.
+      - name: --help on critical commands
+        run: |
+          set -e
+          ./target/debug/salesman --help
+          ./target/debug/salesman doctor --help
+          ./target/debug/salesman whoami --help
+          ./target/debug/salesman preflight --help
+          ./target/debug/salesman send-pending --help
+          ./target/debug/salesman costs --help
+          ./target/debug/salesman suppressions --help
+          ./target/debug/salesman suppressions list --help
+          ./target/debug/salesman suppressions add --help
+          ./target/debug/salesman suppressions remove --help
+          ./target/debug/salesman suppressions export --help
+          ./target/debug/salesman suppressions import --help
+          ./target/debug/salesman suppressions count --help
+          ./target/debug/salesman queue-clear --help
+          ./target/debug/salesman approve-batch --help
