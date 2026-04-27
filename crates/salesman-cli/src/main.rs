@@ -1461,6 +1461,7 @@ async fn main() -> Result<()> {
                 "SALESMAN_FROM_EMAIL",
                 "SALESMAN_REPLY_TO",
                 "SALESMAN_LIST_UNSUBSCRIBE",
+                "SALESMAN_UNSUBSCRIBE_BASE_URL",
                 "SALESMAN_COMPLIANCE_FOOTER",
                 "SALESMAN_SMTP_HOST",
                 "SALESMAN_SMTP_PORT",
@@ -1473,11 +1474,20 @@ async fn main() -> Result<()> {
                     _ => missing.push(k),
                 }
             }
-            // Don't echo passwords.
-            let pwd_set = std::env::var("SALESMAN_SMTP_PASSWORD")
-                .map(|v| !v.is_empty())
-                .unwrap_or(false);
-            report.insert("SALESMAN_SMTP_PASSWORD".into(), serde_json::Value::Bool(pwd_set));
+            // Don't echo passwords or HMAC secrets — only their presence.
+            for secret_key in ["SALESMAN_SMTP_PASSWORD", "SALESMAN_UNSUBSCRIBE_HMAC_SECRET"] {
+                let set = std::env::var(secret_key)
+                    .map(|v| !v.is_empty())
+                    .unwrap_or(false);
+                report.insert(secret_key.into(), serde_json::Value::Bool(set));
+            }
+            // Surface whether the per-recipient unsubscribe minter is fully wired.
+            let unsub_ready = std::env::var("SALESMAN_UNSUBSCRIBE_BASE_URL").map(|v| !v.is_empty()).unwrap_or(false)
+                && std::env::var("SALESMAN_UNSUBSCRIBE_HMAC_SECRET").map(|v| !v.is_empty()).unwrap_or(false);
+            report.insert(
+                "unsubscribe_minter_ready".into(),
+                serde_json::Value::Bool(unsub_ready),
+            );
             report.insert("missing_required".into(), serde_json::json!(missing));
             println!("{}", serde_json::to_string_pretty(&report)?);
             if !missing.is_empty() {
@@ -1610,6 +1620,32 @@ async fn main() -> Result<()> {
                 Ok(_) => println!("OK  SALESMAN_SMTP_* set"),
                 Err(e) => {
                     println!("WARN  {e}  (required for send-pending --for-real)");
+                    warnings += 1;
+                }
+            }
+
+            // --- per-recipient unsubscribe minter (RFC 8058)
+            print!("[ unsub minter]  ");
+            match salesman_outreach::UnsubscribeTokens::from_env() {
+                Ok(t) => {
+                    let scheme_ok = t.base_url().starts_with("https://")
+                        || t.base_url().starts_with("http://localhost")
+                        || t.base_url().starts_with("http://127.0.0.1");
+                    if scheme_ok {
+                        println!("OK  base={}", t.base_url());
+                    } else {
+                        println!(
+                            "WARN  base_url is plain http on a non-localhost host — \
+                             Gmail / Yahoo will not honor List-Unsubscribe over plaintext"
+                        );
+                        warnings += 1;
+                    }
+                }
+                Err(e) => {
+                    println!(
+                        "WARN  {e}  (Gmail + Yahoo bulk-sender rules require RFC 8058 one-click; \
+                         set SALESMAN_UNSUBSCRIBE_BASE_URL + SALESMAN_UNSUBSCRIBE_HMAC_SECRET)"
+                    );
                     warnings += 1;
                 }
             }

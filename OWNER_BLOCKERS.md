@@ -34,6 +34,21 @@ Uncomment + fill:
 Unblocks: every LLM-powered tool — draft, classify, comparison,
 case-study, SEO, reply-classifier, and the agent loop itself.
 
+### B4.5 — Unsubscribe minter (RFC 8058 one-click)
+On the openclaw VPS, append to `/etc/salesman.env`:
+- `SALESMAN_UNSUBSCRIBE_BASE_URL=https://outreach.plausiden.com/unsubscribe`
+   (must be HTTPS reachable from Gmail / Yahoo egress IPs — they fetch
+   the link with a fresh client; cannot be behind basic-auth)
+- `SALESMAN_UNSUBSCRIBE_HMAC_SECRET=<paste output of: openssl rand -hex 32>`
+   (≥32 bytes hex or base64url; never log or echo this; rotating it
+   invalidates ALL previously sent unsubscribe links so do it sparingly)
+Then expose `salesman-api` on `https://outreach.plausiden.com` (it
+serves `/unsubscribe` un-authed; the rest of the API stays
+auth-gated).
+Unblocks: Gmail + Yahoo bulk-sender compliance. Without this they
+will progressively spam-bin our domain regardless of SPF/DKIM/DMARC.
+Run `salesman doctor` to verify — look for `[ unsub minter] OK`.
+
 ### B5 — First prospect CSV
 25 friendlies for the warm-up batch (companies you actually want
 me to reach out to + ideally where there's some context). CSV with

@@ -47,6 +47,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # crypto / safety
 sha2 = "0.10"
+hmac = "0.12"
 zeroize = { version = "1", features = ["derive"] }
 subtle = "2"
 ed25519-dalek = { version = "2", features = ["rand_core", "zeroize"] }

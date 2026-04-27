@@ -2,12 +2,13 @@ use crate::AppState;
 use crate::html;
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{StatusCode, header},
     response::{Html, IntoResponse, Redirect, Response},
 };
 use salesman_core::{Result as SR, TouchId};
 use salesman_receipts::{Signer, default_seed_path, verify_receipt};
+use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -100,6 +101,140 @@ pub async fn receipts_html(
         rows.push((r.created_at, r.event_kind.clone(), hex::encode(&r.hash[..8.min(r.hash.len())]), verified));
     }
     Ok(Html(html::receipts_table(&rows)))
+}
+
+// ---------------------------------------------------------------------------
+// unsubscribe (RFC 8058 one-click)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct UnsubQuery {
+    /// HMAC token of the form "{email_b64}.{mac_b64}".
+    t: Option<String>,
+}
+
+/// GET /unsubscribe?t=...
+///
+/// Renders a small confirmation page. We DO NOT auto-suppress on GET —
+/// many mail clients (and link prefetchers!) hit GET on every link.
+/// The visible button on the page POSTs to the same URL, which is the
+/// path that actually records the suppression.
+///
+/// Exception: if the recipient is already suppressed, we show a
+/// success message — the action they wanted is already done.
+pub async fn unsubscribe_get(
+    State(app): State<Arc<AppState>>,
+    Query(q): Query<UnsubQuery>,
+) -> Response {
+    let Some(verifier) = &app.unsubscribe_tokens else {
+        return service_unconfigured();
+    };
+    let token = match q.t.as_deref() {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                html::unsubscribe_error("Missing or empty unsubscribe link parameter."),
+            )
+                .into_response();
+        }
+    };
+    let email = match verifier.verify_token(token) {
+        Ok(e) => e,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                html::unsubscribe_error(
+                    "This unsubscribe link is invalid or has been tampered with. \
+                     If you keep getting our messages, reply with the word STOP.",
+                ),
+            )
+                .into_response();
+        }
+    };
+    let already = app
+        .state
+        .is_suppressed(&email)
+        .await
+        .unwrap_or(false);
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        html::unsubscribe_confirm(&email, token, already),
+    )
+        .into_response()
+}
+
+/// POST /unsubscribe?t=...
+///
+/// Either RFC 8058 one-click (mail clients POST `List-Unsubscribe=One-Click`
+/// form-encoded) OR the visible-button submission from the GET page.
+/// Always idempotent — a second POST with the same email returns 200.
+pub async fn unsubscribe_post(
+    State(app): State<Arc<AppState>>,
+    Query(q): Query<UnsubQuery>,
+) -> Response {
+    let Some(verifier) = &app.unsubscribe_tokens else {
+        return service_unconfigured();
+    };
+    let token = match q.t.as_deref() {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                html::unsubscribe_error("Missing unsubscribe token."),
+            )
+                .into_response();
+        }
+    };
+    let email = match verifier.verify_token(token) {
+        Ok(e) => e,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                html::unsubscribe_error(
+                    "This unsubscribe link is invalid or has been tampered with.",
+                ),
+            )
+                .into_response();
+        }
+    };
+    if let Err(e) = app
+        .state
+        .add_suppression(&email, "email", "one-click unsubscribe", "one_click")
+        .await
+    {
+        tracing::error!(error = %e, "add_suppression failed for one-click");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            html::unsubscribe_error(
+                "Could not record your unsubscribe right now. Please try again, \
+                 or reply with the word STOP.",
+            ),
+        )
+            .into_response();
+    }
+    tracing::info!(email = %email, "one-click unsubscribe recorded");
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        html::unsubscribe_done(&email),
+    )
+        .into_response()
+}
+
+fn service_unconfigured() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        "unsubscribe service is not configured on this host\n",
+    )
+        .into_response()
 }
 
 // ---------------------------------------------------------------------------

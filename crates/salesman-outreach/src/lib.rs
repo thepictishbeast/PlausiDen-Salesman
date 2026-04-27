@@ -14,6 +14,9 @@
 //! SECURITY: SMTP password held in `Zeroizing<String>`.
 #![forbid(unsafe_code)]
 
+pub mod unsubscribe;
+pub use unsubscribe::UnsubscribeTokens;
+
 use lettre::message::header::{Header, HeaderName, HeaderValue};
 use lettre::message::{Mailbox, MultiPart};
 use lettre::transport::smtp::authentication::Credentials;
@@ -37,14 +40,33 @@ pub struct SmtpConfig {
     /// Footer appended to every body. Should include physical address
     /// + opt-out language for CAN-SPAM.
     pub compliance_footer: String,
-    /// One-click List-Unsubscribe URL (mailto: or https://).
+    /// Static fallback List-Unsubscribe URL (mailto: or https://).
+    /// Used only when `unsubscribe_tokens` is None — otherwise the
+    /// per-recipient minted URL takes precedence.
     pub list_unsubscribe: Option<String>,
+    /// Per-recipient one-click unsubscribe minter (RFC 8058).
+    /// When present, the sender mints a recipient-specific URL on
+    /// every send and emits both `List-Unsubscribe` +
+    /// `List-Unsubscribe-Post` headers, and appends the URL to the
+    /// compliance footer in plain text for older mail clients.
+    pub unsubscribe_tokens: Option<UnsubscribeTokens>,
 }
 
 impl SmtpConfig {
     pub fn from_env() -> Result<Self> {
         let env = |k: &str| {
             std::env::var(k).map_err(|_| Error::Config(format!("env {k} not set")))
+        };
+        // The minter is best-effort: if either env var is missing we
+        // fall back to the static `list_unsubscribe` (if any). A
+        // missing minter is logged as a deliverability warning by
+        // `salesman doctor`, not a hard error here.
+        let unsubscribe_tokens = match UnsubscribeTokens::from_env() {
+            Ok(t) => Some(t),
+            Err(e) => {
+                tracing::debug!(reason = %e, "no per-recipient unsubscribe minter configured");
+                None
+            }
         };
         Ok(Self {
             host: env("SALESMAN_SMTP_HOST")?,
@@ -62,6 +84,7 @@ impl SmtpConfig {
                      Reply STOP to opt out of further messages.".to_string()
                 }),
             list_unsubscribe: std::env::var("SALESMAN_LIST_UNSUBSCRIBE").ok(),
+            unsubscribe_tokens,
         })
     }
 }
@@ -101,7 +124,30 @@ impl SmtpSender {
             .parse()
             .map_err(|e| Error::Validation(format!("to address: {e}")))?;
 
-        let full_body = format!("{body}\n\n--\n{}", self.config.compliance_footer);
+        // Resolve unsubscribe URL: per-recipient minter wins, static
+        // fallback otherwise. When neither is set we ship without the
+        // header (gateway reputation will suffer; `salesman doctor`
+        // surfaces this).
+        let unsub_url: Option<String> = self
+            .config
+            .unsubscribe_tokens
+            .as_ref()
+            .map(|m| m.url_for(to_email))
+            .or_else(|| self.config.list_unsubscribe.clone());
+
+        // When we have a real minted URL, surface it in the visible
+        // footer too — RFC 8058 only covers the headers and many MUAs
+        // (Apple Mail, Thunderbird older versions, plain-text CLI mail)
+        // will not render the header link.
+        let footer_with_unsub = match &unsub_url {
+            Some(url) if self.config.unsubscribe_tokens.is_some() => format!(
+                "{}\nUnsubscribe: {}",
+                self.config.compliance_footer,
+                url
+            ),
+            _ => self.config.compliance_footer.clone(),
+        };
+        let full_body = format!("{body}\n\n--\n{footer_with_unsub}");
 
         let mut builder = Message::builder()
             .from(from)
@@ -113,8 +159,8 @@ impl SmtpSender {
                 .map_err(|e| Error::Config(format!("reply_to: {e}")))?;
             builder = builder.reply_to(reply_mb);
         }
-        if let Some(lu) = &self.config.list_unsubscribe {
-            builder = builder.header(ListUnsubscribe(format!("<{lu}>")));
+        if let Some(url) = &unsub_url {
+            builder = builder.header(ListUnsubscribe(format!("<{url}>")));
             builder = builder.header(ListUnsubscribePost("List-Unsubscribe=One-Click".to_string()));
         }
 
