@@ -73,6 +73,7 @@ walkdir = "2"
 
 # cli
 clap = { version = "4", features = ["derive", "env"] }
+dialoguer = { version = "0.11", default-features = false }
 
 # config
 figment = { version = "0.10", features = ["toml", "env"] }

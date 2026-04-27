@@ -145,6 +145,11 @@ enum Cmd {
         /// Skip the 5-second pre-send pause. Use ONLY in CI / scripts.
         #[arg(long, default_value_t = false)]
         no_pause: bool,
+        /// Require the operator to TYPE the campaign name to confirm
+        /// REAL send (dialoguer prompt). The strongest reputation
+        /// safeguard. Recommended for first real send / new domains.
+        #[arg(long, default_value_t = false)]
+        confirm_typed: bool,
     },
     /// Verify the receipt chain (audit).
     Audit {
@@ -756,6 +761,7 @@ async fn main() -> Result<()> {
             max_batch,
             ack_new_domains,
             no_pause,
+            confirm_typed,
         } => {
             let state = require_state(cli.database_url.as_deref()).await?;
             let campaign_id = state
@@ -823,6 +829,20 @@ async fn main() -> Result<()> {
                      reviewing the list.",
                     new_domain_count, ack_new_domains
                 );
+            }
+
+            // Strongest gate: typed confirmation (requires TTY).
+            if for_real && confirm_typed {
+                use dialoguer::Input;
+                let typed: String = Input::new()
+                    .with_prompt(format!(
+                        "Type the campaign name (`{campaign}`) to confirm REAL send"
+                    ))
+                    .interact_text()
+                    .map_err(|e| anyhow::anyhow!("dialoguer: {e}"))?;
+                if typed.trim() != campaign {
+                    anyhow::bail!("typed campaign name did not match — aborting");
+                }
             }
 
             if for_real && !no_pause {
