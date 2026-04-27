@@ -1,0 +1,11 @@
+expected: high
+---
+In today's fast-paced security landscape, organizations are increasingly
+looking to leverage cutting-edge solutions that can help them stay ahead
+of emerging threats. Our platform is designed to revolutionize the way
+your team approaches security operations.
+
+By seamlessly integrating with your existing infrastructure, we enable
+you to unlock the full potential of your security data and take your
+program to the next level. Let's circle back next week to discuss how
+we can synergize.

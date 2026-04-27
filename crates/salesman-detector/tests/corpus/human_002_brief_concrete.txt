@@ -1,0 +1,10 @@
+expected: low
+---
+You posted last week that your team is migrating off Falcon. We did
+the same migration two years back and have a write-up of the gotchas
+we hit (mostly Sysmon-config gaps after the agent swap).
+
+Want a copy? It's not a sales pitch — happy to send the doc and
+disappear.
+
+Reply STOP and I won't follow up.

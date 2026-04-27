@@ -1,0 +1,10 @@
+expected: low
+---
+Saw your team's writeup of the rotation-KDF off-by-one. We hit the
+same bug in 2024 — the patch you shipped is what convinced our
+auditor to re-open ours.
+
+If you're curious, the regression case we built around it is here
+(<link>). Happy to share the test data.
+
+Reply STOP and I won't follow up.

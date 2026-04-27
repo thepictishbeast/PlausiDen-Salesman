@@ -1,0 +1,10 @@
+expected: medium
+---
+Happy Tuesday!
+
+Hope you're doing well. Just wanted to reach out and circle back on
+the conversation we had last month about your security stack. I'd
+love to touch base and explore how we can help take your program to
+the next level.
+
+Let me know what works for you — looking forward to chatting!

@@ -1,0 +1,14 @@
+expected: high
+---
+I hope this email finds you well.
+
+I noticed your company has been doing impressive work in the security
+space. I wanted to reach out to introduce our team and explore how we
+might be able to collaborate.
+
+We help organizations like yours with our cutting-edge security
+solutions, and I would love to schedule a quick call to discuss your
+current challenges. When works best for you?
+
+Best regards,
+The team

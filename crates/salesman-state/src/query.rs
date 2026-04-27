@@ -14,6 +14,14 @@ use salesman_core::{
 use salesman_receipts::Receipt;
 use sqlx::Row;
 
+fn random_pick(keys: &[String], default_key: &str) -> String {
+    if keys.is_empty() {
+        return default_key.to_string();
+    }
+    let idx = (uuid::Uuid::now_v7().as_u128() as usize) % keys.len();
+    keys[idx].clone()
+}
+
 #[derive(Debug, Clone)]
 pub struct ProspectWithFacts {
     pub prospect_id: ProspectId,
@@ -463,6 +471,50 @@ impl State {
         .await
         .map_err(|e| Error::Db(e.to_string()))?;
         Ok(id)
+    }
+
+    /// Pick a template via epsilon-greedy. With probability `1-epsilon`
+    /// we pick the template with the best `engaged_rate`; with
+    /// probability `epsilon` we pick a random other template.
+    /// If there are no template-tagged sends yet, returns
+    /// `default_key`.
+    pub async fn pick_template_via_bandit(
+        &self,
+        epsilon: f32,
+        default_key: &str,
+        candidate_keys: &[String],
+    ) -> Result<String> {
+        if candidate_keys.is_empty() {
+            return Ok(default_key.to_string());
+        }
+        let stats = self.template_stats().await?;
+        // Filter to candidates only.
+        let mut applicable: Vec<&TemplateStat> = stats
+            .iter()
+            .filter(|s| candidate_keys.contains(&s.template_key) && s.sent > 0)
+            .collect();
+        if applicable.is_empty() {
+            // No data yet — pick a random candidate to start exploring.
+            return Ok(random_pick(candidate_keys, default_key));
+        }
+        applicable.sort_by(|a, b| {
+            b.engaged_rate()
+                .partial_cmp(&a.engaged_rate())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let best = applicable[0].template_key.clone();
+        // ε-explore.
+        let r: f32 = (uuid::Uuid::now_v7().as_u128() as u32 as f32) / (u32::MAX as f32);
+        if r < epsilon && candidate_keys.len() > 1 {
+            // Random other.
+            let others: Vec<&String> = candidate_keys.iter().filter(|k| **k != best).collect();
+            if others.is_empty() {
+                return Ok(best);
+            }
+            let idx = (uuid::Uuid::now_v7().as_u128() as usize) % others.len();
+            return Ok(others[idx].clone());
+        }
+        Ok(best)
     }
 
     /// Per-template performance: drafted, sent, replied (any kind),

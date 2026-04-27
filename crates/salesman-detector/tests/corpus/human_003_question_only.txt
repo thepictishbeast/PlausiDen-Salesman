@@ -1,0 +1,9 @@
+expected: low
+---
+Quick one — does your detection-engineering process include any
+purple-team work or is it tabletop-only? Trying to get a sense of
+where the SMB segment is on this.
+
+(no pitch attached, just asking)
+
+— alice
