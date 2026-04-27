@@ -1321,6 +1321,32 @@ impl State {
             .collect())
     }
 
+    /// Count hard-bounce suppressions for a given domain in the last
+    /// `window_hours`. Used by send-pending to soft-quarantine
+    /// domains whose recent bounce rate is suspiciously high — an
+    /// early signal that the prospect list is junk OR that the
+    /// recipient mail provider has put us in tarpit mode.
+    pub async fn count_bounces_to_domain_since(
+        &self,
+        domain: &str,
+        window_hours: i64,
+    ) -> Result<i64> {
+        let row = sqlx::query(
+            "SELECT COUNT(*)::BIGINT AS n \
+             FROM suppressions \
+             WHERE source = 'bounce' \
+               AND target_kind = 'email' \
+               AND target LIKE '%@' || $1 \
+               AND added_at > NOW() - ($2 || ' hours')::INTERVAL",
+        )
+        .bind(domain)
+        .bind(window_hours.to_string())
+        .fetch_one(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(row.try_get::<i64, _>("n").unwrap_or(0))
+    }
+
     /// Remove a suppression by target. Idempotent — returns the
     /// number of rows actually deleted (0 or 1). Fires
     /// `suppression.removed` on the salesman_event channel when a

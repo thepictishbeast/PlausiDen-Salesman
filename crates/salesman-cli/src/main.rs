@@ -212,6 +212,11 @@ enum Cmd {
         /// Per-domain max touches in window.
         #[arg(long, default_value_t = 10)]
         per_domain_max: i64,
+        /// Soft-quarantine threshold: skip a domain whose recent
+        /// hard-bounce count meets or exceeds this value within the
+        /// last 24h. Set to 0 to disable.
+        #[arg(long, default_value_t = 3)]
+        domain_quarantine_threshold: i64,
         /// HARD cap on touches sent in this single invocation. A
         /// reputation safeguard against accidental large batches.
         #[arg(long, default_value_t = 25)]
@@ -1079,6 +1084,7 @@ async fn main() -> Result<()> {
             per_recipient_max,
             per_domain_window_hours,
             per_domain_max,
+            domain_quarantine_threshold,
             max_batch,
             ack_new_domains,
             no_pause,
@@ -1219,6 +1225,7 @@ async fn main() -> Result<()> {
             let mut sent = 0u32;
             let mut blocked_supp = 0u32;
             let mut blocked_rate = 0u32;
+            let mut blocked_domain_quarantine = 0u32;
             let mut blocked_no_to = 0u32;
             let mut errored = 0u32;
             let mut bounced = 0u32;
@@ -1260,6 +1267,25 @@ async fn main() -> Result<()> {
                     blocked_rate += 1;
                     tracing::warn!(domain=%domain, n=%n_domain, "per-domain cap hit — skipping");
                     continue;
+                }
+                // Soft-quarantine on rolling 24h hard-bounce count.
+                // 0 disables; otherwise compare against the operator-
+                // chosen threshold. Not counted as blocked_rate
+                // because the cause is signal quality (junk list /
+                // tarpit), not volume.
+                if domain_quarantine_threshold > 0 {
+                    let n_bounces = state
+                        .count_bounces_to_domain_since(&domain, 24)
+                        .await?;
+                    if n_bounces >= domain_quarantine_threshold {
+                        blocked_domain_quarantine += 1;
+                        tracing::warn!(
+                            domain=%domain, n_bounces=%n_bounces,
+                            threshold=%domain_quarantine_threshold,
+                            "domain quarantined (recent hard-bounce rate) — skipping",
+                        );
+                        continue;
+                    }
                 }
 
                 if !for_real {
@@ -1349,6 +1375,7 @@ async fn main() -> Result<()> {
             println!(
                 "send-pending `{campaign}` ({}): approved={} attempted={attempted} sent={sent} \
                  blocked_supp={blocked_supp} blocked_rate={blocked_rate} \
+                 blocked_quarantine={blocked_domain_quarantine} \
                  blocked_no_to={blocked_no_to} bounced={bounced} errored={errored}{}",
                 if for_real { "REAL" } else { "DRY-RUN" },
                 approved.len(),
