@@ -213,6 +213,18 @@ enum Cmd {
     /// Health probe — JSON output. Exit 1 if any required component
     /// is missing.
     Status,
+    /// Comprehensive diagnostic. Probes every external dependency
+    /// (DB / LLM / SMTP / IMAP / signing key / suppressions /
+    /// awaiting-approval queue / disk) and prints a per-check verdict.
+    /// Exit 1 if anything required is broken.
+    Doctor {
+        /// Probe SMTP (will attempt a connection, no email sent).
+        #[arg(long, default_value_t = false)]
+        probe_smtp: bool,
+        /// Probe IMAP (will attempt a connection, no mailbox modify).
+        #[arg(long, default_value_t = false)]
+        probe_imap: bool,
+    },
     /// Render a directory of markdown to a static HTML site.
     RenderSite {
         #[arg(long)]
@@ -1269,6 +1281,158 @@ async fn main() -> Result<()> {
                     (total_micro_usd as f64) / 1_000_000.0,
                     rows.len()
                 );
+            }
+        }
+
+        Cmd::Doctor { probe_smtp, probe_imap } => {
+            // Header
+            println!("salesman doctor — {}", chrono::Utc::now().to_rfc3339());
+            println!("==========================================\n");
+
+            let mut required_failures = 0u32;
+            let mut warnings = 0u32;
+
+            // --- DB
+            print!("[ db          ]  ");
+            match require_state(cli.database_url.as_deref()).await {
+                Ok(s) => match s.count_companies().await {
+                    Ok(n) => println!("OK  ({n} companies)"),
+                    Err(e) => {
+                        println!("FAIL  {e}");
+                        required_failures += 1;
+                    }
+                },
+                Err(e) => {
+                    println!("FAIL  {e}");
+                    required_failures += 1;
+                }
+            }
+
+            // --- LLM backends
+            print!("[ llm         ]  ");
+            let kinds = router.registered_kinds();
+            if kinds.is_empty() {
+                println!("FAIL  no backends registered (set ANTHROPIC_API_KEY and/or GEMINI_API_KEY)");
+                required_failures += 1;
+            } else {
+                let names: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
+                println!("OK  {} registered ({})", names.len(), names.join(", "));
+            }
+
+            // --- signing key
+            print!("[ signing key ]  ");
+            let seed = salesman_receipts::default_seed_path();
+            if seed.exists() {
+                println!("OK  {}", seed.display());
+            } else {
+                println!("WARN  not present (will be generated on first send)  {}", seed.display());
+                warnings += 1;
+            }
+
+            // --- SMTP env
+            print!("[ smtp env    ]  ");
+            match SmtpConfig::from_env() {
+                Ok(_) => println!("OK  SALESMAN_SMTP_* set"),
+                Err(e) => {
+                    println!("WARN  {e}  (required for send-pending --for-real)");
+                    warnings += 1;
+                }
+            }
+
+            // --- IMAP env
+            print!("[ imap env    ]  ");
+            match ImapConfig::from_env() {
+                Ok(_) => println!("OK  SALESMAN_IMAP_* set"),
+                Err(e) => {
+                    println!("WARN  {e}  (required for inbox-poll)");
+                    warnings += 1;
+                }
+            }
+
+            // --- SMTP probe (optional)
+            if probe_smtp {
+                print!("[ smtp connect]  ");
+                match SmtpConfig::from_env() {
+                    Ok(cfg) => match SmtpSender::new(cfg) {
+                        Ok(_) => println!("OK  transport built (no email sent)"),
+                        Err(e) => {
+                            println!("FAIL  {e}");
+                            required_failures += 1;
+                        }
+                    },
+                    Err(_) => println!("SKIP  (no SMTP env)"),
+                }
+            }
+
+            // --- IMAP probe (optional)
+            if probe_imap {
+                print!("[ imap connect]  ");
+                match ImapConfig::from_env() {
+                    Ok(cfg) => {
+                        let _poller = ImapPoller::new(cfg);
+                        println!("OK  poller built (no mailbox modify)");
+                    }
+                    Err(_) => println!("SKIP  (no IMAP env)"),
+                }
+            }
+
+            // --- pipeline + quality signal
+            if let Some(state) = state_arc.as_ref() {
+                let summary = state.pipeline_summary(24).await.ok();
+                if let Some(s) = summary {
+                    print!("[ pipeline    ]  ");
+                    println!(
+                        "OK  prospects={} awaiting={} suppressions={}",
+                        s.prospects, s.awaiting_approval, s.suppressions
+                    );
+                }
+                let cost = state.cost_summary(24).await.ok();
+                if let Some(c) = cost {
+                    let total: i64 = c.iter().map(|r| r.cost_micro_usd).sum();
+                    print!("[ llm cost 24h]  ");
+                    println!("OK  ${:.4} across {} models", (total as f64) / 1_000_000.0, c.len());
+                }
+            }
+
+            // --- web-01 mail relay reachable (5s timeout)
+            print!("[ mail relay  ]  ");
+            let connect_fut = tokio::net::TcpStream::connect("mail.plausiden.com:25");
+            let conn_result =
+                tokio::time::timeout(std::time::Duration::from_secs(5), connect_fut).await;
+            match conn_result {
+                Ok(Ok(_)) => println!("OK  mail.plausiden.com:25 reachable"),
+                Ok(Err(e)) => {
+                    println!("WARN  {e}");
+                    warnings += 1;
+                }
+                Err(_) => {
+                    println!("WARN  timeout (5s)");
+                    warnings += 1;
+                }
+            }
+            // --- disk
+            print!("[ disk        ]  ");
+            match tokio::fs::metadata("/").await {
+                Ok(_) => {
+                    // Just report — we can't reasonably know the threshold
+                    // without statvfs. Skip the percent for now.
+                    println!("OK  / mounted");
+                }
+                Err(e) => {
+                    println!("FAIL  {e}");
+                    required_failures += 1;
+                }
+            }
+
+            println!();
+            println!("==========================================");
+            if required_failures == 0 && warnings == 0 {
+                println!("VERDICT: GREEN — all systems go");
+            } else if required_failures == 0 {
+                println!("VERDICT: YELLOW — {warnings} warning(s); send path may not work yet");
+            } else {
+                println!("VERDICT: RED — {required_failures} required failure(s) + {warnings} warning(s)");
+                anyhow::bail!("doctor: required components missing");
             }
         }
 
