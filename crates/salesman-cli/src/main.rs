@@ -12,7 +12,10 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use salesman_content::{DraftColdEmailTool, ReplyClassifyTool};
-use salesman_discovery::{CsvSeed, CsvSeedTool, HomepageFetchTool, HomepageFetcher};
+use salesman_discovery::{
+    BraveSearch, BraveSearchTool, CsvSeed, CsvSeedTool, EmailPatternTool, HomepageFetchTool,
+    HomepageFetcher,
+};
 use salesman_outreach::{SmtpConfig, SmtpSender};
 use salesman_reply::{ImapConfig, ImapPoller};
 use salesman_receipts::{Signer, default_seed_path};
@@ -202,12 +205,18 @@ fn build_tools(router: Arc<LlmRouter>) -> ToolRegistry {
     tools.register(Arc::new(EchoTool));
     tools.register(Arc::new(CsvSeedTool::new()));
     tools.register(Arc::new(HomepageFetchTool::new()));
+    tools.register(Arc::new(EmailPatternTool::new()));
+    if let Ok(brave) = BraveSearch::from_env() {
+        tools.register(Arc::new(BraveSearchTool::new(Arc::new(brave))));
+        tracing::info!("registered Brave Search tool");
+    }
     tools.register(Arc::new(DraftColdEmailTool::new(
-        router,
+        router.clone(),
         "the PlausiDen team",
         "PlausiDen",
         "Plausible deniability + sovereign data tools for SMB security teams.",
     )));
+    tools.register(Arc::new(salesman_content::ReplyClassifyTool::new(router)));
     tools
 }
 

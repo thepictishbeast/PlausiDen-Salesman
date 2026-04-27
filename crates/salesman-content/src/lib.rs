@@ -9,7 +9,13 @@
 //! operator approve. Anything that bypasses owner-review is a bug.
 #![forbid(unsafe_code)]
 
+pub mod case_study;
 pub mod classify_reply;
+pub mod comparison_page;
 pub mod draft_email;
+pub mod seo_meta;
+pub use case_study::CaseStudyDraftTool;
 pub use classify_reply::{ClassifyReply, ReplyClassifyTool};
+pub use comparison_page::ComparisonPageTool;
 pub use draft_email::{ColdEmailDraft, DraftColdEmailTool};
+pub use seo_meta::{SeoMeta, SeoMetaTool};
