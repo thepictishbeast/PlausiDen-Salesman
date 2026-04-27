@@ -37,3 +37,4 @@ serde = { workspace = true }
 dialoguer = { workspace = true }
 chrono = { workspace = true }
 reqwest = { workspace = true }
+csv = "1.3"

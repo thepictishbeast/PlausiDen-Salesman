@@ -788,6 +788,20 @@ enum Cmd {
         #[arg(long, default_value = "operator-issued")]
         reason: String,
     },
+    /// Import prospects from a CSV (samples/prospects-warmup-template.csv
+    /// shows the expected header). Validates rows (display_name
+    /// required, homepage parses, size_band mapped, CSV-injection
+    /// rejected), then upserts companies + links them as prospects
+    /// to the named campaign. Idempotent on (campaign, company).
+    /// `--dry-run` validates without writing.
+    ImportCsv {
+        #[arg(long)]
+        path: PathBuf,
+        #[arg(long)]
+        campaign: String,
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+    },
     /// List the registered tools.
     Tools,
     /// List the registered LLM backends + models.
@@ -5357,6 +5371,172 @@ async fn main() -> Result<()> {
 
         Cmd::Halt { reason } => {
             println!("(stub) halt requested: {reason} — lands in Phase 1.4");
+        }
+
+        Cmd::ImportCsv {
+            path,
+            campaign,
+            dry_run,
+        } => {
+            #[derive(serde::Deserialize)]
+            struct Row {
+                display_name: String,
+                #[serde(default)]
+                homepage: String,
+                #[serde(default)]
+                legal_name: String,
+                #[serde(default)]
+                industry: String,
+                #[serde(default)]
+                region: String,
+                #[serde(default)]
+                description: String,
+                #[serde(default)]
+                size_band: String,
+            }
+
+            // CSV-injection sentinel: spreadsheet apps interpret values
+            // starting with these characters as formulas. Refuse them
+            // at import time so we don't propagate them downstream into
+            // exports, dashboards, or per-row drafter prompts.
+            fn safe_field(s: &str) -> bool {
+                let s = s.trim_start();
+                if s.is_empty() {
+                    return true;
+                }
+                let first = s.chars().next().unwrap_or(' ');
+                !matches!(first, '=' | '+' | '-' | '@' | '\t' | '\r')
+            }
+
+            fn map_size_band(s: &str) -> Option<salesman_core::model::SizeBand> {
+                use salesman_core::model::SizeBand::{
+                    Enterprise, Large, Mid, Small, Solo, Unknown,
+                };
+                match s.trim().to_ascii_lowercase().as_str() {
+                    "" | "unknown" | "(unknown)" => Some(Unknown),
+                    "solo" => Some(Solo),
+                    "small" | "smb" => Some(Small),
+                    "mid" | "mid-market" | "midmarket" => Some(Mid),
+                    "large" => Some(Large),
+                    "enterprise" => Some(Enterprise),
+                    _ => None,
+                }
+            }
+
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let mut rdr = csv::ReaderBuilder::new()
+                .has_headers(true)
+                .trim(csv::Trim::All)
+                .from_path(&path)
+                .map_err(|e| anyhow::anyhow!("open CSV {}: {e}", path.display()))?;
+
+            let mut companies: Vec<salesman_core::Company> = Vec::new();
+            let mut errors: Vec<String> = Vec::new();
+            let mut row_idx = 1u32; // 1 = header; data rows start at 2.
+            for rec in rdr.deserialize::<Row>() {
+                row_idx += 1;
+                let row = match rec {
+                    Ok(r) => r,
+                    Err(e) => {
+                        errors.push(format!("row {row_idx}: parse — {e}"));
+                        continue;
+                    }
+                };
+                if row.display_name.trim().is_empty() {
+                    errors.push(format!("row {row_idx}: display_name is required"));
+                    continue;
+                }
+                for (label, val) in [
+                    ("display_name", &row.display_name),
+                    ("homepage", &row.homepage),
+                    ("legal_name", &row.legal_name),
+                    ("industry", &row.industry),
+                    ("region", &row.region),
+                    ("description", &row.description),
+                    ("size_band", &row.size_band),
+                ] {
+                    if !safe_field(val) {
+                        errors.push(format!(
+                            "row {row_idx}: {label} starts with formula char — refusing"
+                        ));
+                    }
+                }
+                let homepage = if row.homepage.trim().is_empty() {
+                    None
+                } else {
+                    match url::Url::parse(row.homepage.trim()) {
+                        Ok(u) => Some(u),
+                        Err(e) => {
+                            errors.push(format!(
+                                "row {row_idx}: homepage `{}` does not parse — {e}",
+                                row.homepage
+                            ));
+                            continue;
+                        }
+                    }
+                };
+                let size_band = match map_size_band(&row.size_band) {
+                    Some(sb) => Some(sb),
+                    None => {
+                        errors.push(format!(
+                            "row {row_idx}: size_band `{}` is not one of \
+                             solo|small|smb|mid|mid-market|large|enterprise",
+                            row.size_band,
+                        ));
+                        continue;
+                    }
+                };
+                companies.push(salesman_core::Company {
+                    id: salesman_core::CompanyId::new(),
+                    legal_name: Some(row.legal_name.trim().to_string()).filter(|s| !s.is_empty()),
+                    display_name: row.display_name.trim().to_string(),
+                    homepage,
+                    industry: Some(row.industry.trim().to_string()).filter(|s| !s.is_empty()),
+                    size_band,
+                    region: Some(row.region.trim().to_string()).filter(|s| !s.is_empty()),
+                    description: Some(row.description.trim().to_string()).filter(|s| !s.is_empty()),
+                    tech_signals: vec![],
+                    discovered_at: chrono::Utc::now(),
+                    last_enriched_at: None,
+                    source: salesman_core::model::DiscoverySource::OwnerSeed,
+                    raw: std::collections::BTreeMap::new(),
+                });
+            }
+
+            println!(
+                "import-csv {}: {} valid row(s), {} error(s){}",
+                path.display(),
+                companies.len(),
+                errors.len(),
+                if dry_run { ", DRY-RUN" } else { "" },
+            );
+            for e in &errors {
+                println!("  ERROR  {e}");
+            }
+            if errors.iter().any(|e| !e.is_empty()) && !dry_run {
+                anyhow::bail!(
+                    "{} validation error(s); refusing to import. Re-run with \
+                     --dry-run to see all errors at once, or fix and retry.",
+                    errors.len()
+                );
+            }
+            if dry_run {
+                println!("\n(dry-run; no DB changes)");
+            } else {
+                let campaign_id = state
+                    .ensure_campaign(&campaign, "(import-csv)", "(unspecified)")
+                    .await?;
+                let cids: Vec<_> = companies.iter().map(|c| c.id).collect();
+                let n_companies = state.insert_companies(&companies).await?;
+                let n_prospects = state
+                    .upsert_prospects_for_campaign(campaign_id, &cids)
+                    .await?;
+                println!(
+                    "imported into `{campaign}`: {n_companies} new \
+                     company row(s), {n_prospects} new prospect row(s) \
+                     (idempotent — re-runs skip existing pairs).",
+                );
+            }
         }
 
         Cmd::Tools => {
