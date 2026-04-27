@@ -273,4 +273,68 @@ mod tests {
         let raw = hex::encode([0u8; 16]);
         assert!(decode_secret(&raw).is_err());
     }
+
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+
+        // ASCII-printable email-like inputs. We don't bother with full
+        // RFC 5322 — the contract is "any string we mint a token for,
+        // we can verify". Empty is allowed because url_for() doesn't
+        // refuse empty input today; verify_token returns whatever
+        // the mint produced.
+        #[test]
+        fn round_trip_property(email in "[a-zA-Z0-9._+\\-]{1,64}@[a-zA-Z0-9.\\-]{1,32}") {
+            let t = fixture();
+            let tok = t.token_for(&email);
+            let recovered = t.verify_token(&tok).unwrap();
+            // We lower-case on mint, so compare lower-cased.
+            prop_assert_eq!(recovered, email.to_ascii_lowercase());
+        }
+
+        // Verify NEVER panics on arbitrary input.
+        #[test]
+        fn verify_never_panics(s in ".{0,256}") {
+            let t = fixture();
+            let _ = t.verify_token(&s);
+        }
+
+        // Single-byte mutation of a valid token MUST cause verify to
+        // fail (or, in the *extreme* coincidence of a colliding HMAC
+        // under another input, return the wrong email — but never
+        // accept the original email under the mutated token).
+        // We test the strict claim: mutated → not Ok(original_email).
+        #[test]
+        fn one_byte_tamper_rejects(
+            email in "[a-z][a-z0-9.]{0,16}@[a-z][a-z0-9.]{0,16}\\.[a-z]{2,4}",
+            mut_idx in any::<usize>(),
+        ) {
+            let t = fixture();
+            let tok = t.token_for(&email);
+            let bytes = tok.as_bytes();
+            let i = mut_idx % bytes.len();
+            let mut mutated = bytes.to_vec();
+            // XOR with 1 to flip the lowest bit. If the byte was a
+            // separator/dot/equals etc. the result might still be
+            // valid base64url (or even valid byte) — that's fine; the
+            // test is on the OUTPUT, not the structure.
+            mutated[i] ^= 1;
+            let s = match String::from_utf8(mutated) {
+                Ok(s) => s,
+                Err(_) => return Ok(()), // mutation made it non-UTF8; not testable
+            };
+            let result = t.verify_token(&s);
+            // Strict: if it verifies, it must NOT be the original
+            // (lowercased) email. Same email + different MAC bytes is
+            // a security failure.
+            if let Ok(recovered) = result {
+                prop_assert!(
+                    recovered != email.to_ascii_lowercase()
+                        || s == tok, // identity case if XOR self-cancelled (won't happen with ^=1)
+                    "tampered token verified as original email",
+                );
+            }
+        }
+    }
 }
