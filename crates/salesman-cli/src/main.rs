@@ -2466,6 +2466,7 @@ async fn main() -> Result<()> {
                 None => None,
             };
             let classifier = ReplyClassifyTool::new(router.clone());
+            let interest_tool = salesman_content::InterestExtractTool::new(router.clone());
             let unclassified = state.list_unclassified_replies(batch).await?;
             if unclassified.is_empty() {
                 println!("no unclassified replies");
@@ -2518,8 +2519,60 @@ async fn main() -> Result<()> {
                     String::new()
                 };
 
+                // U52 interest extraction: only on positive intent
+                // signals (engaged / question). Auto-merges into
+                // prospects.tags['interests'] so the next touch in the
+                // sequence can cite what the prospect actually cared
+                // about. Best-effort; failures don't block classify.
+                let interest_note = if matches!(kind_str.as_str(), "engaged" | "question") {
+                    let args = serde_json::json!({ "body": r.body });
+                    match salesman_tools::Tool::invoke(
+                        &interest_tool,
+                        salesman_core::ToolArgs(args),
+                    )
+                    .await
+                    {
+                        Ok(v) => {
+                            let tags: Vec<String> = v
+                                .get("interests")
+                                .and_then(|x| x.as_array())
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|t| t.as_str().map(str::to_string))
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            let mut added = 0u32;
+                            for t in &tags {
+                                match state.add_prospect_interest(r.prospect_id, t).await {
+                                    Ok(true) => added += 1,
+                                    Ok(false) => {}
+                                    Err(e) => tracing::warn!(
+                                        prospect = %r.prospect_id.0, "%e" = %e,
+                                        "add_prospect_interest failed",
+                                    ),
+                                }
+                            }
+                            if !tags.is_empty() {
+                                format!(" [interests +{added}/{}: {}]", tags.len(), tags.join(", "))
+                            } else {
+                                String::new()
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                reply = %r.reply_id, "%e" = %e,
+                                "interest extraction failed (best-effort)",
+                            );
+                            String::new()
+                        }
+                    }
+                } else {
+                    String::new()
+                };
+
                 println!(
-                    "[{}] {} → {}: {}{competitor_note}",
+                    "[{}] {} → {}: {}{competitor_note}{interest_note}",
                     r.from_address, kind_str, r.reply_id, summary
                 );
             }
