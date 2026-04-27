@@ -1189,19 +1189,36 @@ impl State {
                 "target_kind must be 'email' or 'domain', got `{target_kind}`"
             )));
         }
-        sqlx::query(
+        let row = sqlx::query(
             "INSERT INTO suppressions (id, target, target_kind, reason, source) \
              VALUES ($1, $2, $3, $4, $5) \
-             ON CONFLICT (target) DO NOTHING",
+             ON CONFLICT (target) DO NOTHING \
+             RETURNING id",
         )
         .bind(uuid::Uuid::now_v7())
         .bind(target)
         .bind(target_kind)
         .bind(reason)
         .bind(source)
-        .execute(self.pool())
+        .fetch_optional(self.pool())
         .await
         .map_err(|e| Error::Db(e.to_string()))?;
+        // Only fire the cross-repo NOTIFY when a row was actually
+        // inserted — re-stating a known suppression should not look
+        // like a new event to the CRM listener.
+        if row.is_some() {
+            notify_event(
+                self.pool(),
+                "suppression.added",
+                serde_json::json!({
+                    "target": target,
+                    "target_kind": target_kind,
+                    "source": source,
+                    "reason": reason,
+                }),
+            )
+            .await;
+        }
         Ok(())
     }
 
@@ -1305,13 +1322,24 @@ impl State {
     }
 
     /// Remove a suppression by target. Idempotent — returns the
-    /// number of rows actually deleted (0 or 1).
+    /// number of rows actually deleted (0 or 1). Fires
+    /// `suppression.removed` on the salesman_event channel when a
+    /// row was actually deleted (so CRM/dashboards see the audit
+    /// event).
     pub async fn remove_suppression(&self, target: &str) -> Result<u64> {
         let r = sqlx::query("DELETE FROM suppressions WHERE target = $1")
             .bind(target)
             .execute(self.pool())
             .await
             .map_err(|e| Error::Db(e.to_string()))?;
+        if r.rows_affected() > 0 {
+            notify_event(
+                self.pool(),
+                "suppression.removed",
+                serde_json::json!({ "target": target }),
+            )
+            .await;
+        }
         Ok(r.rows_affected())
     }
 
