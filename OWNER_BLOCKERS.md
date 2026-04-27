@@ -78,6 +78,12 @@ TOS acceptance for browser-automation paths.
 - **Salesman now fires NOTIFY** on touch.sent / reply.received /
   reply.classified — CRM ingest will get sub-second updates when
   it lands. CRM downtime never breaks Salesman.
+- **PlausiDen-CRM ingest implemented** — `crm-cli listen` consumes
+  salesman_event NOTIFYs and projects via three idempotent upserts
+  (touch.sent / reply.received / reply.classified). Drift-tolerant:
+  unknown event kinds + missing fields log + skip rather than crash.
+  `crm-cli drain-once --timeout-ms N` for one-shot consume. Ready
+  to deploy when there's a CRM Postgres + Salesman events to consume.
 
 ## Resolved
 
