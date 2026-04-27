@@ -77,9 +77,16 @@ enum Cmd {
         concurrency: u32,
     },
     /// Approve a draft (move from awaiting_approval → approved).
+    /// Default: refuses if AI-detector risk score >= threshold.
     Approve {
         #[arg(long)]
         touch: String,
+        /// Detector risk threshold (0.0–1.0). Default 0.6.
+        #[arg(long, default_value_t = 0.6_f32)]
+        detector_threshold: f32,
+        /// Override the detector gate. Logged as override-reason.
+        #[arg(long)]
+        force_override: Option<String>,
     },
     /// Reject a draft (move from awaiting_approval → rejected).
     Reject {
@@ -471,14 +478,61 @@ async fn main() -> Result<()> {
             }
         }
 
-        Cmd::Approve { touch } => {
+        Cmd::Approve {
+            touch,
+            detector_threshold,
+            force_override,
+        } => {
             let state = require_state(cli.database_url.as_deref()).await?;
             let touch_id = parse_touch_id(&touch)?;
+
+            let (subject, body, outcome) = state
+                .get_touch_for_review(touch_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("touch {touch} not found"))?;
+            if outcome != "awaiting_approval" {
+                anyhow::bail!("touch {touch} is in `{outcome}`, not awaiting_approval");
+            }
+
+            let risk = salesman_detector::score(&body, subject.as_deref());
+            if !risk.passes(detector_threshold) {
+                if let Some(ref reason) = force_override {
+                    tracing::warn!(
+                        score = risk.score,
+                        threshold = detector_threshold,
+                        %reason,
+                        "OPERATOR OVERRIDE — approving despite detector failure"
+                    );
+                    println!(
+                        "WARN: approving despite detector score {:.2} >= {:.2} (override: {})",
+                        risk.score, detector_threshold, reason
+                    );
+                    for r in risk.reasons() {
+                        println!("  detector: {r}");
+                    }
+                } else {
+                    println!(
+                        "REFUSED: detector score {:.2} >= threshold {:.2}. Reasons:",
+                        risk.score, detector_threshold
+                    );
+                    for r in risk.reasons() {
+                        println!("  {r}");
+                    }
+                    println!(
+                        "\nIf you've reviewed and want to send anyway, pass \
+                         --force-override \"<your reason>\""
+                    );
+                    anyhow::bail!("approval refused by detector gate");
+                }
+            } else if !risk.hits.is_empty() {
+                tracing::info!(score = risk.score, "detector found minor hits but passed");
+            }
+
             let n = state.approve_touch(touch_id).await?;
             if n == 0 {
-                anyhow::bail!("touch {touch} not found OR not in awaiting_approval state");
+                anyhow::bail!("touch {touch} state changed under us — re-check");
             }
-            println!("approved touch {touch}");
+            println!("approved touch {touch} (detector score {:.2})", risk.score);
         }
 
         Cmd::Reject { touch } => {

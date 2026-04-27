@@ -448,6 +448,27 @@ impl State {
         Ok(out)
     }
 
+    /// Pull the (subject, body, outcome) for a touch — used by the
+    /// approve flow to score the draft against the AI detector before
+    /// changing state.
+    pub async fn get_touch_for_review(
+        &self,
+        touch_id: TouchId,
+    ) -> Result<Option<(Option<String>, String, String)>> {
+        let row = sqlx::query("SELECT subject, body, outcome FROM touches WHERE id = $1")
+            .bind(touch_id.0)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(row.map(|r| {
+            (
+                r.try_get::<Option<String>, _>("subject").unwrap_or(None),
+                r.try_get::<String, _>("body").unwrap_or_default(),
+                r.try_get::<String, _>("outcome").unwrap_or_default(),
+            )
+        }))
+    }
+
     /// Look up the to-address for a touch via the prospect's primary
     /// contact (or fall back to None — caller decides what to do).
     pub async fn touch_to_address(&self, touch_id: TouchId) -> Result<Option<String>> {

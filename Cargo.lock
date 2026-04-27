@@ -2006,6 +2006,7 @@ dependencies = [
  "clap",
  "salesman-content",
  "salesman-core",
+ "salesman-detector",
  "salesman-discovery",
  "salesman-llm",
  "salesman-orchestrator",
@@ -2056,6 +2057,12 @@ dependencies = [
 [[package]]
 name = "salesman-detector"
 version = "0.0.1"
+dependencies = [
+ "salesman-core",
+ "serde",
+ "serde_json",
+ "tracing",
+]
 
 [[package]]
 name = "salesman-discovery"

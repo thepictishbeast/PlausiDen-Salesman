@@ -20,6 +20,7 @@ salesman-discovery = { path = "../salesman-discovery" }
 salesman-content = { path = "../salesman-content" }
 salesman-outreach = { path = "../salesman-outreach" }
 salesman-receipts = { path = "../salesman-receipts" }
+salesman-detector = { path = "../salesman-detector" }
 clap = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
