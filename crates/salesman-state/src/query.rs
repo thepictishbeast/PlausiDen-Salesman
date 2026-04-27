@@ -6,6 +6,7 @@
 use crate::State;
 use chrono::Utc;
 use salesman_core::model::{CampaignStatus, TechSignal};
+use salesman_core::model::ReplyKind;
 use salesman_core::{
     Campaign, CampaignId, Company, CompanyId, Error, Prospect, ProspectId, Result, TouchId,
     TouchOutcome,
@@ -484,6 +485,60 @@ impl State {
         .await
         .map_err(|e| Error::Db(e.to_string()))?;
         Ok(row.and_then(|r| r.try_get::<Option<String>, _>("to_email").unwrap_or(None)))
+    }
+
+    // -----------------------------------------------------------------
+    // replies
+    // -----------------------------------------------------------------
+
+    /// Insert a raw inbound reply. Caller has already parsed the
+    /// MIME. We try to thread the reply to a prospect by matching
+    /// from_address against any prospect's primary contact email.
+    /// If no match, the reply is dropped (warns + returns Ok(None)).
+    pub async fn insert_reply_threaded(
+        &self,
+        from_address: &str,
+        subject: Option<&str>,
+        body: &str,
+        raw_headers: &serde_json::Value,
+    ) -> Result<Option<uuid::Uuid>> {
+        let row = sqlx::query(
+            "SELECT p.id AS prospect_id
+             FROM prospects p
+             JOIN contacts c ON c.id = p.primary_contact_id
+             WHERE c.email = $1
+             ORDER BY p.state_changed_at DESC
+             LIMIT 1",
+        )
+        .bind(from_address)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+
+        let Some(row) = row else {
+            tracing::warn!(%from_address, "no prospect matches reply from-address — dropping");
+            return Ok(None);
+        };
+        let prospect_id_uuid: uuid::Uuid = row.try_get("prospect_id")
+            .map_err(|e| Error::Db(e.to_string()))?;
+
+        let reply_id = uuid::Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO replies
+             (id, prospect_id, touch_id, from_address, subject, body, kind, raw_headers)
+             VALUES ($1, $2, NULL, $3, $4, $5, $6, $7)",
+        )
+        .bind(reply_id)
+        .bind(prospect_id_uuid)
+        .bind(from_address)
+        .bind(subject)
+        .bind(body)
+        .bind(ReplyKind::Unclassified.to_string())
+        .bind(raw_headers)
+        .execute(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(Some(reply_id))
     }
 
     // -----------------------------------------------------------------

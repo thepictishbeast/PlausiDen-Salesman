@@ -27,7 +27,7 @@ repository = "https://github.com/thepictishbeast/PlausiDen-Salesman"
 
 [workspace.dependencies]
 # async runtime
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "signal", "net", "io-util"] }
 async-trait = "0.1"
 futures = "0.3"
 
@@ -66,6 +66,7 @@ redis = { version = "0.27", features = ["tokio-comp", "aio"] }
 # mail
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1-rustls-tls", "builder"] }
 async-imap = "0.10"
+mail-parser = "0.9"
 
 # cli
 clap = { version = "4", features = ["derive", "env"] }

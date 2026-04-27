@@ -14,6 +14,7 @@ use clap::{Parser, Subcommand};
 use salesman_content::DraftColdEmailTool;
 use salesman_discovery::{CsvSeed, CsvSeedTool, HomepageFetchTool, HomepageFetcher};
 use salesman_outreach::{SmtpConfig, SmtpSender};
+use salesman_reply::{ImapConfig, ImapPoller};
 use salesman_receipts::{Signer, default_seed_path};
 use salesman_llm::claude::ClaudeBackend;
 use salesman_llm::gemini::GeminiBackend;
@@ -127,6 +128,12 @@ enum Cmd {
     Audit {
         #[arg(long, default_value_t = 100)]
         limit: i64,
+    },
+    /// Poll the IMAP inbox once and persist new replies.
+    InboxPoll {
+        /// Run forever, polling every N seconds. Default = once.
+        #[arg(long)]
+        every_seconds: Option<u64>,
     },
     /// Generate cold-email drafts for every prospect in a campaign.
     /// Drafts land in `awaiting_approval` — never auto-sent.
@@ -692,6 +699,48 @@ async fn main() -> Result<()> {
                 if for_real { "REAL" } else { "DRY-RUN" },
                 approved.len()
             );
+        }
+
+        Cmd::InboxPoll { every_seconds } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let cfg = ImapConfig::from_env()?;
+            let poller = ImapPoller::new(cfg);
+            loop {
+                let started = std::time::Instant::now();
+                let n = poller
+                    .poll_once(|reply| {
+                        let state = state.clone();
+                        async move {
+                            let raw = serde_json::to_value(&reply.raw_headers)?;
+                            match state
+                                .insert_reply_threaded(
+                                    &reply.from_address,
+                                    reply.subject.as_deref(),
+                                    &reply.body_plain,
+                                    &raw,
+                                )
+                                .await
+                            {
+                                Ok(Some(id)) => {
+                                    tracing::info!(reply_id = %id, from = %reply.from_address, "persisted");
+                                }
+                                Ok(None) => {} // already warned
+                                Err(e) => {
+                                    tracing::error!("%e" = %e, "insert_reply failed");
+                                    return Err(e);
+                                }
+                            }
+                            Ok(())
+                        }
+                    })
+                    .await?;
+                println!(
+                    "inbox-poll: handled {n} message(s) in {}ms",
+                    started.elapsed().as_millis()
+                );
+                let Some(secs) = every_seconds else { break };
+                tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+            }
         }
 
         Cmd::Halt { reason } => {
