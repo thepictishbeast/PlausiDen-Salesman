@@ -93,6 +93,45 @@ impl DraftReplyTool {
         .join("\n")
     }
 
+    /// System prompt for the objection-handling path. Threads the
+    /// operator's pre-written talking points + posture guidance into
+    /// the prompt so the response anchors in real facts the operator
+    /// curated, instead of LLM-from-scratch generic-objection-handling.
+    fn objection_system_prompt(&self, obj: &Value) -> String {
+        let base = self.system_prompt();
+        let key = obj.get("key").and_then(|v| v.as_str()).unwrap_or("?");
+        let posture = obj
+            .get("posture")
+            .and_then(|v| v.as_str())
+            .unwrap_or("calm; respectful");
+        let talking_points = obj
+            .get("talking_points")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str())
+                    .map(|s| format!("- {s}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default();
+        let suffix = format!(
+            "\n\n## OBJECTION-HANDLING MODE\n\
+             The prospect raised a `{key}` objection. The operator has \
+             pre-written talking points + posture guidance below. WEAVE \
+             ONE OR TWO of the talking points naturally into your \
+             response — do NOT list them all back at the prospect. \
+             Match the posture.\n\n\
+             intent should be `handle-objection`.\n\
+             Length budget: 70-180 words.\n\n\
+             ## POSTURE\n\
+             {posture}\n\n\
+             ## TALKING POINTS (pick 1-2 to weave in)\n\
+             {talking_points}"
+        );
+        format!("{base}{suffix}")
+    }
+
     /// System prompt for the meeting-shaped path. Adds the
     /// operator's REAL upcoming slots so the drafter proposes them
     /// specifically rather than asking "what time works."
@@ -214,6 +253,13 @@ impl Tool for DraftReplyTool {
                                     When present + inbound looks meeting-shaped, the \
                                     drafter proposes 3 specific slots from the operator's \
                                     real calendar instead of inviting a back-and-forth."
+                },
+                "objection_match": {
+                    "type": ["object", "null"],
+                    "description": "Optional ObjectionLibrary.to_drafter_value() blob. \
+                                    When present + inbound is an objection, the drafter \
+                                    weaves the operator's pre-written talking points + \
+                                    posture into the response."
                 }
             },
             "required": ["prospect", "inbound_body", "inbound_kind"]
@@ -255,6 +301,7 @@ impl Tool for DraftReplyTool {
             .and_then(|v| v.as_str())
             .map(str::to_string);
         let meeting_calendar = args.0.get("meeting_calendar").cloned();
+        let objection_match = args.0.get("objection_match").cloned();
 
         // Refuse to draft on terminal kinds. The classifier already
         // suppressed optout/bounce; spam shouldn't get a reply.
@@ -265,10 +312,10 @@ impl Tool for DraftReplyTool {
             )));
         }
 
-        // Pick the right system prompt for the kind of reply we're
-        // drafting. Meeting > pricing > default. Both special paths
-        // require both signals (keyword + supplied data); otherwise
-        // the drafter falls through to the generic prompt.
+        // Pick the right system prompt for the kind of reply.
+        // Priority: meeting (highest, time-sensitive) > objection
+        // (matches > kind-label since prospect may say "we already
+        // have X" inside a question shape) > pricing > default.
         let meeting_shaped = looks_like_meeting_question(&inbound_body);
         let pricing_shaped = looks_like_pricing_question(&inbound_body);
         let system = if meeting_shaped
@@ -277,6 +324,8 @@ impl Tool for DraftReplyTool {
             && !slots.is_empty()
         {
             self.meeting_system_prompt(cal_v)
+        } else if let Some(obj) = objection_match.as_ref() {
+            self.objection_system_prompt(obj)
         } else if pricing_shaped
             && let Some(cat) = pricing_catalog.as_deref()
         {
@@ -355,6 +404,58 @@ impl Tool for DraftReplyTool {
             "model_tokens_out": resp.usage.output_tokens,
         }))
     }
+}
+
+/// One entry in the operator's objection library.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ObjectionEntry {
+    pub key: String,
+    /// Lower-case substrings the matcher looks for in the inbound.
+    /// Any match → this entry is the threaded objection.
+    pub matches: Vec<String>,
+    /// Anchor facts the drafter weaves into the response. Not a
+    /// full reply — the drafter still personalizes.
+    pub talking_points: Vec<String>,
+    /// Posture guidance ("calm", "respectful", "honest about being small")
+    /// — included verbatim in the system prompt.
+    #[serde(default)]
+    pub posture: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ObjectionLibrary {
+    #[serde(default)]
+    pub objections: Vec<ObjectionEntry>,
+}
+
+impl ObjectionLibrary {
+    /// First entry whose matches[] substrings appear in the inbound
+    /// body (case-insensitive). Returns None if no rule fires.
+    pub fn match_inbound(&self, inbound: &str) -> Option<&ObjectionEntry> {
+        let lc = inbound.to_ascii_lowercase();
+        self.objections
+            .iter()
+            .find(|o| o.matches.iter().any(|m| lc.contains(&m.to_ascii_lowercase())))
+    }
+
+    /// Render the matched entry as a JSON object the drafter can
+    /// thread into the prompt. None when nothing matched.
+    pub fn to_drafter_value(&self, inbound: &str) -> Option<Value> {
+        self.match_inbound(inbound).map(|o| {
+            json!({
+                "key": o.key,
+                "talking_points": o.talking_points,
+                "posture": o.posture,
+            })
+        })
+    }
+}
+
+/// Load an objection library from TOML.
+pub fn load_objections_toml(text: &str) -> Result<ObjectionLibrary> {
+    let lib: ObjectionLibrary = toml::from_str(text)
+        .map_err(|e| Error::Validation(format!("objections parse: {e}")))?;
+    Ok(lib)
 }
 
 /// One offered meeting slot. Operator-curated.
@@ -526,5 +627,60 @@ mod tests {
     #[test]
     fn parse_failure_returns_err() {
         assert!(parse_reply("no json here").is_err());
+    }
+
+    #[test]
+    fn pricing_keyword_detector_fires() {
+        assert!(looks_like_pricing_question("how much does it cost?"));
+        assert!(looks_like_pricing_question("send me a quote, please"));
+        assert!(looks_like_pricing_question("can you share pricing"));
+        assert!(!looks_like_pricing_question("thanks for the demo"));
+    }
+
+    #[test]
+    fn meeting_keyword_detector_fires() {
+        assert!(looks_like_meeting_question("when can we meet?"));
+        assert!(looks_like_meeting_question("Let's set up a call next week"));
+        assert!(!looks_like_meeting_question("appreciate the writeup"));
+    }
+
+    #[test]
+    fn objection_library_matches_first_keyword() {
+        let toml = r#"
+            [[objections]]
+            key = "price-too-high"
+            matches = ["too expensive", "out of budget"]
+            talking_points = ["self-host is free"]
+            posture = "calm"
+
+            [[objections]]
+            key = "not-now"
+            matches = ["next quarter"]
+            talking_points = ["leave a useful artifact"]
+        "#;
+        let lib = load_objections_toml(toml).unwrap();
+        let m = lib.match_inbound("Honestly this is too expensive for us right now");
+        assert!(m.is_some());
+        assert_eq!(m.unwrap().key, "price-too-high");
+
+        let none = lib.match_inbound("Thanks, will read the deck");
+        assert!(none.is_none());
+    }
+
+    #[test]
+    fn objection_to_drafter_value_includes_posture() {
+        let toml = r#"
+            [[objections]]
+            key = "trust"
+            matches = ["never heard of you"]
+            talking_points = ["audit our source"]
+            posture = "honest"
+        "#;
+        let lib = load_objections_toml(toml).unwrap();
+        let v = lib
+            .to_drafter_value("we've never heard of you")
+            .expect("should match");
+        assert_eq!(v["key"], "trust");
+        assert_eq!(v["posture"], "honest");
     }
 }

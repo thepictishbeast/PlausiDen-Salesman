@@ -333,6 +333,8 @@ enum Cmd {
     /// supplied, the drafter quotes SPECIFIC tier numbers.
     /// When inbound looks meeting-shaped and --meeting-slots is
     /// supplied, the drafter proposes 3 concrete slots.
+    /// When --objections is supplied, the drafter weaves operator
+    /// talking points into matched objection replies.
     DraftReplies {
         #[arg(long, default_value_t = 25)]
         batch: i64,
@@ -344,6 +346,11 @@ enum Cmd {
         /// sees the next 3 upcoming.
         #[arg(long)]
         meeting_slots: Option<PathBuf>,
+        /// Optional objection library TOML (e.g.
+        /// samples/objections.toml). Matched entries get their
+        /// talking_points + posture threaded into the drafter.
+        #[arg(long)]
+        objections: Option<PathBuf>,
     },
     /// Trigger-event scanner — find people to email TODAY based on
     /// real signals (recent news, GitHub activity, HN mentions).
@@ -1925,6 +1932,7 @@ async fn main() -> Result<()> {
             batch,
             pricing_catalog,
             meeting_slots,
+            objections,
         } => {
             let state = require_state(cli.database_url.as_deref()).await?;
             if router.registered_kinds().is_empty() {
@@ -1946,6 +1954,14 @@ async fn main() -> Result<()> {
                     let cal = salesman_content::draft_reply::load_calendar_toml(&text)?;
                     let now = chrono::Utc::now();
                     Some(cal.to_drafter_value(now, 3))
+                }
+                None => None,
+            };
+            let objection_lib = match objections.as_ref() {
+                Some(path) => {
+                    let text = std::fs::read_to_string(path)
+                        .with_context(|| format!("reading objections {}", path.display()))?;
+                    Some(salesman_content::draft_reply::load_objections_toml(&text)?)
                 }
                 None => None,
             };
@@ -2000,6 +2016,11 @@ async fn main() -> Result<()> {
                     && salesman_content::draft_reply::looks_like_meeting_question(&r.inbound_body)
                 {
                     args["meeting_calendar"] = cal_v.clone();
+                }
+                if let Some(lib) = objection_lib.as_ref()
+                    && let Some(obj_v) = lib.to_drafter_value(&r.inbound_body)
+                {
+                    args["objection_match"] = obj_v;
                 }
                 let result = salesman_tools::Tool::invoke(
                     &drafter,

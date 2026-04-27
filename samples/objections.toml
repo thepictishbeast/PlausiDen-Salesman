@@ -1,0 +1,121 @@
+# Objection library — fed to the reply-drafter when an inbound is
+# classified as an objection. Each entry pairs a recognizable
+# objection pattern with talking points the drafter should weave
+# into the response. The drafter STILL personalizes — these aren't
+# canned replies, they're anchor facts.
+#
+# Operator: edit / extend per vertical. Anti-pattern: don't write
+# full reply scripts here. Write FACTS the drafter can pull from.
+
+[[objections]]
+key = "price-too-high"
+matches = [
+    "too expensive",
+    "out of budget",
+    "can't justify",
+    "cheaper alternative",
+    "$",  # any dollar amount in the reply, often complaining
+    "cost is",
+]
+talking_points = [
+    "Self-host tier is FREE — no per-seat or per-GB cost.",
+    "Hosted tier starts at $500/mo for up to 50 GB/day; cheaper than a Splunk free-tier overflow event.",
+    "Hidden costs of the alternative: ingestion overage, premium support, audit-evidence packaging — we include those at the standard tier.",
+    "If self-host fits your team, all you owe us is a star on GitHub.",
+]
+posture = "calm; do not get defensive; offer the free path explicitly"
+
+[[objections]]
+key = "not-now"
+matches = [
+    "not the right time",
+    "next quarter",
+    "next year",
+    "circle back",
+    "not a priority",
+    "later",
+    "Q3",
+    "Q4",
+]
+talking_points = [
+    "Acknowledge the timing; do NOT push.",
+    "Offer a 1-line 'when X happens, here's what to look at' pointer they can save.",
+    "Propose a single follow-up at their stated horizon (e.g. 'happy to ping you the first week of Q3').",
+]
+posture = "respectful; give them an off-ramp; leave a useful artifact"
+
+[[objections]]
+key = "wrong-person"
+matches = [
+    "you should talk to",
+    "wrong person",
+    "i'm not the one",
+    "forwarding to",
+    "let me connect you with",
+    "cc-ing",
+]
+talking_points = [
+    "Thank them for the redirect — sincerely.",
+    "Ask for the right person's name + email if not yet given.",
+    "Offer to introduce yourself directly so they don't have to forward.",
+]
+posture = "grateful; minimize their effort; pick up the handoff"
+
+[[objections]]
+key = "already-have-X"
+matches = [
+    "we already use",
+    "we already have",
+    "we're on",
+    "we use",
+    "we standardized on",
+    "our current",
+]
+talking_points = [
+    "Acknowledge the incumbent; do NOT trash it.",
+    "ONE specific dimension where we differ (e.g. 'we sign each send so you can replay for SOC 2; that's not in their feature set').",
+    "Offer a side-by-side comparison page if they're interested (the comparison-page generator can produce one).",
+]
+posture = "humble; one specific point; offer a way to evaluate without commitment"
+
+[[objections]]
+key = "regulatory"
+matches = [
+    "compliance",
+    "soc 2",
+    "iso 27001",
+    "gdpr",
+    "hipaa",
+    "data residency",
+    "legal review",
+    "security review",
+]
+talking_points = [
+    "Lead with: self-hosted means no third-party-processor agreement, you're the controller.",
+    "Audit trail: Ed25519-signed receipt chain replayable end-to-end.",
+    "Data residency: your VPS, your region, your KMS.",
+    "Offer to send the security questionnaire / DPA / SOC 2 evidence package the same day.",
+]
+posture = "factual; lead with sovereignty; offer the paperwork upfront"
+
+[[objections]]
+key = "trust"
+matches = [
+    "never heard of you",
+    "small company",
+    "young company",
+    "any references",
+    "case studies",
+    "who else uses",
+]
+talking_points = [
+    "Acknowledge the asymmetry directly.",
+    "Open-source as the trust anchor — they can audit every line.",
+    "Receipt chain as the trust anchor — they can replay our claims.",
+    "Offer to introduce them to a current customer (only if you actually have one to introduce).",
+]
+posture = "honest about being small; lean on auditability over name-drops"
+
+# Add more entries as you encounter new objections in the wild. The
+# drafter only matches on `matches[]` substrings (lower-case); keep
+# the patterns short + likely-to-appear in real replies.
