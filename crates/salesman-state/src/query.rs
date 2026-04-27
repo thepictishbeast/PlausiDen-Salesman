@@ -788,6 +788,62 @@ impl State {
     /// engaged-replied. The bandit reads this to weight template
     /// selection.
 
+    /// All known contacts at a company. Used by account-based
+    /// fanout to surface OTHER stakeholders the operator can pursue
+    /// when a prospect engages. Returns (id, name, title, email, source).
+    pub async fn list_contacts_for_company(
+        &self,
+        company_id: CompanyId,
+    ) -> Result<Vec<(uuid::Uuid, Option<String>, Option<String>, Option<String>, String)>> {
+        let rows = sqlx::query(
+            "SELECT id, name, title, email, source \
+             FROM contacts \
+             WHERE company_id = $1 \
+             ORDER BY discovered_at DESC",
+        )
+        .bind(company_id.0)
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.try_get::<uuid::Uuid, _>("id")
+                        .unwrap_or_else(|_| uuid::Uuid::nil()),
+                    r.try_get::<Option<String>, _>("name").unwrap_or(None),
+                    r.try_get::<Option<String>, _>("title").unwrap_or(None),
+                    r.try_get::<Option<String>, _>("email").unwrap_or(None),
+                    r.try_get::<String, _>("source").unwrap_or_default(),
+                )
+            })
+            .collect())
+    }
+
+    /// Look up a prospect's company_id + campaign_id + display name.
+    /// Used by account-based fanout to find peers at the same company.
+    pub async fn prospect_company_and_campaign(
+        &self,
+        prospect_id: ProspectId,
+    ) -> Result<Option<(CompanyId, CampaignId, String)>> {
+        let row = sqlx::query(
+            "SELECT p.company_id, p.campaign_id, c.display_name \
+             FROM prospects p JOIN companies c ON c.id = p.company_id \
+             WHERE p.id = $1",
+        )
+        .bind(prospect_id.0)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(row.map(|r| {
+            (
+                CompanyId(r.try_get("company_id").unwrap_or_else(|_| uuid::Uuid::nil())),
+                CampaignId(r.try_get("campaign_id").unwrap_or_else(|_| uuid::Uuid::nil())),
+                r.try_get("display_name").unwrap_or_default(),
+            )
+        }))
+    }
+
     /// Reply-rate broken down by (day-of-week, hour-of-day) of SEND
     /// time, in the operator's chosen timezone offset (minutes).
     /// Filters to buckets with `sent >= min_sent` so noise is

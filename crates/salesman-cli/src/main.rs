@@ -506,6 +506,15 @@ enum Cmd {
         #[arg(long, default_value_t = 5)]
         top: usize,
     },
+    /// Account-based fanout — given an engaged prospect's id,
+    /// surface OTHER known contacts at the same company so the
+    /// operator can pursue multi-stakeholder outreach. Read-only
+    /// today; future pass adds optional --seed to create prospect
+    /// rows for those contacts in the same campaign.
+    AccountFanout {
+        #[arg(long)]
+        prospect_id: String,
+    },
     /// Score a body of text through the AI detector.
     Score {
         #[arg(long)]
@@ -2509,6 +2518,72 @@ async fn main() -> Result<()> {
                         pct_str,
                     );
                 }
+            }
+        }
+
+        Cmd::AccountFanout { prospect_id } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let pid: uuid::Uuid = prospect_id
+                .parse()
+                .with_context(|| format!("invalid prospect-id `{prospect_id}`"))?;
+            let prospect_id = salesman_core::ProspectId(pid);
+            let info = state.prospect_company_and_campaign(prospect_id).await?;
+            let Some((company_id, _campaign_id, company_name)) = info else {
+                anyhow::bail!("no prospect with id {pid}");
+            };
+            let contacts = state.list_contacts_for_company(company_id).await?;
+            if cli.json {
+                let v = serde_json::json!({
+                    "company_name": company_name,
+                    "company_id": company_id.0.to_string(),
+                    "contact_count": contacts.len(),
+                    "contacts": contacts.iter().map(|(id, name, title, email, source)| serde_json::json!({
+                        "id": id.to_string(),
+                        "name": name,
+                        "title": title,
+                        "email": email,
+                        "source": source,
+                    })).collect::<Vec<_>>(),
+                });
+                println!("{}", serde_json::to_string_pretty(&v)?);
+                return Ok(());
+            }
+            println!("=== {} — {} known contact(s) ===\n", company_name, contacts.len());
+            if contacts.is_empty() {
+                println!(
+                    "  (no other contacts on file. Run `salesman find-buyers \
+                     --campaign <name> --persist` to discover stakeholders.)"
+                );
+            } else {
+                println!(
+                    "{:<38} {:<28} {:<22} {:<28} source",
+                    "id", "name", "title", "email"
+                );
+                println!("{}", "-".repeat(140));
+                for (id, name, title, email, source) in &contacts {
+                    println!(
+                        "{:<38} {:<28} {:<22} {:<28} {}",
+                        id,
+                        truncate_name(name.as_deref().unwrap_or("(unknown)"), 28),
+                        truncate_name(title.as_deref().unwrap_or("(unknown)"), 22),
+                        truncate_name(email.as_deref().unwrap_or("(unknown)"), 28),
+                        source,
+                    );
+                }
+                println!();
+                println!(
+                    "Multi-stakeholder play: the engaged contact is one buyer; \
+                     these are peers / superiors / direct reports. Consider:"
+                );
+                println!(
+                    "  1. CC the engaged contact + a superior on the next response — anchors the deal."
+                );
+                println!(
+                    "  2. Send a separate first-touch to a peer in a different role (CISO + CTO)."
+                );
+                println!(
+                    "  3. If multiple contacts ALREADY engaged independently, you have the right account; tighten."
+                );
             }
         }
 
