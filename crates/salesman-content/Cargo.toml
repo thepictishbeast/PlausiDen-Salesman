@@ -18,3 +18,4 @@ tracing = { workspace = true }
 pulldown-cmark = { workspace = true }
 walkdir = { workspace = true }
 chrono = { workspace = true }
+toml = { workspace = true }

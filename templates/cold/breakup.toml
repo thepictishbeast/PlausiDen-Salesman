@@ -1,0 +1,34 @@
+# Phase 4 — breakup email. Used only AFTER follow_up_2 with no
+# response. Explicit closure; opens door for the prospect to come
+# back without us bothering them.
+#
+# Heuristically these get the highest reply rate of any sequence —
+# people respond to the door closing.
+
+key         = "breakup"
+description = "Explicit goodbye. Highest reply-rate touch. Use sparingly."
+segment     = "any"
+delay_days  = 14
+
+subject_seed = "Closing your file at {{prospect_company_name}}"
+
+body_seed = """
+{{sender_name}} here — I'm closing your file.
+
+If {{our_product}} is interesting later, hit me back. If not, no
+worries; you won't hear from me again.
+
+Either way, hope the year's going well.
+
+— {{sender_name}}
+"""
+
+mandatory_phrases = [
+  "you won't hear from me again",
+]
+
+forbidden_phrases = [
+  "one last try",
+  "before I go",
+  "since I haven't heard back",
+]

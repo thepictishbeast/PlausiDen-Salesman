@@ -1,0 +1,52 @@
+# Phase 1 — first-touch introduction.
+#
+# Schema:
+#   key:           machine identifier (must match the file stem)
+#   description:   one-line, for the operator
+#   segment:       which prospect segment this is for (any, security,
+#                  devops, data, dev). The draft tool prefers a
+#                  matching segment over `any`.
+#   delay_days:    hint to the sequencer; the sequence definition
+#                  overrides if explicitly set there.
+#   subject_seed:  the LLM is shown this and asked to write a similar
+#                  subject (NOT a literal substitution).
+#   body_seed:     same — the LLM uses this as tone + structure
+#                  template; it does NOT get pasted verbatim.
+#   mandatory_phrases: phrases the LLM MUST include verbatim (e.g.
+#                      a specific opt-out line, a compliance footer).
+#                      Empty list = none.
+#   forbidden_phrases: phrases the LLM MUST NOT use (cliches we've
+#                      seen the model fall back to).
+
+key         = "introduction"
+description = "First-touch outreach. Establish who, why, low-friction CTA."
+segment     = "any"
+delay_days  = 0
+
+subject_seed = "Quick question on {{prospect_industry}} workflow"
+
+body_seed = """
+{{prospect_specific_observation_one_sentence}}
+
+We build {{our_product}} for teams in your space — concretely:
+{{single_concrete_benefit_tied_to_prospect}}.
+
+Worth a 15-min call next week, or want me to send a one-page
+overview?
+
+— {{sender_name}}
+"""
+
+mandatory_phrases = ["Reply STOP and I won't follow up."]
+
+forbidden_phrases = [
+  "I hope this email finds you well",
+  "I noticed",
+  "I came across",
+  "Just wanted to reach out",
+  "Quick question",
+  "synergize",
+  "leverage",
+  "best-in-class",
+  "industry-leading",
+]

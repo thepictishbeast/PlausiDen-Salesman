@@ -17,8 +17,48 @@ use salesman_llm::{ChatRequest, LlmRouter, Message, Role, RouteHint};
 use salesman_tools::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::warn;
+
+/// One template loaded from `templates/cold/*.toml`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ColdTemplate {
+    pub key: String,
+    pub description: String,
+    #[serde(default)]
+    pub segment: Option<String>,
+    #[serde(default)]
+    pub delay_days: Option<u32>,
+    pub subject_seed: String,
+    pub body_seed: String,
+    #[serde(default)]
+    pub mandatory_phrases: Vec<String>,
+    #[serde(default)]
+    pub forbidden_phrases: Vec<String>,
+}
+
+impl ColdTemplate {
+    /// Load a template by key from a templates directory. Looks for
+    /// `<dir>/<key>.toml`. Returns `None` if file is missing; bubbles
+    /// errors only on parse failure.
+    pub fn load(templates_dir: &std::path::Path, key: &str) -> Result<Option<Self>> {
+        let path = templates_dir.join(format!("{key}.toml"));
+        if !path.exists() {
+            return Ok(None);
+        }
+        let text = std::fs::read_to_string(&path).map_err(|e| Error::Io(e))?;
+        let parsed: ColdTemplate = toml::from_str(&text)
+            .map_err(|e| Error::Validation(format!("template `{key}` parse: {e}")))?;
+        Ok(Some(parsed))
+    }
+}
+
+#[allow(dead_code)]
+fn _toml_dep_visible() {
+    // PathBuf used in callers only; touch it here so the `std::path::PathBuf` import isn't unused.
+    let _: PathBuf = PathBuf::new();
+}
 
 /// What the LLM returns. Mirrors the JSON schema in the system prompt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,9 +155,22 @@ impl Tool for DraftColdEmailTool {
             .get("angle_hint")
             .and_then(|v| v.as_str())
             .map(str::to_string);
+        let template_key = args
+            .0
+            .get("template_key")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
 
-        let system = self.system_prompt();
-        let user = self.user_prompt(&prospect, &product, angle_hint.as_deref());
+        // Load template if key + dir provided.
+        let template = match (&template_key, std::env::var("SALESMAN_TEMPLATES_DIR").ok()) {
+            (Some(key), Some(dir)) => {
+                ColdTemplate::load(std::path::Path::new(&dir), key)?
+            }
+            _ => None,
+        };
+
+        let system = self.system_prompt(template.as_ref());
+        let user = self.user_prompt(&prospect, &product, angle_hint.as_deref(), template.as_ref());
 
         let req = ChatRequest {
             messages: vec![
@@ -163,43 +216,75 @@ impl Tool for DraftColdEmailTool {
 }
 
 impl DraftColdEmailTool {
-    fn system_prompt(&self) -> String {
+    fn system_prompt(&self, template: Option<&ColdTemplate>) -> String {
         let header = format!(
             "You are a senior B2B sales writer for {}. {}",
             self.sender_company, self.sender_one_liner,
         );
         let from_line = format!("- First-person from {}. Plain text, no markdown.", self.sender_name);
-        [
-            header.as_str(),
-            "",
-            "Write a personalized cold-outreach email. Constraints:",
-            from_line.as_str(),
-            "- Subject < 60 chars, no clickbait, no all-caps.",
-            "- Body 80-180 words. One short paragraph of personalization \
-             (must reference at least one specific fact about the prospect), \
-             one short pitch paragraph (one concrete benefit, not feature \
-             dump), one explicit ask (low-friction CTA - 15-min call, demo \
-             link, reply with interest).",
-            "- No emoji. No fake urgency. No fake social proof. No \
-             'I noticed' / 'I came across' opener cliches. No 'just wanted \
-             to' / 'hope this finds you well'.",
-            "- End with a clear opt-out: 'Reply STOP and I won't follow up.'",
-            "- Do NOT promise things the product doesn't do.",
-            "",
-            "Output STRICT JSON only, this exact shape:",
-            r#"{"subject": string, "body": string, "angle": short string explaining the personalization angle, "confidence": number 0..1}"#,
-            "No prose outside the JSON. No code fences.",
-        ]
-        .join("\n")
+        let mut lines: Vec<String> = vec![
+            header,
+            String::new(),
+            "Write a personalized cold-outreach email. Constraints:".into(),
+            from_line,
+            "- Subject < 60 chars, no clickbait, no all-caps.".into(),
+            "- Body 80-180 words. One short paragraph of personalization (must reference \
+              at least one specific fact about the prospect), one short pitch paragraph \
+              (one concrete benefit, not feature dump), one explicit ask (low-friction CTA - \
+              15-min call, demo link, reply with interest).".into(),
+            "- No emoji. No fake urgency. No fake social proof. No 'I noticed' / \
+              'I came across' opener cliches. No 'just wanted to' / \
+              'hope this finds you well'.".into(),
+            "- End with a clear opt-out: 'Reply STOP and I won't follow up.'".into(),
+            "- Do NOT promise things the product doesn't do.".into(),
+        ];
+
+        if let Some(t) = template {
+            lines.push(String::new());
+            lines.push(format!("TEMPLATE GUIDANCE (`{}` — {}):", t.key, t.description));
+            lines.push("Use this subject seed as a tonal reference (don't paste verbatim):".into());
+            lines.push(format!("  Subject seed: {}", t.subject_seed));
+            lines.push("Use this body seed as a STRUCTURE + TONE reference. Do not paste it verbatim; rewrite each section using the prospect facts:".into());
+            lines.push(t.body_seed.trim().to_string());
+            if !t.mandatory_phrases.is_empty() {
+                lines.push(String::new());
+                lines.push("Mandatory phrases (MUST appear verbatim in the body):".into());
+                for p in &t.mandatory_phrases {
+                    lines.push(format!("  - {p}"));
+                }
+            }
+            if !t.forbidden_phrases.is_empty() {
+                lines.push(String::new());
+                lines.push("FORBIDDEN phrases (MUST NOT appear; the model has been observed reaching for these):".into());
+                for p in &t.forbidden_phrases {
+                    lines.push(format!("  - {p}"));
+                }
+            }
+        }
+
+        lines.push(String::new());
+        lines.push("Output STRICT JSON only, this exact shape:".into());
+        lines.push(r#"{"subject": string, "body": string, "angle": short string explaining the personalization angle, "confidence": number 0..1}"#.into());
+        lines.push("No prose outside the JSON. No code fences.".into());
+        lines.join("\n")
     }
 
-    fn user_prompt(&self, prospect: &Value, product: &str, angle_hint: Option<&str>) -> String {
+    fn user_prompt(
+        &self,
+        prospect: &Value,
+        product: &str,
+        angle_hint: Option<&str>,
+        template: Option<&ColdTemplate>,
+    ) -> String {
         let prospect_pretty =
             serde_json::to_string_pretty(prospect).unwrap_or_else(|_| prospect.to_string());
         let mut s = format!(
             "PROSPECT FACTS (JSON):\n{prospect_pretty}\n\n\
              PRODUCT TO PITCH: {product}\n"
         );
+        if let Some(t) = template {
+            s.push_str(&format!("TEMPLATE: {} ({})\n", t.key, t.description));
+        }
         if let Some(h) = angle_hint {
             s.push_str(&format!("ANGLE HINT: {h}\n"));
         }

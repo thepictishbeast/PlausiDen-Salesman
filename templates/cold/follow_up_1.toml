@@ -1,0 +1,34 @@
+# Phase 2 — first follow-up. Sent ~5 days after introduction with no
+# reply. Acknowledges the lack of response without guilting; offers
+# a different framing.
+
+key         = "follow_up_1"
+description = "First follow-up after no response. Different angle, lower friction."
+segment     = "any"
+delay_days  = 5
+
+subject_seed = "re: {{previous_subject}}"
+
+body_seed = """
+Hey — bumping this in case it slipped past.
+
+Different angle this time: I put together a quick comparison of
+{{our_product}} vs {{prospect_likely_incumbent}} (one page, no
+sign-up). Useful to anyone evaluating either:
+
+  {{comparison_page_url}}
+
+Reply with anything if you want to chat, or ignore — totally fine.
+
+— {{sender_name}}
+"""
+
+mandatory_phrases = ["Reply STOP and I won't follow up."]
+
+forbidden_phrases = [
+  "circle back",
+  "touch base",
+  "following up",
+  "checking in",
+  "wanted to make sure you saw",
+]

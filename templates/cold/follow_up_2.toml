@@ -1,0 +1,32 @@
+# Phase 3 — second + final follow-up. ~7 days after follow_up_1.
+# Lead with value (the comparison or insight); explicit "this is the
+# last one" so the prospect knows it's the end.
+
+key         = "follow_up_2"
+description = "Final follow-up. Lead with value. Tell them it's the last touch."
+segment     = "any"
+delay_days  = 7
+
+subject_seed = "Last note on {{topic_one_word}}"
+
+body_seed = """
+This is my last note — promise.
+
+If {{single_concrete_pain_observed}} ever becomes a real problem,
+{{our_product}} solves it without the {{painful_thing_about_alternatives}}.
+
+The doors stay open: {{calendar_or_email_link}}
+
+— {{sender_name}}
+"""
+
+mandatory_phrases = [
+  "This is my last note",
+  "Reply STOP and I won't follow up.",
+]
+
+forbidden_phrases = [
+  "moving on",
+  "removing you from my list",
+  "closing your file",
+]

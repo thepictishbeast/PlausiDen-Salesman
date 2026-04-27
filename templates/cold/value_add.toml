@@ -1,0 +1,36 @@
+# Phase ~variable — value-add touch. Used IN PLACE of a follow-up
+# when there's a real news/product event to anchor on (a CVE
+# announcement, a competitor breach, a relevant regulation).
+#
+# This is the touch that opens conversations because it's not asking
+# for anything; it's offering substance.
+
+key         = "value_add"
+description = "Substance-first; no ask. Use when there's a real event to anchor on."
+segment     = "any"
+delay_days  = 5
+
+subject_seed = "{{event_short_description}} — quick note"
+
+body_seed = """
+Saw {{event_with_link}}.
+
+What it means for your stack, if you run {{prospect_relevant_tech}}:
+{{specific_implication_one_sentence}}.
+
+How {{our_product}} would have helped (and where it wouldn't have):
+{{honest_assessment}}.
+
+No ask. Just figured you'd want to see this.
+
+— {{sender_name}}
+"""
+
+mandatory_phrases = []
+
+forbidden_phrases = [
+  "how can we help",
+  "let's chat about how",
+  "wanted to share",
+  "thought leadership",
+]
