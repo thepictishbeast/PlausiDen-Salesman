@@ -1,0 +1,13 @@
+[Unit]
+Description=Run salesman-doctor-watch every 5 min during bootstrap
+Requires=salesman-doctor-watch.service
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=15s
+Persistent=true
+Unit=salesman-doctor-watch.service
+
+[Install]
+WantedBy=timers.target

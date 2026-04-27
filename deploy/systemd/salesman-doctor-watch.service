@@ -1,0 +1,27 @@
+[Unit]
+Description=PlausiDen-Salesman doctor-state watch — pings webhook on RED→GREEN
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=salesman
+Group=salesman
+EnvironmentFile=/etc/salesman.env
+WorkingDirectory=/opt/salesman/build/PlausiDen-Salesman
+ExecStart=/opt/salesman/build/PlausiDen-Salesman/scripts/salesman-doctor-watch.sh
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+ReadWritePaths=/opt/salesman/data /opt/salesman/logs /var/lib/salesman
