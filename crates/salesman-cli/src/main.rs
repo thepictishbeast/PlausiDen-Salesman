@@ -163,6 +163,30 @@ enum Cmd {
     },
     /// Per-template performance stats (drafted / sent / replied / engaged).
     TemplateStats,
+    /// Score a body of text through the AI detector.
+    Score {
+        #[arg(long)]
+        stdin: bool,
+        #[arg(long)]
+        body: Option<String>,
+        #[arg(long)]
+        templates_dir: Option<PathBuf>,
+        #[arg(long, default_value_t = 0.6_f32)]
+        threshold: f32,
+    },
+    /// Set or clear a per-campaign LLM-cost cap (in USD).
+    SetCostCap {
+        #[arg(long)]
+        campaign: String,
+        /// Cap in USD. Use 0 (or omit) to clear.
+        #[arg(long, default_value_t = 0.0)]
+        max_usd: f64,
+    },
+    /// Per-campaign cost breakdown (with cap utilisation).
+    CampaignCosts {
+        #[arg(long, default_value_t = 168)]
+        since_hours: i64,
+    },
     /// Health probe — JSON output. Exit 1 if any required component
     /// is missing.
     Status,
@@ -287,6 +311,16 @@ fn parse_hint(s: &str) -> RouteHint {
 }
 
 use std::str::FromStr;
+
+fn truncate_name(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(n - 1).collect();
+        out.push('…');
+        out
+    }
+}
 
 #[derive(Debug, serde::Deserialize)]
 struct SequenceFile {
@@ -916,6 +950,110 @@ async fn main() -> Result<()> {
             let state = require_state(cli.database_url.as_deref()).await?;
             let s = state.pipeline_summary(since_hours).await?;
             println!("{}", s.render_text());
+        }
+
+        Cmd::Score {
+            stdin,
+            body,
+            templates_dir,
+            threshold,
+        } => {
+            let print_score = |body: &str| {
+                let s = salesman_detector::score(body, None);
+                let reasons = s.reasons().join(";").replace('\n', " ");
+                println!(
+                    "{:.3}\t{}\t{}",
+                    s.score,
+                    if s.passes(threshold) { "pass" } else { "fail" },
+                    reasons
+                );
+            };
+            if let Some(dir) = templates_dir {
+                println!("template\tsegment\tscore\tpass\treasons");
+                for entry in std::fs::read_dir(&dir)? {
+                    let entry = entry?;
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+                        continue;
+                    }
+                    let key = path.file_stem().and_then(|s| s.to_str()).unwrap_or("?").to_string();
+                    let text = std::fs::read_to_string(&path)?;
+                    let parsed: toml::Value = toml::from_str(&text)?;
+                    let segment = parsed
+                        .get("segment")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("any")
+                        .to_string();
+                    let body = parsed.get("body_seed").and_then(|v| v.as_str()).unwrap_or("");
+                    let s = salesman_detector::score(body, None);
+                    let reasons = s.reasons().join(";").replace('\n', " ");
+                    println!(
+                        "{}\t{}\t{:.3}\t{}\t{}",
+                        key, segment, s.score,
+                        if s.passes(threshold) { "pass" } else { "fail" },
+                        reasons
+                    );
+                }
+            } else if let Some(b) = body {
+                print_score(&b);
+            } else if stdin {
+                use std::io::Read;
+                let mut b = String::new();
+                std::io::stdin().read_to_string(&mut b)?;
+                print_score(&b);
+            } else {
+                anyhow::bail!("score: pass --stdin, --body, or --templates-dir");
+            }
+        }
+
+        Cmd::SetCostCap { campaign, max_usd } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let cid = state
+                .ensure_campaign(&campaign, "(set-cost-cap)", "(unspecified)")
+                .await?;
+            let cap = if max_usd > 0.0 {
+                Some((max_usd * 1_000_000.0) as i64)
+            } else {
+                None
+            };
+            state.set_campaign_cost_cap(cid, cap).await?;
+            match cap {
+                Some(c) => println!("set cost cap on `{campaign}` to ${:.2} ({} micro USD)", max_usd, c),
+                None => println!("cleared cost cap on `{campaign}`"),
+            }
+        }
+
+        Cmd::CampaignCosts { since_hours } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let rows = state.campaign_cost_summary(since_hours).await?;
+            if rows.is_empty() {
+                println!("no campaigns / no LLM calls in last {since_hours}h");
+            } else {
+                println!(
+                    "{:<32} {:<10} {:>10} {:>10} {:>10} {:>10}",
+                    "campaign", "status", "calls", "spent USD", "cap USD", "% used"
+                );
+                println!("{}", "-".repeat(90));
+                for r in &rows {
+                    let cap_str = r
+                        .cost_cap_micro_usd
+                        .map(|c| format!("{:.2}", c as f64 / 1_000_000.0))
+                        .unwrap_or_else(|| "-".into());
+                    let pct_str = r
+                        .pct_used()
+                        .map(|p| format!("{:.1}%{}", p, if r.over_cap() { " !" } else { "" }))
+                        .unwrap_or_else(|| "-".into());
+                    println!(
+                        "{:<32} {:<10} {:>10} {:>10.4} {:>10} {:>10}",
+                        truncate_name(&r.name, 32),
+                        r.status,
+                        r.calls,
+                        (r.spent_micro_usd as f64) / 1_000_000.0,
+                        cap_str,
+                        pct_str,
+                    );
+                }
+            }
         }
 
         Cmd::TemplateStats => {

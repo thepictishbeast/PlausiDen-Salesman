@@ -68,6 +68,29 @@ impl TemplateStat {
 }
 
 #[derive(Debug, Clone)]
+pub struct CampaignCostRow {
+    pub id: CampaignId,
+    pub name: String,
+    pub status: String,
+    pub cost_cap_micro_usd: Option<i64>,
+    pub spent_micro_usd: i64,
+    pub calls: i64,
+}
+
+impl CampaignCostRow {
+    pub fn over_cap(&self) -> bool {
+        self.cost_cap_micro_usd
+            .map(|cap| self.spent_micro_usd >= cap)
+            .unwrap_or(false)
+    }
+    pub fn pct_used(&self) -> Option<f32> {
+        self.cost_cap_micro_usd.and_then(|cap| {
+            if cap <= 0 { None } else { Some((self.spent_micro_usd as f32) / (cap as f32) * 100.0) }
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct LlmCallRecord {
     pub backend: String,
     pub model: String,
@@ -1225,6 +1248,104 @@ impl State {
         .await
         .map_err(|e| Error::Db(e.to_string()))?;
         Ok(())
+    }
+
+    /// Set a cost cap on a campaign. NULL clears.
+    pub async fn set_campaign_cost_cap(
+        &self,
+        campaign_id: CampaignId,
+        cap_micro_usd: Option<i64>,
+    ) -> Result<()> {
+        sqlx::query("UPDATE campaigns SET cost_cap_micro_usd = $2 WHERE id = $1")
+            .bind(campaign_id.0)
+            .bind(cap_micro_usd)
+            .execute(self.pool())
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Total cost of LLM calls attributed to a specific campaign.
+    /// Sums llm_calls.cost_micro_usd where related_id = campaign_id
+    /// and related_kind = 'campaign'.
+    pub async fn campaign_cost_so_far(&self, campaign_id: CampaignId) -> Result<i64> {
+        let row = sqlx::query(
+            "SELECT COALESCE(SUM(cost_micro_usd), 0)::BIGINT AS total
+             FROM llm_calls
+             WHERE related_kind = 'campaign' AND related_id = $1",
+        )
+        .bind(campaign_id.0)
+        .fetch_one(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(row.try_get::<i64, _>("total").unwrap_or(0))
+    }
+
+    /// Returns Some(cap) if the campaign has a cap set, else None.
+    pub async fn campaign_cost_cap(&self, campaign_id: CampaignId) -> Result<Option<i64>> {
+        let row = sqlx::query("SELECT cost_cap_micro_usd FROM campaigns WHERE id = $1")
+            .bind(campaign_id.0)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(row.and_then(|r| r.try_get::<Option<i64>, _>("cost_cap_micro_usd").unwrap_or(None)))
+    }
+
+    /// True if the campaign is over its cost cap (or no cap is set →
+    /// always returns false).
+    pub async fn campaign_over_cost_cap(&self, campaign_id: CampaignId) -> Result<bool> {
+        let Some(cap) = self.campaign_cost_cap(campaign_id).await? else {
+            return Ok(false);
+        };
+        let so_far = self.campaign_cost_so_far(campaign_id).await?;
+        Ok(so_far >= cap)
+    }
+
+    /// Pause a campaign with a reason (used when cost cap exceeded).
+    pub async fn pause_campaign(&self, campaign_id: CampaignId, reason: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE campaigns
+             SET status = 'paused', paused_at = NOW(), paused_reason = $2
+             WHERE id = $1",
+        )
+        .bind(campaign_id.0)
+        .bind(reason)
+        .execute(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Per-campaign cost breakdown for the cost report. Joins through
+    /// llm_calls.related_id where related_kind='campaign'.
+    pub async fn campaign_cost_summary(&self, since_hours: i64) -> Result<Vec<CampaignCostRow>> {
+        let rows = sqlx::query(
+            "SELECT c.id, c.name, c.status, c.cost_cap_micro_usd,
+                    COALESCE(SUM(l.cost_micro_usd), 0)::BIGINT AS spent_micro_usd,
+                    COUNT(l.id)::BIGINT AS calls
+             FROM campaigns c
+             LEFT JOIN llm_calls l
+               ON l.related_id = c.id
+              AND l.related_kind = 'campaign'
+              AND l.created_at > NOW() - ($1 || ' hours')::INTERVAL
+             GROUP BY c.id, c.name, c.status, c.cost_cap_micro_usd
+             ORDER BY spent_micro_usd DESC",
+        )
+        .bind(since_hours.to_string())
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| CampaignCostRow {
+                id: CampaignId(r.try_get("id").unwrap_or_else(|_| uuid::Uuid::nil())),
+                name: r.try_get("name").unwrap_or_default(),
+                status: r.try_get("status").unwrap_or_default(),
+                cost_cap_micro_usd: r.try_get("cost_cap_micro_usd").unwrap_or(None),
+                spent_micro_usd: r.try_get("spent_micro_usd").unwrap_or(0),
+                calls: r.try_get("calls").unwrap_or(0),
+            })
+            .collect())
     }
 
     /// Roll-up by (backend, model) over a recent window.

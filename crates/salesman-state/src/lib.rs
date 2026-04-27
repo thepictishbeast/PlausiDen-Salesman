@@ -13,8 +13,8 @@ use sqlx::postgres::{PgPool, PgPoolOptions};
 
 pub mod query;
 pub use query::{
-    CostSummaryRow, DueProspect, LlmCallRecord, PipelineSummary, ProspectWithFacts, ReplyRow,
-    SequenceStepInput, TemplateStat, TouchSummary, UnclassifiedReply,
+    CampaignCostRow, CostSummaryRow, DueProspect, LlmCallRecord, PipelineSummary,
+    ProspectWithFacts, ReplyRow, SequenceStepInput, TemplateStat, TouchSummary, UnclassifiedReply,
 };
 
 /// Thin wrapper around a Postgres connection pool. Created at startup,
