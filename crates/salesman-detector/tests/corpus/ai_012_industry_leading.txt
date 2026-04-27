@@ -1,0 +1,12 @@
+expected: high
+---
+Our industry-leading platform delivers best-in-class observability
+that empowers world-class engineering teams to achieve unparalleled
+operational excellence.
+
+With our revolutionary approach to telemetry, we've helped Fortune
+500 companies unlock game-changing insights and drive transformative
+business outcomes.
+
+We'd be thrilled to schedule a personalized demo at your earliest
+convenience.

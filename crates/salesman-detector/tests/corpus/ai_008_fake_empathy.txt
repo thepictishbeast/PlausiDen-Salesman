@@ -1,0 +1,11 @@
+expected: high
+---
+I completely understand how busy you must be, and I really appreciate
+you taking the time to read this message. I know you're juggling many
+priorities right now.
+
+I just wanted to gently follow up on my previous email — I'd love to
+hear your thoughts whenever you have a moment. No pressure at all,
+just thought I'd check in.
+
+Looking forward to connecting!

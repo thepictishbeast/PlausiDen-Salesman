@@ -1,0 +1,5 @@
+expected: low
+---
+The 30s ALB idle timeout we hit yesterday was actually a 28s nginx upstream timeout — server-side, not LB. Bumped /etc/nginx/conf.d/upstream.conf:proxy_read_timeout to 90s and the 502s went away.
+
+We should put a budget alarm on the upstream timeout (current p99 is 14s; alarm at 60s would have caught this two days earlier).

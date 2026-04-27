@@ -1,0 +1,7 @@
+expected: low
+---
+I think you're wrong about the consistency model. The doc says "eventual" but in practice the gossip propagation is bounded at 2s for a 3-node cluster, so for our use case we can treat reads at t+3s as strongly consistent.
+
+I tested it. Look at the bench at https://gist.example/abc123 — the dispersion is 99.7% under 1.8s.
+
+Happy to be wrong if you have a counter-test, but I want to see the numbers first.

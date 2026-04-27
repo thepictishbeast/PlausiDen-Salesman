@@ -1,0 +1,10 @@
+expected: high
+---
+We're excited to announce a transformative new initiative that aims to
+revolutionize the way stakeholders engage with our platform.
+
+By leveraging cutting-edge synergies across multiple verticals, we're
+empowering teams to unlock unprecedented value and drive meaningful
+outcomes for the broader ecosystem.
+
+We'd love to schedule a deep-dive to align on strategic priorities.

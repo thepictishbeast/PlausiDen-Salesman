@@ -20,8 +20,8 @@ use salesman_detector::score;
 use std::fs;
 
 /// Same threshold as the operator-facing `salesman score` default
-/// + the preflight gate. A draft scoring at or above this is
-/// considered AI-detector-blockable.
+/// (which the preflight gate also uses). A draft scoring at or
+/// above this is considered AI-detector-blockable.
 const APPROVAL_THRESHOLD: f32 = 0.6;
 
 fn parse_fixture(text: &str) -> (Option<String>, String) {

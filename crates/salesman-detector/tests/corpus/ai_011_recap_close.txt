@@ -1,0 +1,12 @@
+expected: high
+---
+To recap our previous conversation: we discussed how leveraging
+modern observability tooling can drive operational excellence and
+foster a culture of continuous improvement.
+
+In summary — by aligning our solution with your strategic objectives,
+we can unlock significant value while mitigating risk across the
+broader organization.
+
+I'd love to circle back next week to align on next steps. Looking
+forward to our continued partnership!

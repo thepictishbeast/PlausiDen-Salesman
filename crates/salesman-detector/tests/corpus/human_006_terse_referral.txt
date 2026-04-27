@@ -1,0 +1,3 @@
+expected: low
+---
+You should talk to Dani at Stitcher — they hit exactly this with their hot-shard problem last quarter and ended up doing what you're describing now (consistent-hashed DLQ). dani@stitcher.example. Tell her I sent you.

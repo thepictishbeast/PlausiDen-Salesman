@@ -1,0 +1,3 @@
+expected: low
+---
+Saw your PR on the kafka-connector retry path. Did the exponential backoff actually fix the duplicate-delivery thing, or just hide it?

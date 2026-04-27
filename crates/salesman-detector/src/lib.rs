@@ -65,6 +65,9 @@ pub fn score(body: &str, subject: Option<&str>) -> RiskScore {
     check_em_dash_density(body, &mut hits);
     check_overused_signal_words(body, &mut hits);
     check_not_just_x_its_y(body, &mut hits);
+    check_marketing_superlative_density(body, &mut hits);
+    check_empty_hedge_phrases(body, &mut hits);
+    check_recap_connectives(body, &mut hits);
 
     let max_weight = hits.iter().map(|h| h.weight).fold(0.0f32, f32::max);
     RiskScore {
@@ -202,6 +205,128 @@ fn check_overused_signal_words(body: &str, out: &mut Vec<SignalHit>) {
                 evidence: format!("`{needle}` appears {n}× (threshold {threshold})"),
             });
         }
+    }
+}
+
+/// Density of marketing-superlative words. One is fine; three+
+/// concentrated in one message is a strong LLM tell — no human
+/// writer reaches for "industry-leading" + "world-class" +
+/// "unparalleled" in the same email by accident.
+fn check_marketing_superlative_density(body: &str, out: &mut Vec<SignalHit>) {
+    let s = body.to_ascii_lowercase();
+    const TERMS: &[&str] = &[
+        "best-in-class",
+        "world-class",
+        "unparalleled",
+        "revolutionary",
+        "industry-leading",
+        "transformative",
+        "game-changing",
+        "empower",
+        "empowers",
+        "empowering",
+        "leverage",
+        "leverages",
+        "leveraging",
+        "holistic",
+        "unprecedented",
+        "unleash",
+        "elevate",
+        "transcend",
+        "pioneer",
+        "harness",
+        "robust governance",
+        "seamlessly",
+        "thrive",
+        "trusted partner",
+        "drive operational excellence",
+    ];
+    let mut hit_terms: Vec<&str> = TERMS.iter().filter(|t| s.contains(*t)).copied().collect();
+    hit_terms.dedup();
+    let n = hit_terms.len();
+    if n >= 3 {
+        // Scale: 3 → 0.7, 4 → 0.8, 5+ → 0.9.
+        let weight = (0.55 + 0.075 * n as f32).min(0.92);
+        let preview: Vec<&&str> = hit_terms.iter().take(5).collect();
+        out.push(SignalHit {
+            name: "marketing_superlative_density".into(),
+            weight,
+            evidence: format!("{n} marketing terms (e.g. {preview:?})"),
+        });
+    }
+}
+
+/// Empty-hedge phrasing. LLMs reach for "I completely understand" /
+/// "no pressure at all" / "happy to" patterns to soften copy. One is
+/// fine; two or more in one message is a tell.
+fn check_empty_hedge_phrases(body: &str, out: &mut Vec<SignalHit>) {
+    let s = body.to_ascii_lowercase();
+    const PATTERNS: &[&str] = &[
+        "completely understand",
+        "totally understand",
+        "no pressure at all",
+        "no pressure whatsoever",
+        "looking forward to connecting",
+        "looking forward to hearing your thoughts",
+        "i was wondering if you might",
+        "i'd love to",
+        "i would love to",
+        "happy to schedule",
+        "happy to chat",
+        "thrilled to",
+        "excited to announce",
+        "thought i'd check in",
+        "really appreciate you taking",
+        "really appreciate your time",
+        "gently follow up",
+        "whenever you have a moment",
+        "whenever you have a chance",
+    ];
+    let hits: Vec<&str> = PATTERNS.iter().filter(|p| s.contains(*p)).copied().collect();
+    if hits.len() >= 2 {
+        let weight = if hits.len() >= 3 { 0.75 } else { 0.6 };
+        out.push(SignalHit {
+            name: "empty_hedge".into(),
+            weight,
+            evidence: format!("{} hedge phrases: {hits:?}", hits.len()),
+        });
+    }
+}
+
+/// "To recap" / "In summary" / "To summarize" — recap connectives at
+/// the start of a paragraph are a strong LLM tell (humans rarely
+/// recap their own one-paragraph emails). When multiple co-occur
+/// the signal escalates.
+fn check_recap_connectives(body: &str, out: &mut Vec<SignalHit>) {
+    let s = body.to_ascii_lowercase();
+    const PATTERNS: &[(&str, f32)] = &[
+        ("to recap", 0.6),
+        ("in summary", 0.6),
+        ("to summarize", 0.6),
+        ("as we delve", 0.7),
+        ("rich tapestry", 0.85),
+        ("ever-evolving landscape", 0.7),
+        ("rapidly evolving landscape", 0.6),
+        ("complex interplay", 0.6),
+        ("ever-changing", 0.5),
+    ];
+    let hits: Vec<&(&str, f32)> = PATTERNS.iter().filter(|(p, _)| s.contains(p)).collect();
+    for (needle, weight) in &hits {
+        out.push(SignalHit {
+            name: "recap_connective".into(),
+            weight: *weight,
+            evidence: format!("contains `{needle}`"),
+        });
+    }
+    if hits.len() >= 2 {
+        // Multiple recap markers in one message is a strong tell —
+        // boost the ensemble's max-weight floor.
+        let needles: Vec<&str> = hits.iter().map(|(n, _)| *n).collect();
+        out.push(SignalHit {
+            name: "recap_stack".into(),
+            weight: 0.78,
+            evidence: format!("multiple recap connectives: {needles:?}"),
+        });
     }
 }
 
