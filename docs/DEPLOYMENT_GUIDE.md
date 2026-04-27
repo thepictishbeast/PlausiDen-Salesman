@@ -151,13 +151,16 @@ Both can take 24–72h to populate.
 Pick **25** companies you actually want as customers. Keep this small —
 warmup volume matters more than reach for the first week.
 
-CSV format (1-row-per-company):
+Use the shipped template as a starting point:
 
-```csv
-display_name,homepage,industry,description
-Acme Corp,https://acme.example,B2B SaaS,Logging + observability platform
-...
+```sh
+cp samples/prospects-warmup-template.csv ~/prospects-warmup-2026-04-27.csv
+$EDITOR ~/prospects-warmup-2026-04-27.csv
 ```
+
+CSV columns: `display_name` (required), `homepage`, `legal_name`,
+`industry`, `region`, `description`, `size_band` (all optional but
+filling them improves draft quality).
 
 Validate before you ingest:
 

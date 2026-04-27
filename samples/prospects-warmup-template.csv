@@ -1,0 +1,6 @@
+display_name,homepage,legal_name,industry,region,description,size_band
+Acme Logging Co,https://acme-logging.example,Acme Logging Inc,B2B SaaS,EU,Self-hosted log aggregation for security teams,SMB
+Beta Devops,https://beta.example,,Devtools,US,CI/CD platform for monorepos,Mid-market
+Gamma Industrial,https://gamma-industrial.example,Gamma Industrial GmbH,Manufacturing,DACH,IoT telemetry + edge compute,Enterprise
+Delta Cyber,https://delta-cyber.example,,Security,UK,Threat-intel platform for MSSPs,SMB
+Epsilon Health,https://epsilonhealth.example,Epsilon Health Ltd,Healthtech,EU,GDPR-first patient-data analytics,Mid-market
