@@ -93,6 +93,30 @@ impl DraftReplyTool {
         .join("\n")
     }
 
+    /// System prompt for the pricing-shaped path. Adds the pricing
+    /// catalog inline so the model has SPECIFIC numbers to quote
+    /// rather than ranges.
+    fn pricing_system_prompt(&self, catalog: &str) -> String {
+        let base = self.system_prompt();
+        let suffix = format!(
+            "\n\n## PRICING-SHAPED REPLY MODE\n\
+             The prospect is asking about price. Use the catalog below \
+             to quote SPECIFIC tier names + monthly_usd numbers. Do \
+             NOT invent prices. If the catalog doesn't cover the case, \
+             say so honestly and offer to follow up with a custom \
+             quote.\n\n\
+             intent should be `send-pricing`.\n\
+             Length budget: 80-220 words for the body (slightly higher \
+             than default; pricing replies need a short table or \
+             bullet list to be useful).\n\
+             You may use a short bullet list of tiers if it makes the \
+             reply scannable. Keep it terse.\n\n\
+             ## PRICING CATALOG\n\
+             {catalog}"
+        );
+        format!("{base}{suffix}")
+    }
+
     fn user_prompt(
         &self,
         prospect: &Value,
@@ -153,7 +177,14 @@ impl Tool for DraftReplyTool {
                 "outbound_body":    { "type": ["string", "null"] },
                 "inbound_subject":  { "type": ["string", "null"] },
                 "inbound_body":     { "type": "string" },
-                "inbound_kind":     { "type": "string" }
+                "inbound_kind":     { "type": "string" },
+                "pricing_catalog":  {
+                    "type": ["string", "null"],
+                    "description": "Optional pricing catalog text (TOML/markdown). \
+                                    When present + the inbound looks pricing-shaped, \
+                                    the drafter includes specific numbers grounded \
+                                    in the catalog instead of vague ranges."
+                }
             },
             "required": ["prospect", "inbound_body", "inbound_kind"]
         })
@@ -188,6 +219,11 @@ impl Tool for DraftReplyTool {
             .get("outbound_body")
             .and_then(|v| v.as_str())
             .map(str::to_string);
+        let pricing_catalog = args
+            .0
+            .get("pricing_catalog")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
 
         // Refuse to draft on terminal kinds. The classifier already
         // suppressed optout/bounce; spam shouldn't get a reply.
@@ -198,7 +234,17 @@ impl Tool for DraftReplyTool {
             )));
         }
 
-        let system = self.system_prompt();
+        // If the inbound looks pricing-shaped AND we have a catalog,
+        // build a system prompt that includes the catalog so the
+        // model can quote SPECIFIC numbers, not vague ranges.
+        let pricing_shaped = looks_like_pricing_question(&inbound_body);
+        let system = if pricing_shaped
+            && let Some(cat) = pricing_catalog.as_deref()
+        {
+            self.pricing_system_prompt(cat)
+        } else {
+            self.system_prompt()
+        };
         let user = self.user_prompt(
             &prospect,
             outbound_subject.as_deref(),
@@ -270,6 +316,32 @@ impl Tool for DraftReplyTool {
             "model_tokens_out": resp.usage.output_tokens,
         }))
     }
+}
+
+/// True if the inbound reply looks like a pricing question. Cheap
+/// keyword check; no LLM call. The caller uses this to decide
+/// whether to switch to the pricing-system-prompt path.
+pub fn looks_like_pricing_question(body: &str) -> bool {
+    let s = body.to_ascii_lowercase();
+    const KEYWORDS: &[&str] = &[
+        "what's the price",
+        "how much does it cost",
+        "how much is",
+        "pricing",
+        "pricelist",
+        "send a quote",
+        "send me a quote",
+        "send pricing",
+        "what does it cost",
+        "what would it cost",
+        "rate card",
+        "monthly cost",
+        "annual cost",
+        "license cost",
+        "license fee",
+        "subscription cost",
+    ];
+    KEYWORDS.iter().any(|k| s.contains(k))
 }
 
 fn parse_reply(raw: &str) -> std::result::Result<ReplyDraft, String> {

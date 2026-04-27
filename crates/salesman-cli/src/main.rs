@@ -329,9 +329,17 @@ enum Cmd {
     /// awaiting-approval queue with the same detector + signed-receipt
     /// gates as cold drafts. Closes the inbox loop: operator reviews
     /// + approves rather than composing from scratch.
+    /// When inbound looks pricing-shaped and --pricing-catalog is
+    /// supplied, the drafter quotes SPECIFIC tier numbers.
     DraftReplies {
         #[arg(long, default_value_t = 25)]
         batch: i64,
+        /// Optional pricing catalog TOML (e.g.
+        /// samples/pricing.toml). Threaded into the drafter's
+        /// system prompt only when the inbound is detected as
+        /// pricing-shaped.
+        #[arg(long)]
+        pricing_catalog: Option<PathBuf>,
     },
     /// Trigger-event scanner — find people to email TODAY based on
     /// real signals (recent news, GitHub activity, HN mentions).
@@ -1909,13 +1917,20 @@ async fn main() -> Result<()> {
             );
         }
 
-        Cmd::DraftReplies { batch } => {
+        Cmd::DraftReplies { batch, pricing_catalog } => {
             let state = require_state(cli.database_url.as_deref()).await?;
             if router.registered_kinds().is_empty() {
                 anyhow::bail!(
                     "no LLM backends registered (set ANTHROPIC_API_KEY and/or GEMINI_API_KEY)"
                 );
             }
+            let pricing_text = match pricing_catalog.as_ref() {
+                Some(path) => Some(
+                    std::fs::read_to_string(path)
+                        .with_context(|| format!("reading pricing catalog {}", path.display()))?,
+                ),
+                None => None,
+            };
             let drafter = salesman_content::DraftReplyTool::new(
                 router.clone(),
                 std::env::var("SALESMAN_FROM_NAME").unwrap_or_else(|_| "William".into()),
@@ -1928,8 +1943,13 @@ async fn main() -> Result<()> {
                 return Ok(());
             }
             println!(
-                "drafting responses for {} reply(ies)...\n",
-                needing.len()
+                "drafting responses for {} reply(ies){}...\n",
+                needing.len(),
+                if pricing_text.is_some() {
+                    " (pricing catalog loaded)"
+                } else {
+                    ""
+                },
             );
             let mut ok = 0u32;
             let mut err = 0u32;
@@ -1940,7 +1960,7 @@ async fn main() -> Result<()> {
                     "industry":     r.industry,
                     "description":  r.description,
                 });
-                let args = serde_json::json!({
+                let mut args = serde_json::json!({
                     "prospect": prospect_json,
                     "outbound_subject": r.outbound_subject,
                     "outbound_body":    r.outbound_body,
@@ -1948,6 +1968,16 @@ async fn main() -> Result<()> {
                     "inbound_body":     r.inbound_body,
                     "inbound_kind":     r.inbound_kind,
                 });
+                // Pass the pricing catalog through to the drafter
+                // ONLY when this inbound looks pricing-shaped; the
+                // drafter already has the keyword check internally
+                // but threading it here saves the no-op LLM tokens
+                // when the catalog isn't relevant.
+                if let Some(cat) = pricing_text.as_deref()
+                    && salesman_content::draft_reply::looks_like_pricing_question(&r.inbound_body)
+                {
+                    args["pricing_catalog"] = serde_json::Value::String(cat.to_string());
+                }
                 let result = salesman_tools::Tool::invoke(
                     &drafter,
                     salesman_core::ToolArgs(args),

@@ -1,0 +1,95 @@
+# PlausiDen pricing catalog — fed to the reply-drafter when a
+# prospect asks "what's the price?" / "send me a quote."
+#
+# The drafter loads this file and includes the relevant tier in the
+# response. Keep it accurate; bad numbers in a quote that an
+# operator approves are very expensive to walk back.
+#
+# Format: one [[tiers]] entry per pricing tier. Tools that match
+# `applies_to_products` will be quoted with this tier.
+
+# ---- Sentinel ---------------------------------------------------------------
+
+[[tiers]]
+product = "Sentinel"
+name = "Self-host (free, AGPL-3.0)"
+applies_to_products = ["Sentinel"]
+monthly_usd = 0
+includes = [
+    "Full feature set",
+    "Run on your own VPS",
+    "Community support (GitHub issues)",
+]
+limitations = [
+    "No premium support SLA",
+    "No custom integrations",
+]
+
+[[tiers]]
+product = "Sentinel"
+name = "Hosted Standard"
+applies_to_products = ["Sentinel"]
+monthly_usd = 500
+includes = [
+    "We run it on a dedicated VPS for you",
+    "Daily backups + monthly upgrade window",
+    "Email support, 1-business-day SLA",
+    "SOC 2 evidence package included",
+]
+limitations = [
+    "Up to 50 GB/day log volume",
+    "Single-region (US or EU; pick at signup)",
+]
+
+[[tiers]]
+product = "Sentinel"
+name = "Hosted Plus"
+applies_to_products = ["Sentinel"]
+monthly_usd = 2500
+includes = [
+    "Everything in Standard",
+    "Up to 250 GB/day log volume",
+    "Multi-region active-active",
+    "Quarterly compliance review",
+    "Slack-channel support, 4h SLA",
+]
+
+# ---- Salesman --------------------------------------------------------------
+
+[[tiers]]
+product = "Salesman"
+name = "Self-host (free, AGPL-3.0)"
+applies_to_products = ["Salesman"]
+monthly_usd = 0
+includes = [
+    "Full feature set",
+    "Run on your own VPS",
+    "Community support",
+]
+
+[[tiers]]
+product = "Salesman"
+name = "Premium support"
+applies_to_products = ["Salesman"]
+monthly_usd = 500
+includes = [
+    "Email + Slack support, 1-business-day SLA",
+    "Custom template review (5 templates / month)",
+    "Onboarding session",
+]
+
+[[tiers]]
+product = "Salesman"
+name = "Hosted + Vertical Pack"
+applies_to_products = ["Salesman"]
+monthly_usd = 1500
+includes = [
+    "Everything in Premium support",
+    "We run it on a dedicated VPS for you",
+    "One vertical pack tuned to your industry",
+    "Quarterly business review",
+]
+
+# ---- Tidy / Atrium ---------------------------------------------------------
+# (Add entries as they price; for now Sentinel + Salesman are the
+# two priced offerings.)
