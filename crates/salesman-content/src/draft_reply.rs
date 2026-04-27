@@ -93,6 +93,29 @@ impl DraftReplyTool {
         .join("\n")
     }
 
+    /// System prompt for the meeting-shaped path. Adds the
+    /// operator's REAL upcoming slots so the drafter proposes them
+    /// specifically rather than asking "what time works."
+    fn meeting_system_prompt(&self, calendar: &Value) -> String {
+        let base = self.system_prompt();
+        let cal_text = serde_json::to_string_pretty(calendar).unwrap_or_default();
+        let suffix = format!(
+            "\n\n## MEETING-SHAPED REPLY MODE\n\
+             The prospect is asking to schedule. Propose THREE slots \
+             from the operator's calendar below, in their stated \
+             timezone. Format the slots as a small list the prospect \
+             can pick from. Include the meeting duration + Zoom link \
+             (or other join URL) when available. If the calendar has \
+             no upcoming slots, fall back to asking what works for \
+             them — do NOT invent times.\n\n\
+             intent should be `propose-times`.\n\
+             Length budget: 70-160 words.\n\n\
+             ## OPERATOR CALENDAR\n\
+             {cal_text}"
+        );
+        format!("{base}{suffix}")
+    }
+
     /// System prompt for the pricing-shaped path. Adds the pricing
     /// catalog inline so the model has SPECIFIC numbers to quote
     /// rather than ranges.
@@ -184,6 +207,13 @@ impl Tool for DraftReplyTool {
                                     When present + the inbound looks pricing-shaped, \
                                     the drafter includes specific numbers grounded \
                                     in the catalog instead of vague ranges."
+                },
+                "meeting_calendar": {
+                    "type": ["object", "null"],
+                    "description": "Optional MeetingCalendar.to_drafter_value() blob. \
+                                    When present + inbound looks meeting-shaped, the \
+                                    drafter proposes 3 specific slots from the operator's \
+                                    real calendar instead of inviting a back-and-forth."
                 }
             },
             "required": ["prospect", "inbound_body", "inbound_kind"]
@@ -224,6 +254,7 @@ impl Tool for DraftReplyTool {
             .get("pricing_catalog")
             .and_then(|v| v.as_str())
             .map(str::to_string);
+        let meeting_calendar = args.0.get("meeting_calendar").cloned();
 
         // Refuse to draft on terminal kinds. The classifier already
         // suppressed optout/bounce; spam shouldn't get a reply.
@@ -234,11 +265,19 @@ impl Tool for DraftReplyTool {
             )));
         }
 
-        // If the inbound looks pricing-shaped AND we have a catalog,
-        // build a system prompt that includes the catalog so the
-        // model can quote SPECIFIC numbers, not vague ranges.
+        // Pick the right system prompt for the kind of reply we're
+        // drafting. Meeting > pricing > default. Both special paths
+        // require both signals (keyword + supplied data); otherwise
+        // the drafter falls through to the generic prompt.
+        let meeting_shaped = looks_like_meeting_question(&inbound_body);
         let pricing_shaped = looks_like_pricing_question(&inbound_body);
-        let system = if pricing_shaped
+        let system = if meeting_shaped
+            && let Some(cal_v) = meeting_calendar.as_ref()
+            && let Some(slots) = cal_v.get("slots").and_then(|s| s.as_array())
+            && !slots.is_empty()
+        {
+            self.meeting_system_prompt(cal_v)
+        } else if pricing_shaped
             && let Some(cat) = pricing_catalog.as_deref()
         {
             self.pricing_system_prompt(cat)
@@ -316,6 +355,97 @@ impl Tool for DraftReplyTool {
             "model_tokens_out": resp.usage.output_tokens,
         }))
     }
+}
+
+/// One offered meeting slot. Operator-curated.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeetingSlot {
+    pub start: chrono::DateTime<chrono::FixedOffset>,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+/// Operator-curated calendar config. Read from a TOML file.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MeetingCalendar {
+    #[serde(default = "default_duration_minutes")]
+    pub duration_minutes: u32,
+    pub timezone: Option<String>,
+    pub zoom_link: Option<String>,
+    #[serde(default)]
+    pub slots: Vec<MeetingSlot>,
+}
+
+fn default_duration_minutes() -> u32 {
+    30
+}
+
+impl MeetingCalendar {
+    /// Filter to upcoming slots (start > now) and take the first N.
+    pub fn upcoming(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+        take: usize,
+    ) -> Vec<&MeetingSlot> {
+        self.slots
+            .iter()
+            .filter(|s| s.start.with_timezone(&chrono::Utc) > now)
+            .take(take)
+            .collect()
+    }
+
+    /// Render to a JSON value the drafter ingests.
+    pub fn to_drafter_value(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+        take: usize,
+    ) -> Value {
+        let upcoming = self.upcoming(now, take);
+        json!({
+            "duration_minutes": self.duration_minutes,
+            "timezone": self.timezone,
+            "zoom_link": self.zoom_link,
+            "slots": upcoming.iter().map(|s| json!({
+                "start_iso": s.start.to_rfc3339(),
+                "note": s.note,
+            })).collect::<Vec<_>>(),
+        })
+    }
+}
+
+/// Load a meeting-calendar from TOML.
+pub fn load_calendar_toml(text: &str) -> Result<MeetingCalendar> {
+    let cal: MeetingCalendar = toml::from_str(text)
+        .map_err(|e| Error::Validation(format!("calendar parse: {e}")))?;
+    Ok(cal)
+}
+
+/// True if the inbound reply asks for a meeting time. Cheap keyword
+/// check (no LLM). Caller uses this to decide whether to thread the
+/// calendar into the drafter.
+pub fn looks_like_meeting_question(body: &str) -> bool {
+    let s = body.to_ascii_lowercase();
+    const KEYWORDS: &[&str] = &[
+        "when can we meet",
+        "when can we talk",
+        "when can we hop on",
+        "let's meet",
+        "let's hop on",
+        "let's chat",
+        "schedule a call",
+        "schedule a time",
+        "schedule a meeting",
+        "what's a good time",
+        "what time works",
+        "send me a time",
+        "set up a call",
+        "set up a meeting",
+        "book a call",
+        "book a time",
+        "happy to chat",
+        "happy to talk",
+    ];
+    KEYWORDS.iter().any(|k| s.contains(k))
 }
 
 /// True if the inbound reply looks like a pricing question. Cheap

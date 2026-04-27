@@ -331,15 +331,19 @@ enum Cmd {
     /// + approves rather than composing from scratch.
     /// When inbound looks pricing-shaped and --pricing-catalog is
     /// supplied, the drafter quotes SPECIFIC tier numbers.
+    /// When inbound looks meeting-shaped and --meeting-slots is
+    /// supplied, the drafter proposes 3 concrete slots.
     DraftReplies {
         #[arg(long, default_value_t = 25)]
         batch: i64,
-        /// Optional pricing catalog TOML (e.g.
-        /// samples/pricing.toml). Threaded into the drafter's
-        /// system prompt only when the inbound is detected as
-        /// pricing-shaped.
+        /// Optional pricing catalog TOML (e.g. samples/pricing.toml).
         #[arg(long)]
         pricing_catalog: Option<PathBuf>,
+        /// Optional meeting-slots TOML (e.g.
+        /// samples/meeting-slots.toml). Past slots filtered; drafter
+        /// sees the next 3 upcoming.
+        #[arg(long)]
+        meeting_slots: Option<PathBuf>,
     },
     /// Trigger-event scanner — find people to email TODAY based on
     /// real signals (recent news, GitHub activity, HN mentions).
@@ -1917,7 +1921,11 @@ async fn main() -> Result<()> {
             );
         }
 
-        Cmd::DraftReplies { batch, pricing_catalog } => {
+        Cmd::DraftReplies {
+            batch,
+            pricing_catalog,
+            meeting_slots,
+        } => {
             let state = require_state(cli.database_url.as_deref()).await?;
             if router.registered_kinds().is_empty() {
                 anyhow::bail!(
@@ -1929,6 +1937,16 @@ async fn main() -> Result<()> {
                     std::fs::read_to_string(path)
                         .with_context(|| format!("reading pricing catalog {}", path.display()))?,
                 ),
+                None => None,
+            };
+            let calendar_value = match meeting_slots.as_ref() {
+                Some(path) => {
+                    let text = std::fs::read_to_string(path)
+                        .with_context(|| format!("reading meeting slots {}", path.display()))?;
+                    let cal = salesman_content::draft_reply::load_calendar_toml(&text)?;
+                    let now = chrono::Utc::now();
+                    Some(cal.to_drafter_value(now, 3))
+                }
                 None => None,
             };
             let drafter = salesman_content::DraftReplyTool::new(
@@ -1977,6 +1995,11 @@ async fn main() -> Result<()> {
                     && salesman_content::draft_reply::looks_like_pricing_question(&r.inbound_body)
                 {
                     args["pricing_catalog"] = serde_json::Value::String(cat.to_string());
+                }
+                if let Some(cal_v) = calendar_value.as_ref()
+                    && salesman_content::draft_reply::looks_like_meeting_question(&r.inbound_body)
+                {
+                    args["meeting_calendar"] = cal_v.clone();
                 }
                 let result = salesman_tools::Tool::invoke(
                     &drafter,

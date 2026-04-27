@@ -1,0 +1,39 @@
+# Available meeting slots for the operator. Read by `draft-replies
+# --meeting-slots samples/meeting-slots.toml`. When a prospect's
+# reply triggers intent=advance-to-meeting, the drafter quotes 3
+# of these slots (filtered to upcoming-only + ≥30min apart).
+#
+# Format: each [[slots]] entry is one offered start time. End times
+# are computed as start + duration_minutes (default 30).
+#
+# Tip: regenerate weekly. Past slots are filtered automatically;
+# the catalog stays small. If you use a real calendar, consider
+# generating this file from your .ics with a small script.
+
+duration_minutes = 30
+timezone = "America/New_York"
+zoom_link = "https://us02web.zoom.us/j/your-personal-room"
+
+[[slots]]
+start = "2026-04-29T10:00:00-04:00"
+note  = "Tuesday morning"
+
+[[slots]]
+start = "2026-04-29T14:00:00-04:00"
+note  = "Tuesday afternoon"
+
+[[slots]]
+start = "2026-04-30T11:00:00-04:00"
+note  = "Wednesday late morning"
+
+[[slots]]
+start = "2026-05-01T09:00:00-04:00"
+note  = "Thursday early"
+
+[[slots]]
+start = "2026-05-01T15:00:00-04:00"
+note  = "Thursday afternoon"
+
+[[slots]]
+start = "2026-05-02T10:00:00-04:00"
+note  = "Friday morning"
