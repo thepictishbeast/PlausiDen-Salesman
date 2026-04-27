@@ -308,6 +308,12 @@ impl DraftColdEmailTool {
               (one concrete benefit, not feature dump), one explicit ask (low-friction CTA - \
               15-min call, demo link, reply with interest)."
                 .into(),
+            "- If `prospect.tags.interests` is non-empty, your personalization \
+              paragraph SHOULD anchor on one of those interests directly. \
+              They are topics the prospect has previously expressed interest in \
+              (extracted from past replies); referencing them shows you're \
+              listening, not blasting."
+                .into(),
             "- No emoji. No fake urgency. No fake social proof. No 'I noticed' / \
               'I came across' opener cliches. No 'just wanted to' / \
               'hope this finds you well'."

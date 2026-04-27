@@ -74,6 +74,11 @@ impl DraftReplyTool {
             "- Reference something specific the prospect said. Quote one short phrase verbatim if useful.",
             "- Answer the question they actually asked, or address the objection they actually raised.",
             "- Be concrete. If you mention a number or capability, it must trace to a fact you were given.",
+            "- If `prospect.tags.interests` is non-empty, you MAY also bridge \
+              to one of those interests when it naturally fits — they are \
+              topics the prospect previously expressed interest in across \
+              prior touches. Don't force it; only use when the bridge is \
+              genuinely relevant.",
             "- One clear next step at the end. Either an answer + question, or an offer + ask.",
             "- No marketing superlatives. No 'industry-leading', 'best-in-class', 'transformative'.",
             "- No empty hedging. No 'I was wondering if', 'no pressure at all', 'happy to chat whenever'.",
