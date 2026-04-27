@@ -62,6 +62,19 @@ pub struct ChatResponse {
     pub message: Message,
     pub usage: Usage,
     pub finish_reason: FinishReason,
+    /// Which backend served the request — populated by the router
+    /// after dispatch so callers can record provenance per
+    /// MODEL_RESILIENCE.md.
+    #[doc(hidden)]
+    pub backend: Option<String>,
+    /// Which model name served the request. May differ from the
+    /// router's declared model when fallback is in play.
+    #[doc(hidden)]
+    pub model: Option<String>,
+    /// True if this response came from a fallback in the
+    /// preference chain (primary was unavailable / rate-limited).
+    #[doc(hidden)]
+    pub via_fallback: bool,
 }
 
 #[derive(Debug, Clone, Default)]

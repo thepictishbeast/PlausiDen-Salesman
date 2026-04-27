@@ -260,6 +260,17 @@ impl Tool for DraftColdEmailTool {
         let draft = last_draft.expect("loop runs at least once");
         let resp = last_resp.expect("loop runs at least once");
 
+        // produced_by — provenance the persistence layer records on
+        // the touch row per MODEL_RESILIENCE.md. Missing fields fall
+        // back to "unknown" so the audit query has SOMETHING to show
+        // rather than NULL.
+        let produced_by = json!({
+            "backend": resp.backend.as_deref().unwrap_or("unknown"),
+            "model": resp.model.as_deref().unwrap_or("unknown"),
+            "via_fallback": resp.via_fallback,
+            "purpose": "draft_cold_email",
+        });
+
         Ok(json!({
             "subject": draft.subject,
             "body": draft.body,
@@ -271,6 +282,7 @@ impl Tool for DraftColdEmailTool {
             "model_latency_ms": resp.usage.latency_ms,
             "model_tokens_in":  resp.usage.prompt_tokens,
             "model_tokens_out": resp.usage.output_tokens,
+            "produced_by": produced_by,
         }))
     }
 }

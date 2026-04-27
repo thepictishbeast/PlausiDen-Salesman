@@ -964,12 +964,15 @@ async fn main() -> Result<()> {
                             .and_then(|x| x.as_str())
                             .unwrap_or("(no subject)");
                         let body = v.get("body").and_then(|x| x.as_str()).unwrap_or("");
+                        let produced_by = v.get("produced_by").cloned();
                         match state
-                            .insert_touch_draft(
+                            .insert_touch_draft_full(
                                 p.prospect_id,
                                 salesman_core::TouchChannel::Email,
                                 Some(subject),
                                 body,
+                                None,
+                                produced_by,
                             )
                             .await
                         {
@@ -3366,12 +3369,15 @@ async fn main() -> Result<()> {
                     Ok(v) => {
                         let subject = v.get("subject").and_then(|x| x.as_str()).unwrap_or("");
                         let body = v.get("body").and_then(|x| x.as_str()).unwrap_or("");
+                        let produced_by = v.get("produced_by").cloned();
                         if let Err(e) = state
-                            .insert_touch_draft(
+                            .insert_touch_draft_full(
                                 d.prospect_id,
                                 salesman_core::TouchChannel::Email,
                                 Some(subject),
                                 body,
+                                Some(&d.template_key),
+                                produced_by,
                             )
                             .await
                         {

@@ -147,6 +147,9 @@ impl LlmBackend for ClaudeBackend {
             },
             usage,
             finish_reason,
+            backend: Some("claude".into()),
+            model: Some(self.model.clone()),
+            via_fallback: false,
         })
     }
 }

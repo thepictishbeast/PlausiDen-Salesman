@@ -165,6 +165,9 @@ impl LlmBackend for GeminiBackend {
             },
             usage,
             finish_reason,
+            backend: Some("gemini".into()),
+            model: Some(self.model.clone()),
+            via_fallback: false,
         })
     }
 }

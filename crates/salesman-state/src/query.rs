@@ -580,11 +580,31 @@ impl State {
         body: &str,
         template_key: Option<&str>,
     ) -> Result<salesman_core::TouchId> {
+        self.insert_touch_draft_full(
+            prospect_id, channel, subject, body, template_key, None,
+        )
+        .await
+    }
+
+    /// Full-form draft insert. `produced_by` is a JSON object recording
+    /// which LLM backend + model produced this draft (per the
+    /// MODEL_RESILIENCE.md contract). Pass None for non-LLM drafts
+    /// (templates / manual inserts) — the column stays NULL and the
+    /// audit query treats it as "(unknown provenance)".
+    pub async fn insert_touch_draft_full(
+        &self,
+        prospect_id: ProspectId,
+        channel: salesman_core::TouchChannel,
+        subject: Option<&str>,
+        body: &str,
+        template_key: Option<&str>,
+        produced_by: Option<serde_json::Value>,
+    ) -> Result<salesman_core::TouchId> {
         let id = salesman_core::TouchId::new();
         sqlx::query(
             "INSERT INTO touches
-             (id, prospect_id, channel, subject, body, queued_at, sent_at, outcome, receipt_id, template_key)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+             (id, prospect_id, channel, subject, body, queued_at, sent_at, outcome, receipt_id, template_key, produced_by)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
         )
         .bind(id.0)
         .bind(prospect_id.0)
@@ -596,6 +616,7 @@ impl State {
         .bind(salesman_core::TouchOutcome::AwaitingApproval.to_string())
         .bind(None::<uuid::Uuid>)
         .bind(template_key)
+        .bind(produced_by)
         .execute(self.pool())
         .await
         .map_err(|e| Error::Db(e.to_string()))?;
