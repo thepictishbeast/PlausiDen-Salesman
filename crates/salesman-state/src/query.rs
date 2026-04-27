@@ -9,6 +9,28 @@ use salesman_core::model::{CampaignStatus, TechSignal};
 use salesman_core::{Campaign, CampaignId, Company, CompanyId, Error, Prospect, ProspectId, Result};
 use sqlx::Row;
 
+#[derive(Debug, Clone)]
+pub struct ProspectWithFacts {
+    pub prospect_id: ProspectId,
+    pub company_id: CompanyId,
+    pub display_name: String,
+    pub homepage: Option<String>,
+    pub industry: Option<String>,
+    pub description: Option<String>,
+    pub tech_signals: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct TouchSummary {
+    pub touch_id: salesman_core::TouchId,
+    pub prospect_id: ProspectId,
+    pub company: String,
+    pub channel: String,
+    pub subject: Option<String>,
+    pub body: String,
+    pub queued_at: chrono::DateTime<chrono::Utc>,
+}
+
 impl State {
     /// Insert a new company. Returns the assigned id (caller-supplied).
     pub async fn insert_company(&self, c: &Company) -> Result<CompanyId> {
@@ -214,6 +236,122 @@ impl State {
         .await
         .map_err(|e| Error::Db(e.to_string()))?;
         Ok(())
+    }
+
+    /// List prospects-with-facts for a campaign. Returns enough to
+    /// drive draft generation without a second round-trip.
+    pub async fn list_prospects_with_facts_for_campaign(
+        &self,
+        campaign_id: CampaignId,
+    ) -> Result<Vec<ProspectWithFacts>> {
+        let rows = sqlx::query(
+            "SELECT p.id AS prospect_id, c.id AS company_id,
+                    c.display_name, c.homepage, c.industry,
+                    c.description, c.tech_signals
+             FROM prospects p
+             JOIN companies c ON c.id = p.company_id
+             WHERE p.campaign_id = $1
+             ORDER BY c.display_name",
+        )
+        .bind(campaign_id.0)
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let prospect_id = ProspectId(r.try_get("prospect_id").unwrap_or_else(|_| uuid::Uuid::nil()));
+            let company_id = CompanyId(r.try_get("company_id").unwrap_or_else(|_| uuid::Uuid::nil()));
+            let display_name: String = r.try_get("display_name").unwrap_or_default();
+            let homepage: Option<String> = r.try_get("homepage").unwrap_or(None);
+            let industry: Option<String> = r.try_get("industry").unwrap_or(None);
+            let description: Option<String> = r.try_get("description").unwrap_or(None);
+            let tech_signals: serde_json::Value = r.try_get("tech_signals").unwrap_or(serde_json::Value::Array(vec![]));
+            out.push(ProspectWithFacts {
+                prospect_id,
+                company_id,
+                display_name,
+                homepage,
+                industry,
+                description,
+                tech_signals,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Insert a draft Touch in `awaiting_approval` outcome. The
+    /// caller chose the channel + content; we just persist.
+    pub async fn insert_touch_draft(
+        &self,
+        prospect_id: ProspectId,
+        channel: salesman_core::TouchChannel,
+        subject: Option<&str>,
+        body: &str,
+    ) -> Result<salesman_core::TouchId> {
+        let touch = salesman_core::Touch {
+            id: salesman_core::TouchId::new(),
+            prospect_id,
+            channel,
+            subject: subject.map(String::from),
+            body: body.to_string(),
+            queued_at: Utc::now(),
+            sent_at: None,
+            outcome: salesman_core::TouchOutcome::AwaitingApproval,
+            receipt_id: None,
+        };
+        sqlx::query(
+            "INSERT INTO touches
+             (id, prospect_id, channel, subject, body, queued_at, sent_at, outcome, receipt_id)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+        )
+        .bind(touch.id.0)
+        .bind(touch.prospect_id.0)
+        .bind(touch.channel.to_string())
+        .bind(&touch.subject)
+        .bind(&touch.body)
+        .bind(touch.queued_at)
+        .bind(touch.sent_at)
+        .bind(touch.outcome.to_string())
+        .bind(touch.receipt_id.map(|x| x.0))
+        .execute(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(touch.id)
+    }
+
+    /// List touches in awaiting-approval state for a campaign.
+    pub async fn list_drafts_awaiting_approval(
+        &self,
+        campaign_id: CampaignId,
+    ) -> Result<Vec<TouchSummary>> {
+        let rows = sqlx::query(
+            "SELECT t.id, t.prospect_id, t.subject, t.body, t.channel, t.queued_at,
+                    c.display_name AS company
+             FROM touches t
+             JOIN prospects p ON p.id = t.prospect_id
+             JOIN companies c ON c.id = p.company_id
+             WHERE p.campaign_id = $1 AND t.outcome = 'awaiting_approval'
+             ORDER BY t.queued_at",
+        )
+        .bind(campaign_id.0)
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            out.push(TouchSummary {
+                touch_id: salesman_core::TouchId(r.try_get("id").unwrap_or_else(|_| uuid::Uuid::nil())),
+                prospect_id: ProspectId(r.try_get("prospect_id").unwrap_or_else(|_| uuid::Uuid::nil())),
+                company: r.try_get("company").unwrap_or_default(),
+                channel: r.try_get("channel").unwrap_or_default(),
+                subject: r.try_get("subject").unwrap_or(None),
+                body: r.try_get("body").unwrap_or_default(),
+                queued_at: r.try_get("queued_at").unwrap_or_else(|_| chrono::Utc::now()),
+            });
+        }
+        Ok(out)
     }
 
     /// List companies linked to a campaign via `prospects`.

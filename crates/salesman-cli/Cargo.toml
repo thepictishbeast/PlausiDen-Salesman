@@ -17,6 +17,7 @@ salesman-tools = { path = "../salesman-tools" }
 salesman-orchestrator = { path = "../salesman-orchestrator" }
 salesman-state = { path = "../salesman-state" }
 salesman-discovery = { path = "../salesman-discovery" }
+salesman-content = { path = "../salesman-content" }
 clap = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

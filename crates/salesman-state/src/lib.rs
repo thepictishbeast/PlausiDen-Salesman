@@ -10,6 +10,7 @@ use salesman_core::{Error, Result};
 use sqlx::postgres::{PgPool, PgPoolOptions};
 
 pub mod query;
+pub use query::{ProspectWithFacts, TouchSummary};
 
 /// Thin wrapper around a Postgres connection pool. Created at startup,
 /// shared across the process.

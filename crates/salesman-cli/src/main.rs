@@ -11,6 +11,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use salesman_content::DraftColdEmailTool;
 use salesman_discovery::{CsvSeed, CsvSeedTool, HomepageFetchTool, HomepageFetcher};
 use salesman_llm::claude::ClaudeBackend;
 use salesman_llm::gemini::GeminiBackend;
@@ -73,6 +74,26 @@ enum Cmd {
         #[arg(long, default_value_t = 4)]
         concurrency: u32,
     },
+    /// Generate cold-email drafts for every prospect in a campaign.
+    /// Drafts land in `awaiting_approval` — never auto-sent.
+    Draft {
+        #[arg(long)]
+        campaign: String,
+        /// PlausiDen product to pitch (Sentinel, Tidy, Atrium, AppGuard, ...).
+        #[arg(long)]
+        product: String,
+        /// Optional steering for the angle.
+        #[arg(long)]
+        angle_hint: Option<String>,
+        /// Skip prospects that already have an awaiting-approval touch.
+        #[arg(long, default_value_t = true)]
+        skip_existing: bool,
+    },
+    /// Show drafts awaiting operator approval.
+    Review {
+        #[arg(long)]
+        campaign: String,
+    },
     /// Kill switch — pauses every active campaign.
     Halt {
         #[arg(long, default_value = "operator-issued")]
@@ -103,11 +124,17 @@ fn build_router(claude_model: &str, gemini_model: &str) -> LlmRouter {
     router
 }
 
-fn build_tools() -> ToolRegistry {
+fn build_tools(router: Arc<LlmRouter>) -> ToolRegistry {
     let mut tools = ToolRegistry::new();
     tools.register(Arc::new(EchoTool));
     tools.register(Arc::new(CsvSeedTool::new()));
     tools.register(Arc::new(HomepageFetchTool::new()));
+    tools.register(Arc::new(DraftColdEmailTool::new(
+        router,
+        "the PlausiDen team",
+        "PlausiDen",
+        "Plausible deniability + sovereign data tools for SMB security teams.",
+    )));
     tools
 }
 
@@ -139,8 +166,8 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
-    let tools = Arc::new(build_tools());
     let router = Arc::new(build_router(&cli.claude_model, &cli.gemini_model));
+    let tools = Arc::new(build_tools(router.clone()));
 
     match cli.cmd {
         Cmd::Plan { goal, hint } => {
@@ -275,6 +302,119 @@ async fn main() -> Result<()> {
                 }
             }
             println!("enrich `{campaign}`: total={total} ok={ok} err={err}");
+        }
+
+        Cmd::Draft {
+            campaign,
+            product,
+            angle_hint,
+            skip_existing,
+        } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            if router.registered_kinds().is_empty() {
+                anyhow::bail!(
+                    "no LLM backends registered (set ANTHROPIC_API_KEY and/or GEMINI_API_KEY)"
+                );
+            }
+            let campaign_id = state
+                .ensure_campaign(&campaign, "(draft-only)", "(unspecified)")
+                .await?;
+            let prospects = state
+                .list_prospects_with_facts_for_campaign(campaign_id)
+                .await?;
+            let existing = state.list_drafts_awaiting_approval(campaign_id).await?;
+            let existing_ids: std::collections::HashSet<_> =
+                existing.iter().map(|t| t.prospect_id).collect();
+
+            let draft_tool = DraftColdEmailTool::new(
+                router.clone(),
+                "the PlausiDen team",
+                "PlausiDen",
+                "Plausible deniability + sovereign data tools for SMB security teams.",
+            );
+
+            let mut ok = 0u32;
+            let mut skipped = 0u32;
+            let mut err = 0u32;
+            for p in &prospects {
+                if skip_existing && existing_ids.contains(&p.prospect_id) {
+                    skipped += 1;
+                    continue;
+                }
+                let prospect_json = serde_json::json!({
+                    "display_name": p.display_name,
+                    "homepage": p.homepage,
+                    "industry": p.industry,
+                    "description": p.description,
+                    "tech_signals": p.tech_signals,
+                });
+                let mut tool_args = serde_json::json!({
+                    "prospect": prospect_json,
+                    "product": product,
+                });
+                if let Some(h) = &angle_hint {
+                    tool_args["angle_hint"] = serde_json::Value::String(h.clone());
+                }
+                let result = salesman_tools::Tool::invoke(
+                    &draft_tool,
+                    salesman_core::ToolArgs(tool_args),
+                )
+                .await;
+                match result {
+                    Ok(v) => {
+                        let subject = v.get("subject").and_then(|x| x.as_str()).unwrap_or("(no subject)");
+                        let body = v.get("body").and_then(|x| x.as_str()).unwrap_or("");
+                        match state
+                            .insert_touch_draft(
+                                p.prospect_id,
+                                salesman_core::TouchChannel::Email,
+                                Some(subject),
+                                body,
+                            )
+                            .await
+                        {
+                            Ok(touch_id) => {
+                                ok += 1;
+                                tracing::info!(company = %p.display_name, %touch_id, "drafted");
+                            }
+                            Err(e) => {
+                                err += 1;
+                                tracing::warn!(company = %p.display_name, "%e" = %e, "draft persist failed");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        err += 1;
+                        tracing::warn!(company = %p.display_name, "%e" = %e, "draft generation failed");
+                    }
+                }
+            }
+            println!(
+                "draft `{campaign}`: prospects={} ok={ok} skipped={skipped} err={err}",
+                prospects.len()
+            );
+        }
+
+        Cmd::Review { campaign } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let campaign_id = state
+                .ensure_campaign(&campaign, "(review-only)", "(unspecified)")
+                .await?;
+            let drafts = state.list_drafts_awaiting_approval(campaign_id).await?;
+            if drafts.is_empty() {
+                println!("no drafts awaiting approval in `{campaign}`");
+            } else {
+                println!("=== {} drafts awaiting approval ===\n", drafts.len());
+                for (i, t) in drafts.iter().enumerate() {
+                    println!("--- [{}] {} (touch {}, {})", i + 1, t.company, t.touch_id, t.channel);
+                    if let Some(s) = &t.subject {
+                        println!("Subject: {s}");
+                    }
+                    println!();
+                    println!("{}", t.body);
+                    println!();
+                }
+            }
         }
 
         Cmd::Halt { reason } => {
