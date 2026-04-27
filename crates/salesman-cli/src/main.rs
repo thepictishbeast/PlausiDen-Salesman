@@ -213,6 +213,26 @@ enum Cmd {
         #[arg(long)]
         from_csv: PathBuf,
     },
+    /// Autonomous prospect discovery via web search. Runs a Brave
+    /// Search query (e.g. "EU SMB cybersecurity consultancies"),
+    /// normalizes hits into companies, and (with --persist) inserts
+    /// them as prospects in the campaign. Skips obvious non-company
+    /// hits (wikipedia / linkedin / job boards / news).
+    /// Requires BRAVE_SEARCH_API_KEY in env.
+    DiscoverSearch {
+        #[arg(long)]
+        campaign: String,
+        /// Free-form search query describing the prospect profile.
+        #[arg(long)]
+        query: String,
+        /// Max companies to import per run.
+        #[arg(long, default_value_t = 25)]
+        top: u32,
+        /// Insert into DB. Without this the command is read-only —
+        /// you see what would be imported and can refine the query.
+        #[arg(long, default_value_t = false)]
+        persist: bool,
+    },
     /// Fetch homepages for all companies in a campaign + write
     /// extracted facts back into companies.
     Enrich {
@@ -1239,6 +1259,163 @@ async fn main() -> Result<()> {
                 inserted_companies,
                 inserted_prospects,
             );
+        }
+
+        Cmd::DiscoverSearch {
+            campaign,
+            query,
+            top,
+            persist,
+        } => {
+            // Hosts that aren't actual prospect company sites — strip
+            // them so we don't import job boards / news mentions / wiki
+            // entries as if they were companies. Conservative list;
+            // operator can refine the query if a target host slips in.
+            const NOISE_HOSTS: &[&str] = &[
+                "wikipedia.org",
+                "linkedin.com",
+                "indeed.com",
+                "glassdoor.com",
+                "crunchbase.com",
+                "youtube.com",
+                "twitter.com",
+                "x.com",
+                "facebook.com",
+                "github.com",
+                "medium.com",
+                "reddit.com",
+                "ycombinator.com",
+                "stackoverflow.com",
+                "techcrunch.com",
+                "forbes.com",
+                "bloomberg.com",
+                "g2.com",
+                "capterra.com",
+                "trustpilot.com",
+            ];
+
+            let brave = match salesman_discovery::BraveSearch::from_env() {
+                Ok(b) => b,
+                Err(e) => anyhow::bail!("DiscoverSearch needs BRAVE_SEARCH_API_KEY in env: {e}"),
+            };
+
+            // Brave caps at 20 per call; loop in pages for higher tops.
+            let mut hits: Vec<salesman_discovery::SearchHit> = Vec::new();
+            let mut remaining = top;
+            while remaining > 0 {
+                let n = remaining.min(20);
+                let page = match brave.search(&query, n).await {
+                    Ok(h) => h,
+                    Err(e) => {
+                        tracing::warn!("%e" = %e, "brave search page failed");
+                        break;
+                    }
+                };
+                if page.is_empty() {
+                    break;
+                }
+                hits.extend(page);
+                remaining = remaining.saturating_sub(n);
+                if remaining > 0 {
+                    // Brave self-throttles to 1 QPS internally; this
+                    // is just a polite buffer.
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                }
+            }
+
+            // Normalize each hit into a Company. Dedup by host.
+            let mut seen_hosts: std::collections::BTreeSet<String> =
+                std::collections::BTreeSet::new();
+            let mut companies: Vec<salesman_core::Company> = Vec::new();
+            for h in &hits {
+                let url = match url::Url::parse(&h.url) {
+                    Ok(u) => u,
+                    Err(_) => continue,
+                };
+                let host = url
+                    .host_str()
+                    .unwrap_or_default()
+                    .trim_start_matches("www.")
+                    .to_ascii_lowercase();
+                if host.is_empty() {
+                    continue;
+                }
+                if NOISE_HOSTS.iter().any(|n| host.ends_with(n)) {
+                    continue;
+                }
+                if !seen_hosts.insert(host.clone()) {
+                    continue;
+                }
+                // Display name: take the first segment of the title
+                // before " | " or " - " — that's where most sites put
+                // the company name vs page title. Fallback: host root.
+                let display_name = h
+                    .title
+                    .split([':', '|', '-', '·'])
+                    .next()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| host.split('.').next().unwrap_or(&host).to_string());
+                let homepage = url::Url::parse(&format!("https://{host}/")).ok();
+                companies.push(salesman_core::Company {
+                    id: salesman_core::CompanyId::new(),
+                    legal_name: None,
+                    display_name,
+                    homepage,
+                    industry: None,
+                    size_band: None,
+                    region: None,
+                    description: Some(h.description.clone()).filter(|s| !s.is_empty()),
+                    tech_signals: vec![],
+                    discovered_at: chrono::Utc::now(),
+                    last_enriched_at: None,
+                    source: salesman_core::model::DiscoverySource::Search,
+                    raw: std::collections::BTreeMap::new(),
+                });
+            }
+
+            println!(
+                "discover-search query=\"{query}\" — {} hit(s), \
+                 {} candidate company(ies) after de-noise + dedup{}",
+                hits.len(),
+                companies.len(),
+                if persist { "" } else { ", DRY-RUN" },
+            );
+            for c in &companies {
+                println!(
+                    "  - {:<40} {}",
+                    c.display_name.chars().take(40).collect::<String>(),
+                    c.homepage
+                        .as_ref()
+                        .map(|u| u.as_str())
+                        .unwrap_or("(no homepage)"),
+                );
+            }
+            if persist {
+                let state = require_state(cli.database_url.as_deref()).await?;
+                let cids: Vec<_> = companies.iter().map(|c| c.id).collect();
+                let n_companies = state.insert_companies(&companies).await?;
+                let campaign_id = state
+                    .ensure_campaign(
+                        &campaign,
+                        &format!("autonomous discovery: {query}"),
+                        "auto-discovered",
+                    )
+                    .await?;
+                let n_prospects = state
+                    .upsert_prospects_for_campaign(campaign_id, &cids)
+                    .await?;
+                println!(
+                    "\npersisted into `{campaign}`: {n_companies} new \
+                     companies, {n_prospects} new prospect rows.",
+                );
+            } else {
+                println!(
+                    "\n(dry-run) re-run with --persist to import. \
+                     Refine the --query if these don't match the profile."
+                );
+            }
         }
 
         Cmd::Enrich {
