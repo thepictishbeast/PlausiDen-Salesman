@@ -360,6 +360,27 @@ enum Cmd {
         #[arg(long, default_value_t = 3)]
         sample_drafts: usize,
     },
+    /// Resolve SPF / DKIM / DMARC / PTR for the sender domain and
+    /// report per-record OK / WARN / FAIL with remediation.
+    /// Owner runs this DURING DNS setup (B3 in OWNER_BLOCKERS.md)
+    /// instead of hand-running dig + parsing output.
+    DnsCheck {
+        /// Sender domain (e.g. `outreach.plausiden.com`).
+        #[arg(long)]
+        domain: String,
+        /// DKIM selector to query, e.g. `s1` →
+        /// `s1._domainkey.<domain>`.
+        #[arg(long, default_value = "s1")]
+        dkim_selector: String,
+        /// Sender IP (for the PTR check). If omitted, the PTR check
+        /// is skipped — DNS-only.
+        #[arg(long)]
+        sender_ip: Option<String>,
+        /// Sending hostname expected in the PTR (e.g.
+        /// `mail.plausiden.com`). Required when --sender-ip is set.
+        #[arg(long)]
+        expected_ptr: Option<String>,
+    },
     /// Manage the global do-not-contact list. Subcommands: list,
     /// add, remove, export, import, count. Required for GDPR
     /// right-to-be-forgotten + audit + backup.
@@ -545,6 +566,63 @@ fn pct(n: usize, total: usize) -> f32 {
     } else {
         (n as f32) / (total as f32) * 100.0
     }
+}
+
+/// Run `dig +short TXT <name>` and return one entry per line. Each
+/// entry has its surrounding quotes stripped + adjacent quoted runs
+/// concatenated (some long records come back as `"part1" "part2"`).
+async fn dig_txt(name: &str) -> anyhow::Result<Vec<String>> {
+    let out = tokio::process::Command::new("dig")
+        .args(["+short", "TXT", name])
+        .output()
+        .await
+        .with_context(|| format!("running dig +short TXT {name}"))?;
+    if !out.status.success() {
+        anyhow::bail!("dig exit {}", out.status);
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    Ok(text
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .map(unquote_txt_record)
+        .collect())
+}
+
+/// Strip the `"…"` quoting from a dig +short TXT line and concatenate
+/// adjacent quoted spans (chunked records over 255 chars).
+fn unquote_txt_record(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut in_quotes = false;
+    for c in line.chars() {
+        if c == '"' {
+            in_quotes = !in_quotes;
+        } else if in_quotes {
+            out.push(c);
+        }
+    }
+    if out.is_empty() {
+        // Not actually quoted (malformed dig output) — return raw.
+        return line.to_string();
+    }
+    out
+}
+
+/// Run `dig +short -x <ip>` and return one PTR per line.
+async fn dig_ptr(ip: &str) -> anyhow::Result<Vec<String>> {
+    let out = tokio::process::Command::new("dig")
+        .args(["+short", "-x", ip])
+        .output()
+        .await
+        .with_context(|| format!("running dig +short -x {ip}"))?;
+    if !out.status.success() {
+        anyhow::bail!("dig exit {}", out.status);
+    }
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect())
 }
 
 /// Quote a CSV field per RFC 4180: wrap in `"` if the value contains
@@ -2516,6 +2594,211 @@ async fn main() -> Result<()> {
             let sid = sqlx_lookup_sequence(&state, campaign_id, &sequence).await?;
             let n = state.assign_sequence_to_campaign(campaign_id, sid).await?;
             println!("assigned sequence `{sequence}` to {n} new prospects (idempotent)");
+        }
+
+        Cmd::DnsCheck {
+            domain,
+            dkim_selector,
+            sender_ip,
+            expected_ptr,
+        } => {
+            println!(
+                "salesman dns-check `{domain}` — {}",
+                chrono::Utc::now().to_rfc3339()
+            );
+            println!("==========================================\n");
+
+            let mut blockers = 0u32;
+            let mut warnings = 0u32;
+
+            // --- SPF
+            print!("[ SPF              ]  ");
+            match dig_txt(&domain).await {
+                Ok(records) => {
+                    let spf_records: Vec<&String> =
+                        records.iter().filter(|r| r.starts_with("v=spf1")).collect();
+                    match spf_records.len() {
+                        0 => {
+                            println!(
+                                "BLOCK  no SPF record on {domain} \
+                                 (publish: `v=spf1 ip4:<sender_ip> -all`)"
+                            );
+                            blockers += 1;
+                        }
+                        1 => {
+                            let r = spf_records[0];
+                            if r.ends_with("-all") {
+                                println!("OK    {r}");
+                            } else if r.ends_with("~all") {
+                                println!(
+                                    "WARN  uses `~all` (softfail) — fine for warmup \
+                                     but escalate to `-all` after 48h: {r}"
+                                );
+                                warnings += 1;
+                            } else if r.ends_with("?all") {
+                                println!(
+                                    "WARN  uses `?all` (neutral) — Gmail will not honor it: {r}"
+                                );
+                                warnings += 1;
+                            } else if r.ends_with("+all") {
+                                println!(
+                                    "BLOCK SPF allows ANY sender (+all) — strip and \
+                                     republish with -all: {r}"
+                                );
+                                blockers += 1;
+                            } else {
+                                println!("WARN  no qualifier on `all` (defaulting to +all): {r}");
+                                warnings += 1;
+                            }
+                        }
+                        n => {
+                            println!(
+                                "BLOCK {n} SPF records published; RFC 7208 forbids more than one. \
+                                 Merge into a single record."
+                            );
+                            blockers += 1;
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("WARN  cannot resolve TXT for {domain}: {e}");
+                    warnings += 1;
+                }
+            }
+
+            // --- DKIM
+            let dkim_name = format!("{dkim_selector}._domainkey.{domain}");
+            print!("[ DKIM             ]  ");
+            match dig_txt(&dkim_name).await {
+                Ok(records) if !records.is_empty() => {
+                    let r = records.join(" ");
+                    if r.contains("v=DKIM1") && r.contains("p=") && !r.contains("p=;") {
+                        println!("OK    {dkim_name} ({} chars)", r.len());
+                    } else if r.contains("p=;") {
+                        println!(
+                            "BLOCK DKIM record published but public key is empty (`p=;`) — \
+                             selector revoked. Re-run opendkim-genkey + re-publish."
+                        );
+                        blockers += 1;
+                    } else {
+                        println!("WARN  unexpected DKIM record shape: {r}");
+                        warnings += 1;
+                    }
+                }
+                Ok(_) => {
+                    println!(
+                        "BLOCK no DKIM record at {dkim_name} \
+                         (run `opendkim-genkey -d {domain} -s {dkim_selector}` and \
+                         publish the .txt as TXT)"
+                    );
+                    blockers += 1;
+                }
+                Err(e) => {
+                    println!("WARN  cannot resolve {dkim_name}: {e}");
+                    warnings += 1;
+                }
+            }
+
+            // --- DMARC
+            let dmarc_name = format!("_dmarc.{domain}");
+            print!("[ DMARC            ]  ");
+            match dig_txt(&dmarc_name).await {
+                Ok(records) => {
+                    let dmarc: Vec<&String> = records
+                        .iter()
+                        .filter(|r| r.starts_with("v=DMARC1"))
+                        .collect();
+                    match dmarc.len() {
+                        0 => {
+                            println!(
+                                "BLOCK no DMARC record at {dmarc_name} \
+                                 (publish `v=DMARC1; p=none; rua=mailto:dmarc@<root-domain>`)"
+                            );
+                            blockers += 1;
+                        }
+                        1 => {
+                            let r = dmarc[0];
+                            let policy = r
+                                .split(';')
+                                .find_map(|f| f.trim().strip_prefix("p="))
+                                .unwrap_or("?");
+                            let level = match policy {
+                                "none" => "WARN  policy=none — fine for first-week monitoring; escalate to quarantine then reject after 7+ days clean",
+                                "quarantine" => "OK    policy=quarantine",
+                                "reject" => "OK    policy=reject (hardest)",
+                                _ => "WARN  unrecognized policy",
+                            };
+                            if level.starts_with("WARN") {
+                                warnings += 1;
+                            }
+                            println!("{level}: {r}");
+                        }
+                        n => {
+                            println!(
+                                "BLOCK {n} DMARC records published; only one allowed."
+                            );
+                            blockers += 1;
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("WARN  cannot resolve {dmarc_name}: {e}");
+                    warnings += 1;
+                }
+            }
+
+            // --- PTR (optional; only if sender_ip provided)
+            if let (Some(ip), Some(expected)) = (sender_ip.as_ref(), expected_ptr.as_ref()) {
+                print!("[ PTR              ]  ");
+                match dig_ptr(ip).await {
+                    Ok(records) if !records.is_empty() => {
+                        let normalized: Vec<String> = records
+                            .iter()
+                            .map(|s| s.trim_end_matches('.').to_string())
+                            .collect();
+                        let exp = expected.trim_end_matches('.');
+                        if normalized.iter().any(|r| r == exp) {
+                            println!("OK    {ip} → {exp}");
+                        } else {
+                            println!(
+                                "BLOCK PTR for {ip} resolves to {} (expected {exp}). \
+                                 Update Vultr reverse-DNS in the IP settings panel.",
+                                normalized.join(", ")
+                            );
+                            blockers += 1;
+                        }
+                    }
+                    Ok(_) => {
+                        println!(
+                            "BLOCK no PTR for {ip}. Set Vultr reverse-DNS to {expected}."
+                        );
+                        blockers += 1;
+                    }
+                    Err(e) => {
+                        println!("WARN  cannot resolve PTR for {ip}: {e}");
+                        warnings += 1;
+                    }
+                }
+            } else if sender_ip.is_some() != expected_ptr.is_some() {
+                println!(
+                    "[ PTR              ]  WARN  --sender-ip and --expected-ptr must be \
+                     used together; PTR check skipped"
+                );
+                warnings += 1;
+            }
+
+            println!();
+            println!("==========================================");
+            if blockers == 0 && warnings == 0 {
+                println!("VERDICT: GREEN — DNS is fully configured");
+            } else if blockers == 0 {
+                println!("VERDICT: YELLOW — {warnings} warning(s); send may work but reputation may suffer");
+            } else {
+                println!(
+                    "VERDICT: RED — {blockers} blocker(s) + {warnings} warning(s); fix before send"
+                );
+                anyhow::bail!("dns-check: {blockers} blocker(s)");
+            }
         }
 
         Cmd::Suppressions { action } => {

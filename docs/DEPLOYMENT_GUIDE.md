@@ -117,11 +117,17 @@ mail.plausiden.com
 
 ```sh
 salesman doctor   # checks SMTP env + LLM backends + unsub minter
-dig +short TXT outreach.plausiden.com
-dig +short TXT s1._domainkey.outreach.plausiden.com
-dig +short TXT _dmarc.outreach.plausiden.com
-dig -x 45.77.217.37
+salesman dns-check --domain outreach.plausiden.com \
+                   --dkim-selector s1 \
+                   --sender-ip 45.77.217.37 \
+                   --expected-ptr mail.plausiden.com
 ```
+
+`dns-check` returns a per-record verdict (OK / WARN / BLOCK), exits
+non-zero if any DNS record is missing or misconfigured, and gives
+concrete remediation copy-paste for each gap. Replace `s1` with your
+actual DKIM selector if different. Skip `--sender-ip` + `--expected-ptr`
+to do DNS-only (no PTR lookup).
 
 ---
 

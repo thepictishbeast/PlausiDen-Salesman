@@ -104,6 +104,7 @@ jobs:
           set -e
           ./target/debug/salesman --help
           ./target/debug/salesman doctor --help
+          ./target/debug/salesman dns-check --help
           ./target/debug/salesman whoami --help
           ./target/debug/salesman preflight --help
           ./target/debug/salesman send-pending --help
