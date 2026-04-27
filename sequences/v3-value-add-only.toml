@@ -1,0 +1,12 @@
+# Value-add-only single-touch "sequence".
+# Use when there's a real news / event / CVE you want to anchor on.
+# This is NOT a multi-touch sequence — exactly one substantive
+# message, no follow-up. Higher reply rate than introduction-style
+# sequences because there's no ask attached.
+#
+# Use for: warm prospects, post-event outreach, conference catch-ups.
+
+[[steps]]
+template_key = "value_add"
+channel      = "email"
+delay_days   = 0

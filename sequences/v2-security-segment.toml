@@ -1,0 +1,27 @@
+# Security-segment-tuned 3-touch sequence.
+# Same cadence as v1, but uses segment-specific introduction +
+# follow-up templates that lead with technical specificity rather
+# than generic value-prop language.
+#
+# Use for prospects whose company.industry IS 'security' or whose
+# tech_signals point at security tooling (Snyk, CrowdStrike, etc.).
+
+[[steps]]
+template_key = "introduction_security"
+channel      = "email"
+delay_days   = 0
+
+[[steps]]
+template_key = "follow_up_1_security"
+channel      = "email"
+delay_days   = 5
+
+[[steps]]
+template_key = "follow_up_2"
+channel      = "email"
+delay_days   = 7
+
+[[steps]]
+template_key = "breakup"
+channel      = "email"
+delay_days   = 14

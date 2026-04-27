@@ -1,0 +1,33 @@
+# Default 3-touch outreach sequence + breakup.
+# Use:
+#   salesman define-sequence \
+#     --campaign cyber-smb \
+#     --name v1-3touch \
+#     --from-toml sequences/v1-3touch.toml
+#
+# Then:
+#   salesman assign-sequence --campaign cyber-smb --sequence v1-3touch
+#
+# The scheduler (tick-sequences) advances each prospect through these
+# steps according to delay_days. Each new step generates a draft
+# in awaiting_approval — operator must approve to advance.
+
+[[steps]]
+template_key = "introduction"
+channel      = "email"
+delay_days   = 0          # first touch on assign
+
+[[steps]]
+template_key = "follow_up_1"
+channel      = "email"
+delay_days   = 5          # +5 days
+
+[[steps]]
+template_key = "follow_up_2"
+channel      = "email"
+delay_days   = 7          # +7 days from previous
+
+[[steps]]
+template_key = "breakup"
+channel      = "email"
+delay_days   = 14         # final touch
