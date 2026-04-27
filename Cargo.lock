@@ -2604,6 +2604,7 @@ dependencies = [
  "chrono",
  "pulldown-cmark",
  "salesman-core",
+ "salesman-detector",
  "salesman-llm",
  "salesman-tools",
  "serde",

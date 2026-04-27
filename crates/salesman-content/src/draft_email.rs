@@ -160,6 +160,16 @@ impl Tool for DraftColdEmailTool {
             .get("template_key")
             .and_then(|v| v.as_str())
             .map(str::to_string);
+        let detector_threshold = args
+            .0
+            .get("detector_threshold")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.6) as f32;
+        let max_retries = args
+            .0
+            .get("max_retries")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(2) as u32;
 
         // Load template if key + dir provided.
         let template = match (&template_key, std::env::var("SALESMAN_TEMPLATES_DIR").ok()) {
@@ -170,44 +180,77 @@ impl Tool for DraftColdEmailTool {
         };
 
         let system = self.system_prompt(template.as_ref());
-        let user = self.user_prompt(&prospect, &product, angle_hint.as_deref(), template.as_ref());
+        let user_initial = self.user_prompt(&prospect, &product, angle_hint.as_deref(), template.as_ref());
 
-        let req = ChatRequest {
-            messages: vec![
-                Message {
-                    role: Role::System,
-                    content: system,
-                    tool_calls: vec![],
-                    tool_results: vec![],
-                },
-                Message {
-                    role: Role::User,
-                    content: user,
-                    tool_calls: vec![],
-                    tool_results: vec![],
-                },
-            ],
-            tools: vec![],
-            max_tokens: 1024,
-            temperature: 0.55,
-        };
+        // Auto-rewrite-and-retry loop: max_retries + 1 total attempts.
+        // Each attempt that fails the detector gets the detector's
+        // reasons folded into the next prompt as explicit feedback.
+        let mut feedback: Option<String> = None;
+        let mut last_resp = None;
+        let mut last_draft = None;
+        let mut last_score = 0.0f32;
+        let mut last_reasons: Vec<String> = vec![];
 
-        let resp = self
-            .router
-            .chat(RouteHint::Reasoning, req)
-            .await?;
+        for attempt in 0..=max_retries {
+            let mut user = user_initial.clone();
+            if let Some(fb) = &feedback {
+                user.push_str("\n\nPREVIOUS DRAFT FAILED THE AI-DETECTOR. Reasons:\n");
+                user.push_str(fb);
+                user.push_str("\nWrite a new version that avoids those tells. Same JSON shape.");
+            }
 
-        let raw = resp.message.content.trim();
-        let draft = parse_draft(raw).map_err(|e| Error::Tool {
-            tool: "content.draft_cold_email".into(),
-            message: format!("could not parse model output: {e} -- raw: {}", truncate(raw, 200)),
-        })?;
+            let req = ChatRequest {
+                messages: vec![
+                    Message {
+                        role: Role::System,
+                        content: system.clone(),
+                        tool_calls: vec![],
+                        tool_results: vec![],
+                    },
+                    Message {
+                        role: Role::User,
+                        content: user,
+                        tool_calls: vec![],
+                        tool_results: vec![],
+                    },
+                ],
+                tools: vec![],
+                max_tokens: 1024,
+                // Slightly higher temperature on retries — explore.
+                temperature: 0.55 + (attempt as f32) * 0.05,
+            };
+
+            let resp = self.router.chat(RouteHint::Reasoning, req).await?;
+            let raw = resp.message.content.trim();
+            let draft = parse_draft(raw).map_err(|e| Error::Tool {
+                tool: "content.draft_cold_email".into(),
+                message: format!("attempt {attempt}: parse: {e} -- raw: {}", truncate(raw, 200)),
+            })?;
+
+            let score = salesman_detector::score(&draft.body, Some(&draft.subject));
+            last_resp = Some(resp);
+            last_draft = Some(draft);
+            last_score = score.score;
+            last_reasons = score.reasons();
+
+            if score.passes(detector_threshold) {
+                break;
+            }
+            tracing::warn!(attempt, score = score.score, "draft failed detector; retrying");
+            feedback = Some(score.reasons().join("\n  "));
+        }
+
+        let draft = last_draft.expect("loop runs at least once");
+        let resp = last_resp.expect("loop runs at least once");
 
         Ok(json!({
             "subject": draft.subject,
             "body": draft.body,
             "angle": draft.angle,
             "confidence": draft.confidence,
+            "detector_score": last_score,
+            "detector_reasons": last_reasons,
+            "passed_detector": last_score < detector_threshold,
             "model_latency_ms": resp.usage.latency_ms,
             "model_tokens_in":  resp.usage.prompt_tokens,
             "model_tokens_out": resp.usage.output_tokens,
