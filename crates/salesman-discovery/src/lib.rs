@@ -22,10 +22,12 @@ pub mod brave_search;
 pub mod csv_seed;
 pub mod email_pattern;
 pub mod homepage;
+pub mod team_scraper;
 pub mod tools;
 
 pub use brave_search::{BraveSearch, BraveSearchTool, SearchHit};
 pub use csv_seed::CsvSeed;
 pub use email_pattern::{EmailPatternGuesser, EmailPatternTool, GuessedEmail};
 pub use homepage::HomepageFetcher;
+pub use team_scraper::{BuyerCandidate, TeamScraper};
 pub use tools::{CsvSeedTool, HomepageFetchTool};

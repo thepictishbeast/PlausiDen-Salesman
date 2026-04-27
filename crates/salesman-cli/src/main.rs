@@ -341,6 +341,25 @@ enum Cmd {
         #[command(subcommand)]
         action: TriggerCmd,
     },
+    /// Decision-maker finder — for each company in a campaign,
+    /// scrape its public team / about / leadership pages and
+    /// surface ranked buyer candidates with email guesses + role
+    /// rationale + confidence. Defaults to PRINT only — pass
+    /// `--persist` to also create contact rows + link as primary.
+    /// Email addresses are GUESSES; verify before using.
+    FindBuyers {
+        #[arg(long)]
+        campaign: String,
+        /// Top N candidates per company.
+        #[arg(long, default_value_t = 3)]
+        top: usize,
+        /// Persist the top candidate per company as a contact +
+        /// link as primary on the prospect. Without this, the
+        /// command is read-only — operator reviews the output and
+        /// decides.
+        #[arg(long, default_value_t = false)]
+        persist: bool,
+    },
     /// Show recent classified replies for a campaign.
     Inbox {
         #[arg(long)]
@@ -3327,6 +3346,92 @@ async fn main() -> Result<()> {
                 );
                 anyhow::bail!("dns-check: {blockers} blocker(s)");
             }
+        }
+
+        Cmd::FindBuyers {
+            campaign,
+            top,
+            persist,
+        } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let campaign_id = state
+                .ensure_campaign(&campaign, "(find-buyers)", "(unspecified)")
+                .await?;
+            let companies = state.list_companies_for_campaign(campaign_id).await?;
+            println!(
+                "find-buyers `{campaign}`: scraping team pages for {} companies (persist={persist})\n",
+                companies.len()
+            );
+            let scraper = salesman_discovery::TeamScraper::new();
+            let mut hit_count = 0u32;
+            let mut miss_count = 0u32;
+            let mut persisted = 0u32;
+            for (company_id, name, homepage) in &companies {
+                let homepage_url = match homepage.as_deref().and_then(|s| url::Url::parse(s).ok()) {
+                    Some(u) => u,
+                    None => {
+                        println!("  [skip] {name}: no parseable homepage");
+                        miss_count += 1;
+                        continue;
+                    }
+                };
+                let candidates = match scraper
+                    .find_for_company(name, &homepage_url, top)
+                    .await
+                {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::warn!(company = %name, "%e" = %e, "team scrape failed");
+                        miss_count += 1;
+                        continue;
+                    }
+                };
+                if candidates.is_empty() {
+                    println!("  [miss] {name}: no decision-maker candidates found");
+                    miss_count += 1;
+                    continue;
+                }
+                hit_count += 1;
+                println!("  [hit]  {name}");
+                for (i, c) in candidates.iter().enumerate() {
+                    println!(
+                        "         {i}. {:>5.2} | {:<28} | {:<22} | {} ({})",
+                        c.confidence, c.name, c.role, c.email, c.email_pattern,
+                    );
+                }
+                if persist
+                    && let Some(top_c) = candidates.first()
+                    && let Some(prospect_id) = state
+                        .find_prospect_by_company_in_campaign(campaign_id, company_id.clone())
+                        .await?
+                {
+                    match state
+                        .insert_contact_and_link_as_primary(
+                            company_id.clone(),
+                            prospect_id,
+                            &top_c.name,
+                            &top_c.role,
+                            &top_c.email,
+                            &format!("team_scraper:{}", top_c.source_url),
+                        )
+                        .await
+                    {
+                        Ok(contact_id) => {
+                            persisted += 1;
+                            println!(
+                                "         → persisted contact {contact_id} as primary"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(company = %name, "%e" = %e, "persist failed");
+                        }
+                    }
+                }
+            }
+            println!(
+                "\nfind-buyers complete: {hit_count} hit(s), {miss_count} miss(es), {persisted} persisted. \
+                 Email addresses are GUESSES — verify before sending."
+            );
         }
 
         Cmd::Triggers { action } => {

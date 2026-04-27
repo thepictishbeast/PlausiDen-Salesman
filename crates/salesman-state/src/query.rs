@@ -467,6 +467,62 @@ impl State {
         Ok((secs / 86400).max(0))
     }
 
+    /// Create a contact row + link it as the prospect's primary
+    /// contact, atomically. Returns the new contact's id. Idempotent
+    /// on (company, email) — re-running with the same email simply
+    /// links the existing contact without inserting a duplicate.
+    /// `email_verified` defaults to false because the email is a
+    /// GUESS from the team-scraper; operator should verify before
+    /// sending.
+    pub async fn insert_contact_and_link_as_primary(
+        &self,
+        company_id: CompanyId,
+        prospect_id: ProspectId,
+        name: &str,
+        title: &str,
+        email: &str,
+        source: &str,
+    ) -> Result<uuid::Uuid> {
+        let mut tx = self
+            .pool()
+            .begin()
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
+        // ON CONFLICT (company_id, email) DO UPDATE on the displayable
+        // fields so re-runs replace stale title/name with current.
+        let row = sqlx::query(
+            "INSERT INTO contacts (id, company_id, kind, name, title, email, source) \
+             VALUES ($1, $2, 'decision_maker', $3, $4, $5, $6) \
+             ON CONFLICT (company_id, email) DO UPDATE SET \
+                name = EXCLUDED.name, \
+                title = EXCLUDED.title, \
+                source = EXCLUDED.source \
+             RETURNING id",
+        )
+        .bind(uuid::Uuid::now_v7())
+        .bind(company_id.0)
+        .bind(name)
+        .bind(title)
+        .bind(email)
+        .bind(source)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        let contact_id: uuid::Uuid = row
+            .try_get("id")
+            .map_err(|e| Error::Db(e.to_string()))?;
+        sqlx::query("UPDATE prospects SET primary_contact_id = $2 WHERE id = $1")
+            .bind(prospect_id.0)
+            .bind(contact_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
+        tx.commit()
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(contact_id)
+    }
+
     /// Look up the prospect-row id for a (campaign, company) pair.
     /// Returns None when the pair has no prospect yet (not seeded).
     pub async fn find_prospect_by_company_in_campaign(
