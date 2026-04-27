@@ -291,6 +291,15 @@ enum Cmd {
         #[arg(long, default_value_t = 50)]
         batch: i64,
     },
+    /// Auto-draft response touches for replies classified as
+    /// engaged / question / objection. Each draft lands in the
+    /// awaiting-approval queue with the same detector + signed-receipt
+    /// gates as cold drafts. Closes the inbox loop: operator reviews
+    /// + approves rather than composing from scratch.
+    DraftReplies {
+        #[arg(long, default_value_t = 25)]
+        batch: i64,
+    },
     /// Show recent classified replies for a campaign.
     Inbox {
         #[arg(long)]
@@ -544,6 +553,12 @@ fn build_tools(router: Arc<LlmRouter>) -> ToolRegistry {
     tools.register(Arc::new(DraftColdEmailTool::new(
         router.clone(),
         "the PlausiDen team",
+        "PlausiDen",
+        "Plausible deniability + sovereign data tools for SMB security teams.",
+    )));
+    tools.register(Arc::new(salesman_content::DraftReplyTool::new(
+        router.clone(),
+        "William",
         "PlausiDen",
         "Plausible deniability + sovereign data tools for SMB security teams.",
     )));
@@ -1790,6 +1805,112 @@ async fn main() -> Result<()> {
                 "\nclassified {} replies. counts: {:?}",
                 unclassified.len(),
                 counts
+            );
+        }
+
+        Cmd::DraftReplies { batch } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            if router.registered_kinds().is_empty() {
+                anyhow::bail!(
+                    "no LLM backends registered (set ANTHROPIC_API_KEY and/or GEMINI_API_KEY)"
+                );
+            }
+            let drafter = salesman_content::DraftReplyTool::new(
+                router.clone(),
+                std::env::var("SALESMAN_FROM_NAME").unwrap_or_else(|_| "William".into()),
+                "PlausiDen",
+                "Plausible deniability + sovereign data tools for SMB security teams.",
+            );
+            let needing = state.list_replies_needing_response(batch).await?;
+            if needing.is_empty() {
+                println!("no replies awaiting a draft response.");
+                return Ok(());
+            }
+            println!(
+                "drafting responses for {} reply(ies)...\n",
+                needing.len()
+            );
+            let mut ok = 0u32;
+            let mut err = 0u32;
+            let mut flagged = 0u32;
+            for r in &needing {
+                let prospect_json = serde_json::json!({
+                    "display_name": r.company_name,
+                    "industry":     r.industry,
+                    "description":  r.description,
+                });
+                let args = serde_json::json!({
+                    "prospect": prospect_json,
+                    "outbound_subject": r.outbound_subject,
+                    "outbound_body":    r.outbound_body,
+                    "inbound_subject":  r.inbound_subject,
+                    "inbound_body":     r.inbound_body,
+                    "inbound_kind":     r.inbound_kind,
+                });
+                let result = salesman_tools::Tool::invoke(
+                    &drafter,
+                    salesman_core::ToolArgs(args),
+                )
+                .await;
+                match result {
+                    Ok(v) => {
+                        let subject = v
+                            .get("subject")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("(no subject)");
+                        let body = v.get("body").and_then(|x| x.as_str()).unwrap_or("");
+                        let intent = v
+                            .get("intent")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("unspecified");
+                        let det = v.get("detector_score").and_then(|x| x.as_f64()).unwrap_or(0.0);
+                        let passed = v.get("passed_detector").and_then(|x| x.as_bool()).unwrap_or(true);
+                        let produced_by = v.get("produced_by").cloned();
+                        match state
+                            .insert_touch_draft_full(
+                                r.prospect_id,
+                                salesman_core::TouchChannel::Email,
+                                Some(subject),
+                                body,
+                                None,
+                                produced_by,
+                            )
+                            .await
+                        {
+                            Ok(touch_id) => {
+                                let _linked = state
+                                    .link_reply_response(r.reply_id, touch_id)
+                                    .await
+                                    .unwrap_or(0);
+                                ok += 1;
+                                if !passed {
+                                    flagged += 1;
+                                }
+                                println!(
+                                    "[{}] {} ({:.2} det{}): {} → {}",
+                                    r.company_name,
+                                    intent,
+                                    det,
+                                    if passed { "" } else { " ⚠" },
+                                    r.reply_id,
+                                    touch_id,
+                                );
+                            }
+                            Err(e) => {
+                                err += 1;
+                                tracing::warn!(reply = %r.reply_id, "%e" = %e, "draft persist failed");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        err += 1;
+                        tracing::warn!(reply = %r.reply_id, "%e" = %e, "draft_reply tool failed");
+                    }
+                }
+            }
+            println!(
+                "\ndraft-replies: drafted {ok} response(s); {flagged} flagged on detector; {err} error(s). \
+                 Review with `salesman review` then send."
             );
         }
 

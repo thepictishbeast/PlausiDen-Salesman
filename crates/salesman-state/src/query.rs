@@ -261,6 +261,28 @@ pub struct UnclassifiedReply {
     pub body: String,
 }
 
+/// A classified reply that needs a response. Carries both the
+/// inbound details and (when threading lined up) the original
+/// outbound that prompted it. Used by `salesman draft-replies`.
+#[derive(Debug, Clone)]
+pub struct ReplyNeedingResponse {
+    pub reply_id: uuid::Uuid,
+    pub prospect_id: ProspectId,
+    pub from_address: String,
+    pub inbound_subject: Option<String>,
+    pub inbound_body: String,
+    pub inbound_kind: String,
+    /// The outbound that this reply is in response to, if threading
+    /// matched. Often Some — IMAP threading via In-Reply-To /
+    /// References lines up most of the time.
+    pub outbound_subject: Option<String>,
+    pub outbound_body: Option<String>,
+    /// Prospect display fields the drafter uses for personalization.
+    pub company_name: String,
+    pub industry: Option<String>,
+    pub description: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct TouchSummary {
     pub touch_id: salesman_core::TouchId,
@@ -949,6 +971,82 @@ impl State {
         )
         .await;
         Ok(Some(reply_id))
+    }
+
+    /// List classified replies that need a response — engaged /
+    /// question / objection — and don't yet have a response_touch_id
+    /// linked. The drafter consumes this and produces approval-queue
+    /// touches.
+    pub async fn list_replies_needing_response(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<ReplyNeedingResponse>> {
+        let rows = sqlx::query(
+            "SELECT
+                r.id            AS reply_id,
+                r.prospect_id   AS prospect_id,
+                r.from_address  AS from_address,
+                r.subject       AS reply_subject,
+                r.body          AS reply_body,
+                r.kind          AS reply_kind,
+                t.subject       AS outbound_subject,
+                t.body          AS outbound_body,
+                c.display_name  AS company_name,
+                c.industry      AS industry,
+                c.description   AS description
+             FROM replies r
+             JOIN prospects p ON p.id = r.prospect_id
+             JOIN companies c ON c.id = p.company_id
+             LEFT JOIN touches t ON t.id = r.touch_id
+             WHERE r.kind IN ('engaged','question','objection')
+               AND r.response_touch_id IS NULL
+             ORDER BY r.received_at
+             LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| ReplyNeedingResponse {
+                reply_id: r.try_get("reply_id").unwrap_or_else(|_| uuid::Uuid::nil()),
+                prospect_id: ProspectId(
+                    r.try_get("prospect_id")
+                        .unwrap_or_else(|_| uuid::Uuid::nil()),
+                ),
+                from_address: r.try_get("from_address").unwrap_or_default(),
+                inbound_subject: r.try_get("reply_subject").unwrap_or(None),
+                inbound_body: r.try_get("reply_body").unwrap_or_default(),
+                inbound_kind: r.try_get("reply_kind").unwrap_or_default(),
+                outbound_subject: r.try_get("outbound_subject").unwrap_or(None),
+                outbound_body: r.try_get("outbound_body").unwrap_or(None),
+                company_name: r.try_get("company_name").unwrap_or_default(),
+                industry: r.try_get("industry").unwrap_or(None),
+                description: r.try_get("description").unwrap_or(None),
+            })
+            .collect())
+    }
+
+    /// Link a freshly-drafted response touch to the reply it answers.
+    /// Idempotent — re-running with the same (reply, touch) is a
+    /// no-op via the WHERE response_touch_id IS NULL guard.
+    pub async fn link_reply_response(
+        &self,
+        reply_id: uuid::Uuid,
+        response_touch_id: salesman_core::TouchId,
+    ) -> Result<u64> {
+        let r = sqlx::query(
+            "UPDATE replies
+             SET response_touch_id = $2
+             WHERE id = $1 AND response_touch_id IS NULL",
+        )
+        .bind(reply_id)
+        .bind(response_touch_id.0)
+        .execute(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(r.rows_affected())
     }
 
     /// List replies in `unclassified` state (queue for the classifier).
