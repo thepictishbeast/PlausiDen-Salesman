@@ -109,6 +109,12 @@ struct Cli {
     /// Postgres connection string (for migrate / discover / enrich).
     #[arg(long, env = "SALESMAN_DATABASE_URL")]
     database_url: Option<String>,
+
+    /// Emit machine-readable JSON instead of human-readable output
+    /// where supported (summary / costs / doctor / suppressions count).
+    /// Hooks into Prometheus / Grafana / monitoring scripts.
+    #[arg(long, default_value_t = false, global = true)]
+    json: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -1802,7 +1808,32 @@ async fn main() -> Result<()> {
         Cmd::Summary { since_hours } => {
             let state = require_state(cli.database_url.as_deref()).await?;
             let s = state.pipeline_summary(since_hours).await?;
-            println!("{}", s.render_text());
+            if cli.json {
+                let v = serde_json::json!({
+                    "since_hours": s.since_hours,
+                    "companies": s.companies,
+                    "prospects": s.prospects,
+                    "by_state": {
+                        "new": s.new_prospects,
+                        "contacted": s.contacted,
+                        "engaged": s.engaged,
+                        "won": s.won,
+                        "lost": s.lost,
+                        "suppressed": s.suppressed_prospects,
+                    },
+                    "awaiting_approval": s.awaiting_approval,
+                    "recent": {
+                        "sends": s.sent_recent,
+                        "replies": s.replies_recent,
+                        "optouts": s.optout_recent,
+                        "receipts": s.receipts_recent,
+                    },
+                    "suppressions_total": s.suppressions,
+                });
+                println!("{}", serde_json::to_string_pretty(&v)?);
+            } else {
+                println!("{}", s.render_text());
+            }
         }
 
         Cmd::Score {
@@ -1948,6 +1979,51 @@ async fn main() -> Result<()> {
 
         Cmd::Costs { since_hours, by } => {
             let state = require_state(cli.database_url.as_deref()).await?;
+            if cli.json {
+                let v = match by {
+                    CostsBy::Model => {
+                        let rows = state.cost_summary(since_hours).await?;
+                        let total: i64 = rows.iter().map(|r| r.cost_micro_usd).sum();
+                        serde_json::json!({
+                            "since_hours": since_hours,
+                            "by": "model",
+                            "total_usd": (total as f64) / 1_000_000.0,
+                            "rows": rows.iter().map(|r| serde_json::json!({
+                                "backend": r.backend,
+                                "model": r.model,
+                                "calls": r.count,
+                                "prompt_tokens": r.prompt_tokens,
+                                "output_tokens": r.output_tokens,
+                                "cache_hit_tokens": r.cache_hit_tokens,
+                                "cost_usd": (r.cost_micro_usd as f64) / 1_000_000.0,
+                                "avg_latency_ms": r.avg_latency_ms,
+                                "p95_latency_ms": r.p95_latency_ms,
+                            })).collect::<Vec<_>>(),
+                        })
+                    }
+                    CostsBy::Purpose => {
+                        let rows = state.cost_by_purpose(since_hours).await?;
+                        let total: i64 = rows.iter().map(|r| r.cost_micro_usd).sum();
+                        serde_json::json!({
+                            "since_hours": since_hours,
+                            "by": "purpose",
+                            "total_usd": (total as f64) / 1_000_000.0,
+                            "rows": rows.iter().map(|r| serde_json::json!({
+                                "purpose": r.purpose,
+                                "calls": r.count,
+                                "prompt_tokens": r.prompt_tokens,
+                                "output_tokens": r.output_tokens,
+                                "cache_hit_tokens": r.cache_hit_tokens,
+                                "cost_usd": (r.cost_micro_usd as f64) / 1_000_000.0,
+                                "avg_latency_ms": r.avg_latency_ms,
+                                "p95_latency_ms": r.p95_latency_ms,
+                            })).collect::<Vec<_>>(),
+                        })
+                    }
+                };
+                println!("{}", serde_json::to_string_pretty(&v)?);
+                return Ok(());
+            }
             match by {
                 CostsBy::Model => {
                     let rows = state.cost_summary(since_hours).await?;
@@ -3080,10 +3156,18 @@ async fn main() -> Result<()> {
                 }
                 SuppCmd::Count => {
                     let rows = state.count_suppressions_by_source().await?;
-                    if rows.is_empty() {
+                    let total: i64 = rows.iter().map(|(_, n)| n).sum();
+                    if cli.json {
+                        let v = serde_json::json!({
+                            "total": total,
+                            "by_source": rows.iter().map(|(s, n)| serde_json::json!({
+                                "source": s, "count": n
+                            })).collect::<Vec<_>>(),
+                        });
+                        println!("{}", serde_json::to_string_pretty(&v)?);
+                    } else if rows.is_empty() {
                         println!("(suppression list empty)");
                     } else {
-                        let total: i64 = rows.iter().map(|(_, n)| n).sum();
                         println!("{:<20} {:>10}", "source", "count");
                         println!("{}", "-".repeat(32));
                         for (s, n) in &rows {
