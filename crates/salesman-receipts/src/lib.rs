@@ -25,8 +25,8 @@
 
 use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signature, Signer as _, SigningKey, Verifier, VerifyingKey};
-use rand::rngs::OsRng;
 use rand::RngCore;
+use rand::rngs::OsRng;
 use salesman_core::{Error, ReceiptId, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -79,7 +79,10 @@ impl Signer {
             }
             let seed = Zeroizing::new(<[u8; 32]>::try_from(bytes.as_slice()).expect("len==32"));
             let signing_key = SigningKey::from_bytes(&seed);
-            return Ok(Self { signing_key, key_id });
+            return Ok(Self {
+                signing_key,
+                key_id,
+            });
         }
 
         // Generate new.
@@ -103,7 +106,10 @@ impl Signer {
         f.sync_all().map_err(Error::Io)?;
         tracing::info!(path = %seed_path.display(), %key_id, "generated new signing key");
 
-        Ok(Self { signing_key, key_id })
+        Ok(Self {
+            signing_key,
+            key_id,
+        })
     }
 
     pub fn key_id(&self) -> &str {

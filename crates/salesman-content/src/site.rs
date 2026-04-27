@@ -62,9 +62,9 @@ const PAGE_TEMPLATE: &str = r#"<!doctype html>
 
 #[derive(Debug, Clone)]
 pub struct SiteConfig {
-    pub origin: String,        // https://plausiden.com
-    pub site_name: String,     // PlausiDen
-    pub footer_html: String,   // appended to every page
+    pub origin: String,      // https://plausiden.com
+    pub site_name: String,   // PlausiDen
+    pub footer_html: String, // appended to every page
 }
 
 impl SiteConfig {
@@ -136,7 +136,10 @@ pub fn render_site(src_dir: &Path, dst_dir: &Path, cfg: &SiteConfig) -> Result<V
     index_md.push_str(&cfg.site_name);
     index_md.push_str("\n\n");
     for p in &pages {
-        index_md.push_str(&format!("- [{}]({}.html) — {}\n", p.title, p.slug, p.description));
+        index_md.push_str(&format!(
+            "- [{}]({}.html) — {}\n",
+            p.title, p.slug, p.description
+        ));
     }
     let index_html_inner = render_markdown_to_html(&index_md);
     let index_canonical = cfg.origin.trim_end_matches('/').to_string();
@@ -153,9 +156,11 @@ pub fn render_site(src_dir: &Path, dst_dir: &Path, cfg: &SiteConfig) -> Result<V
 
     // sitemap.xml
     let now = Utc::now().to_rfc3339();
-    let mut sitemap = String::from(r#"<?xml version="1.0" encoding="UTF-8"?>
+    let mut sitemap = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-"#);
+"#,
+    );
     sitemap.push_str(&format!(
         "  <url>\n    <loc>{origin}/</loc>\n    <lastmod>{now}</lastmod>\n  </url>\n",
         origin = cfg.origin.trim_end_matches('/'),
@@ -212,12 +217,21 @@ fn extract_title_and_description(md: &str) -> (String, String) {
 }
 
 fn escape_html(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 fn sanitise_slug(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c.to_ascii_lowercase() } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .trim_matches('-')
         .replace("--", "-")
@@ -237,14 +251,19 @@ mod tests {
 
     #[test]
     fn extracts_title_and_description() {
-        let (t, d) = extract_title_and_description("# My Title\n\nThis is the description line.\n\n## later");
+        let (t, d) = extract_title_and_description(
+            "# My Title\n\nThis is the description line.\n\n## later",
+        );
         assert_eq!(t, "My Title");
         assert!(d.starts_with("This is the description"));
     }
 
     #[test]
     fn sanitises_slug() {
-        assert_eq!(sanitise_slug("Sentinel vs CrowdStrike"), "sentinel-vs-crowdstrike");
+        assert_eq!(
+            sanitise_slug("Sentinel vs CrowdStrike"),
+            "sentinel-vs-crowdstrike"
+        );
         assert_eq!(sanitise_slug("AWS S3 (compared)"), "aws-s3-compared");
     }
 
@@ -255,7 +274,11 @@ mod tests {
         let dst = dir.join("dst");
         fs::create_dir_all(&src).unwrap();
         let mut f = fs::File::create(src.join("Sentinel vs Falcon.md")).unwrap();
-        writeln!(f, "# Sentinel vs Falcon\n\nWhen to pick which.\n\n## Pricing\n\nSentinel costs less.").unwrap();
+        writeln!(
+            f,
+            "# Sentinel vs Falcon\n\nWhen to pick which.\n\n## Pricing\n\nSentinel costs less."
+        )
+        .unwrap();
         let cfg = SiteConfig::new("https://test.example", "TestSite");
         let pages = render_site(&src, &dst, &cfg).unwrap();
         assert_eq!(pages.len(), 1);

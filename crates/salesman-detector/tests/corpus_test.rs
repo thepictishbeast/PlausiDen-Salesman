@@ -53,7 +53,7 @@ fn corpus_scores_in_expected_bands() {
             (a, b) if a == b => true,
             ("medium", "high") => true, // medium body that also shows strong tells is fine
             ("high", "medium") => false, // hard fail: a known-AI body that scores medium
-            ("low", "medium") => false,  // human sample that flagged medium is a false positive
+            ("low", "medium") => false, // human sample that flagged medium is a false positive
             _ => false,
         };
         if !pass {
@@ -68,5 +68,9 @@ fn corpus_scores_in_expected_bands() {
         }
     }
     assert!(total >= 6, "corpus has only {total} samples; expected >=6");
-    assert!(failures.is_empty(), "corpus failures:\n  - {}", failures.join("\n  - "));
+    assert!(
+        failures.is_empty(),
+        "corpus failures:\n  - {}",
+        failures.join("\n  - ")
+    );
 }

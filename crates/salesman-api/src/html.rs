@@ -58,9 +58,7 @@ CLI: <code>salesman review --campaign &lt;name&gt;</code> to see drafts.</p>
     page("drafts — salesman", &body)
 }
 
-pub fn receipts_table(
-    rows: &[(chrono::DateTime<chrono::Utc>, String, String, bool)],
-) -> String {
+pub fn receipts_table(rows: &[(chrono::DateTime<chrono::Utc>, String, String, bool)]) -> String {
     let mut body = String::from("<h1>Receipts (most recent 100)</h1>\n");
     if rows.is_empty() {
         body.push_str("<p class=\"small\">No receipts yet.</p>\n");

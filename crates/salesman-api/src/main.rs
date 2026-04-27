@@ -52,7 +52,9 @@ pub fn build_router(app_state: AppState, basic_auth: Option<String>) -> Router {
         main_routes
     };
 
-    main_routes.merge(unsub_routes).layer(TraceLayer::new_for_http())
+    main_routes
+        .merge(unsub_routes)
+        .layer(TraceLayer::new_for_http())
 }
 
 #[tokio::main]
@@ -64,8 +66,8 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let database_url = std::env::var("SALESMAN_DATABASE_URL")
-        .context("SALESMAN_DATABASE_URL not set")?;
+    let database_url =
+        std::env::var("SALESMAN_DATABASE_URL").context("SALESMAN_DATABASE_URL not set")?;
     let bind = std::env::var("SALESMAN_API_BIND").unwrap_or_else(|_| "127.0.0.1:8080".into());
     let basic_auth = std::env::var("SALESMAN_API_BASIC_AUTH").ok();
     let signing_key_id =

@@ -27,24 +27,21 @@ impl ParsedReply {
     pub fn from_rfc5322(bytes: &[u8]) -> Option<Self> {
         let msg = MessageParser::default().parse(bytes)?;
 
-        let (from_address, from_name) = msg
-            .from()
-            .and_then(|addr_list| addr_list.first())
-            .map(|a| {
-                (
-                    a.address().unwrap_or_default().to_string(),
-                    a.name().map(|s| s.to_string()),
-                )
-            })?;
+        let (from_address, from_name) =
+            msg.from()
+                .and_then(|addr_list| addr_list.first())
+                .map(|a| {
+                    (
+                        a.address().unwrap_or_default().to_string(),
+                        a.name().map(|s| s.to_string()),
+                    )
+                })?;
         if from_address.is_empty() {
             return None;
         }
 
         let subject = msg.subject().map(|s| s.to_string());
-        let body_plain = msg
-            .body_text(0)
-            .map(|c| c.to_string())
-            .unwrap_or_default();
+        let body_plain = msg.body_text(0).map(|c| c.to_string()).unwrap_or_default();
         let body_html = msg.body_html(0).map(|c| c.to_string());
 
         let received_at = msg

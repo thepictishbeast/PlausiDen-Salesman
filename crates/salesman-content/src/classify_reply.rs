@@ -19,8 +19,8 @@ use salesman_llm::{ChatRequest, LlmRouter, Message, Role, RouteHint};
 use salesman_tools::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::sync::Arc;
 use std::str::FromStr;
+use std::sync::Arc;
 use tracing::warn;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,17 +135,23 @@ impl Tool for ReplyClassifyTool {
             temperature: 0.0,
         };
 
-        let resp = self.router.chat_for(RouteHint::Bulk, "classify_reply", req).await?;
-        let parsed = parse_classification(&resp.message.content)
-            .unwrap_or_else(|e| {
-                warn!("%e" = %e, "classifier output unparseable; falling back to heuristic");
-                ClassifyReply {
-                    kind: if keyword_hit { "optout".into() } else { "unclassified".into() },
-                    optout_detected: keyword_hit,
-                    reason: Some("LLM output unparseable".into()),
-                    confidence: Some(0.4),
-                }
-            });
+        let resp = self
+            .router
+            .chat_for(RouteHint::Bulk, "classify_reply", req)
+            .await?;
+        let parsed = parse_classification(&resp.message.content).unwrap_or_else(|e| {
+            warn!("%e" = %e, "classifier output unparseable; falling back to heuristic");
+            ClassifyReply {
+                kind: if keyword_hit {
+                    "optout".into()
+                } else {
+                    "unclassified".into()
+                },
+                optout_detected: keyword_hit,
+                reason: Some("LLM output unparseable".into()),
+                confidence: Some(0.4),
+            }
+        });
 
         // Force optout if either signal fires — never under-suppress.
         let optout_detected = parsed.optout_detected || keyword_hit;
@@ -186,12 +192,11 @@ fn parse_classification(raw: &str) -> std::result::Result<ClassifyReply, String>
     if let Ok(c) = serde_json::from_str::<ClassifyReply>(stripped) {
         return Ok(c);
     }
-    if let (Some(s), Some(e)) = (raw.find('{'), raw.rfind('}')) {
-        if e > s {
-            if let Ok(c) = serde_json::from_str::<ClassifyReply>(&raw[s..=e]) {
-                return Ok(c);
-            }
-        }
+    if let (Some(s), Some(e)) = (raw.find('{'), raw.rfind('}'))
+        && e > s
+        && let Ok(c) = serde_json::from_str::<ClassifyReply>(&raw[s..=e])
+    {
+        return Ok(c);
     }
     Err("could not parse classifier output".into())
 }
@@ -203,13 +208,17 @@ mod tests {
     #[test]
     fn keyword_catches_unsubscribe() {
         assert!(ReplyClassifyTool::keyword_optout("Please unsubscribe me."));
-        assert!(ReplyClassifyTool::keyword_optout("remove me from this list"));
+        assert!(ReplyClassifyTool::keyword_optout(
+            "remove me from this list"
+        ));
         assert!(ReplyClassifyTool::keyword_optout("Not interested, thanks"));
     }
 
     #[test]
     fn keyword_lets_engaged_through() {
-        assert!(!ReplyClassifyTool::keyword_optout("Sure, let's chat next week."));
+        assert!(!ReplyClassifyTool::keyword_optout(
+            "Sure, let's chat next week."
+        ));
         assert!(!ReplyClassifyTool::keyword_optout("What's the price?"));
     }
 

@@ -100,7 +100,11 @@ fn check_subject(subject: &str, out: &mut Vec<SignalHit>) {
 
 fn check_cliche_openers(body: &str, out: &mut Vec<SignalHit>) {
     // Scan only the first ~200 chars for opener clichés.
-    let head = body.chars().take(220).collect::<String>().to_ascii_lowercase();
+    let head = body
+        .chars()
+        .take(220)
+        .collect::<String>()
+        .to_ascii_lowercase();
     let openers = [
         ("i hope this email finds you well", 0.95),
         ("i hope this finds you well", 0.95),
@@ -278,7 +282,10 @@ mod tests {
 
     #[test]
     fn passes_method_works_correctly() {
-        let r = RiskScore { score: 0.5, hits: vec![] };
+        let r = RiskScore {
+            score: 0.5,
+            hits: vec![],
+        };
         assert!(r.passes(0.6));
         assert!(!r.passes(0.4));
         assert!(!r.passes(0.5)); // strict less-than

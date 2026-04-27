@@ -76,16 +76,16 @@ use salesman_discovery::{
     BraveSearch, BraveSearchTool, CsvSeed, CsvSeedTool, EmailPatternTool, HomepageFetchTool,
     HomepageFetcher,
 };
-use salesman_outreach::{SmtpConfig, SmtpSender};
-use sqlx::Row;
-use salesman_reply::{ImapConfig, ImapPoller};
-use salesman_receipts::{Signer, default_seed_path};
 use salesman_llm::claude::ClaudeBackend;
 use salesman_llm::gemini::GeminiBackend;
 use salesman_llm::{LlmBackend, LlmRouter, Message, Role, RouteHint};
 use salesman_orchestrator::Orchestrator;
+use salesman_outreach::{SmtpConfig, SmtpSender};
+use salesman_receipts::{Signer, default_seed_path};
+use salesman_reply::{ImapConfig, ImapPoller};
 use salesman_state::{State, TouchSummary};
 use salesman_tools::{EchoTool, ToolRegistry};
+use sqlx::Row;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -193,8 +193,8 @@ enum Cmd {
     /// + rate caps:
     ///   --max-batch N         hard cap on touches sent in one invocation
     ///   --ack-new-domains N   max number of NEW domains touched in
-    ///                         this batch (refuses send if exceeded;
-    ///                         operator must confirm by raising N)
+    ///   this batch (refuses send if exceeded;
+    ///   operator must confirm by raising N)
     SendPending {
         #[arg(long)]
         campaign: String,
@@ -540,7 +540,11 @@ async fn sqlx_lookup_sequence(
 }
 
 fn pct(n: usize, total: usize) -> f32 {
-    if total == 0 { 0.0 } else { (n as f32) / (total as f32) * 100.0 }
+    if total == 0 {
+        0.0
+    } else {
+        (n as f32) / (total as f32) * 100.0
+    }
 }
 
 /// Quote a CSV field per RFC 4180: wrap in `"` if the value contains
@@ -640,8 +644,9 @@ async fn main() -> Result<()> {
     } else {
         None
     };
-    let sink: Option<Arc<dyn salesman_llm::LlmCallSink>> =
-        state_arc.as_ref().map(|s| Arc::clone(s) as Arc<dyn salesman_llm::LlmCallSink>);
+    let sink: Option<Arc<dyn salesman_llm::LlmCallSink>> = state_arc
+        .as_ref()
+        .map(|s| Arc::clone(s) as Arc<dyn salesman_llm::LlmCallSink>);
 
     let router = Arc::new(build_router(&cli.claude_model, &cli.gemini_model, sink));
     let tools = Arc::new(build_tools(router.clone()));
@@ -832,14 +837,15 @@ async fn main() -> Result<()> {
                 if let Some(h) = &angle_hint {
                     tool_args["angle_hint"] = serde_json::Value::String(h.clone());
                 }
-                let result = salesman_tools::Tool::invoke(
-                    &draft_tool,
-                    salesman_core::ToolArgs(tool_args),
-                )
-                .await;
+                let result =
+                    salesman_tools::Tool::invoke(&draft_tool, salesman_core::ToolArgs(tool_args))
+                        .await;
                 match result {
                     Ok(v) => {
-                        let subject = v.get("subject").and_then(|x| x.as_str()).unwrap_or("(no subject)");
+                        let subject = v
+                            .get("subject")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("(no subject)");
                         let body = v.get("body").and_then(|x| x.as_str()).unwrap_or("");
                         match state
                             .insert_touch_draft(
@@ -883,7 +889,13 @@ async fn main() -> Result<()> {
             } else {
                 println!("=== {} drafts awaiting approval ===\n", drafts.len());
                 for (i, t) in drafts.iter().enumerate() {
-                    println!("--- [{}] {} (touch {}, {})", i + 1, t.company, t.touch_id, t.channel);
+                    println!(
+                        "--- [{}] {} (touch {}, {})",
+                        i + 1,
+                        t.company,
+                        t.touch_id,
+                        t.channel
+                    );
                     if let Some(s) = &t.subject {
                         println!("Subject: {s}");
                     }
@@ -1043,12 +1055,22 @@ async fn main() -> Result<()> {
             );
         }
 
-        Cmd::Suppress { target, kind, reason } => {
+        Cmd::Suppress {
+            target,
+            kind,
+            reason,
+        } => {
             let state = require_state(cli.database_url.as_deref()).await?;
             let kind = kind.unwrap_or_else(|| {
-                if target.contains('@') { "email".into() } else { "domain".into() }
+                if target.contains('@') {
+                    "email".into()
+                } else {
+                    "domain".into()
+                }
             });
-            state.add_suppression(&target, &kind, &reason, "manual").await?;
+            state
+                .add_suppression(&target, &kind, &reason, "manual")
+                .await?;
             let n = state.count_suppressions().await?;
             println!("suppressed {kind}={target} ({reason}); total suppressions: {n}");
         }
@@ -1062,7 +1084,9 @@ async fn main() -> Result<()> {
             let mut bad = 0u32;
             for r in &receipts {
                 let ok = salesman_receipts::verify_receipt(r, &vk).is_ok();
-                if !ok { bad += 1; }
+                if !ok {
+                    bad += 1;
+                }
                 println!(
                     "{} | {} | {} | {} | sig={}",
                     r.created_at.to_rfc3339(),
@@ -1145,8 +1169,10 @@ async fn main() -> Result<()> {
                 new_domain_count,
                 ack_new_domains,
                 max_batch,
-                per_recipient_max, per_recipient_window_hours,
-                per_domain_max, per_domain_window_hours,
+                per_recipient_max,
+                per_recipient_window_hours,
+                per_domain_max,
+                per_domain_window_hours,
             );
 
             if new_domain_count > ack_new_domains {
@@ -1155,14 +1181,17 @@ async fn main() -> Result<()> {
                      Reputation safeguard. Either approve fewer drafts to new \
                      domains, or raise --ack-new-domains explicitly after \
                      reviewing the list.",
-                    new_domain_count, ack_new_domains
+                    new_domain_count,
+                    ack_new_domains
                 );
             }
 
             // --- test-send-to: ONE message to the test inbox, then exit
             if let Some(test_addr) = test_send_to.as_ref() {
                 if !for_real {
-                    anyhow::bail!("--test-send-to requires --for-real (it actually sends one message)");
+                    anyhow::bail!(
+                        "--test-send-to requires --for-real (it actually sends one message)"
+                    );
                 }
                 let Some(first) = approved.first() else {
                     anyhow::bail!("no approved touches to test-send");
@@ -1182,7 +1211,10 @@ async fn main() -> Result<()> {
                      The body that would land in the real recipient's inbox follows below.\n\
                      ===========================================\n\n",
                     first.touch_id,
-                    state.touch_to_address(first.touch_id).await?.unwrap_or_else(|| "(no contact)".into())
+                    state
+                        .touch_to_address(first.touch_id)
+                        .await?
+                        .unwrap_or_else(|| "(no contact)".into())
                 );
                 body.push_str(&first.body);
                 let outcome = sender.send_email(test_addr, &subject, &body).await?;
@@ -1216,11 +1248,18 @@ async fn main() -> Result<()> {
             let sender = if for_real {
                 let cfg = SmtpConfig::from_env()?;
                 Some(SmtpSender::new(cfg)?)
-            } else { None };
+            } else {
+                None
+            };
 
             let signer = if for_real {
-                Some(Signer::load_or_generate(&default_seed_path(), "salesman-default-1")?)
-            } else { None };
+                Some(Signer::load_or_generate(
+                    &default_seed_path(),
+                    "salesman-default-1",
+                )?)
+            } else {
+                None
+            };
 
             let mut sent = 0u32;
             let mut blocked_supp = 0u32;
@@ -1259,7 +1298,10 @@ async fn main() -> Result<()> {
                     tracing::warn!(to=%to, n=%n_recipient, "per-recipient cap hit — skipping");
                     continue;
                 }
-                let domain = to.rsplit_once('@').map(|(_, d)| d.to_string()).unwrap_or_default();
+                let domain = to
+                    .rsplit_once('@')
+                    .map(|(_, d)| d.to_string())
+                    .unwrap_or_default();
                 let n_domain = state
                     .count_touches_to_domain_since(&domain, per_domain_window_hours)
                     .await?;
@@ -1274,9 +1316,7 @@ async fn main() -> Result<()> {
                 // because the cause is signal quality (junk list /
                 // tarpit), not volume.
                 if domain_quarantine_threshold > 0 {
-                    let n_bounces = state
-                        .count_bounces_to_domain_since(&domain, 24)
-                        .await?;
+                    let n_bounces = state.count_bounces_to_domain_since(&domain, 24).await?;
                     if n_bounces >= domain_quarantine_threshold {
                         blocked_domain_quarantine += 1;
                         tracing::warn!(
@@ -1363,7 +1403,9 @@ async fn main() -> Result<()> {
                 let receipt = signer.sign_event("send.email", payload, &prev_hash)?;
                 let receipt_id = receipt.id;
                 state.insert_receipt(&receipt).await?;
-                let n = state.mark_touch_sent(t.touch_id, receipt_id, outcome.sent_at).await?;
+                let n = state
+                    .mark_touch_sent(t.touch_id, receipt_id, outcome.sent_at)
+                    .await?;
                 if n == 1 {
                     sent += 1;
                     println!("sent: to={to} touch={} receipt={receipt_id}", t.touch_id);
@@ -1477,7 +1519,9 @@ async fn main() -> Result<()> {
         Cmd::ClassifyReplies { batch } => {
             let state = require_state(cli.database_url.as_deref()).await?;
             if router.registered_kinds().is_empty() {
-                anyhow::bail!("no LLM backends registered (set ANTHROPIC_API_KEY and/or GEMINI_API_KEY)");
+                anyhow::bail!(
+                    "no LLM backends registered (set ANTHROPIC_API_KEY and/or GEMINI_API_KEY)"
+                );
             }
             let classifier = ReplyClassifyTool::new(router.clone());
             let unclassified = state.list_unclassified_replies(batch).await?;
@@ -1490,12 +1534,14 @@ async fn main() -> Result<()> {
                     "subject": r.subject,
                     "body": r.body,
                 });
-                let result = salesman_tools::Tool::invoke(
-                    &classifier,
-                    salesman_core::ToolArgs(args),
-                ).await;
+                let result =
+                    salesman_tools::Tool::invoke(&classifier, salesman_core::ToolArgs(args)).await;
                 let kind_str = match result {
-                    Ok(v) => v.get("kind").and_then(|x| x.as_str()).unwrap_or("unclassified").to_string(),
+                    Ok(v) => v
+                        .get("kind")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("unclassified")
+                        .to_string(),
                     Err(e) => {
                         tracing::warn!(reply = %r.reply_id, "%e" = %e, "classify failed");
                         continue;
@@ -1512,9 +1558,16 @@ async fn main() -> Result<()> {
                     .apply_reply_to_prospect(r.reply_id, r.prospect_id, &r.from_address, kind)
                     .await?;
                 *counts.entry(kind_str.clone()).or_default() += 1;
-                println!("[{}] {} → {}: {}", r.from_address, kind_str, r.reply_id, summary);
+                println!(
+                    "[{}] {} → {}: {}",
+                    r.from_address, kind_str, r.reply_id, summary
+                );
             }
-            println!("\nclassified {} replies. counts: {:?}", unclassified.len(), counts);
+            println!(
+                "\nclassified {} replies. counts: {:?}",
+                unclassified.len(),
+                counts
+            );
         }
 
         Cmd::Inbox { campaign, limit } => {
@@ -1522,13 +1575,21 @@ async fn main() -> Result<()> {
             let campaign_id = state
                 .ensure_campaign(&campaign, "(inbox-only)", "(unspecified)")
                 .await?;
-            let rows = state.list_recent_replies_for_campaign(campaign_id, limit).await?;
+            let rows = state
+                .list_recent_replies_for_campaign(campaign_id, limit)
+                .await?;
             if rows.is_empty() {
                 println!("no replies for `{campaign}`");
             } else {
                 println!("=== {} replies for `{campaign}` ===\n", rows.len());
                 for r in rows {
-                    println!("[{}] {} | {} | {}", r.received_at.to_rfc3339(), r.kind, r.from_address, r.subject.as_deref().unwrap_or(""));
+                    println!(
+                        "[{}] {} | {} | {}",
+                        r.received_at.to_rfc3339(),
+                        r.kind,
+                        r.from_address,
+                        r.subject.as_deref().unwrap_or("")
+                    );
                     let snippet: String = r.body.chars().take(160).collect();
                     println!("  {snippet}...\n");
                 }
@@ -1565,7 +1626,11 @@ async fn main() -> Result<()> {
                     if path.extension().and_then(|e| e.to_str()) != Some("toml") {
                         continue;
                     }
-                    let key = path.file_stem().and_then(|s| s.to_str()).unwrap_or("?").to_string();
+                    let key = path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("?")
+                        .to_string();
                     let text = std::fs::read_to_string(&path)?;
                     let parsed: toml::Value = toml::from_str(&text)?;
                     let segment = parsed
@@ -1573,12 +1638,17 @@ async fn main() -> Result<()> {
                         .and_then(|v| v.as_str())
                         .unwrap_or("any")
                         .to_string();
-                    let body = parsed.get("body_seed").and_then(|v| v.as_str()).unwrap_or("");
+                    let body = parsed
+                        .get("body_seed")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
                     let s = salesman_detector::score(body, None);
                     let reasons = s.reasons().join(";").replace('\n', " ");
                     println!(
                         "{}\t{}\t{:.3}\t{}\t{}",
-                        key, segment, s.score,
+                        key,
+                        segment,
+                        s.score,
                         if s.passes(threshold) { "pass" } else { "fail" },
                         reasons
                     );
@@ -1607,7 +1677,10 @@ async fn main() -> Result<()> {
             };
             state.set_campaign_cost_cap(cid, cap).await?;
             match cap {
-                Some(c) => println!("set cost cap on `{campaign}` to ${:.2} ({} micro USD)", max_usd, c),
+                Some(c) => println!(
+                    "set cost cap on `{campaign}` to ${:.2} ({} micro USD)",
+                    max_usd, c
+                ),
                 None => println!("cleared cost cap on `{campaign}`"),
             }
         }
@@ -1651,13 +1724,21 @@ async fn main() -> Result<()> {
             if stats.is_empty() {
                 println!("no template-tagged touches yet");
             } else {
-                println!("{:<24} {:>8} {:>6} {:>8} {:>8} {:>8}",
-                    "template", "drafted", "sent", "replied", "engaged", "reply%");
+                println!(
+                    "{:<24} {:>8} {:>6} {:>8} {:>8} {:>8}",
+                    "template", "drafted", "sent", "replied", "engaged", "reply%"
+                );
                 println!("{}", "-".repeat(70));
                 for s in &stats {
-                    println!("{:<24} {:>8} {:>6} {:>8} {:>8} {:>7.1}%",
-                        s.template_key, s.drafted, s.sent, s.replied, s.engaged_replied,
-                        s.reply_rate() * 100.0);
+                    println!(
+                        "{:<24} {:>8} {:>6} {:>8} {:>8} {:>7.1}%",
+                        s.template_key,
+                        s.drafted,
+                        s.sent,
+                        s.replied,
+                        s.engaged_replied,
+                        s.reply_rate() * 100.0
+                    );
                 }
             }
         }
@@ -1673,7 +1754,15 @@ async fn main() -> Result<()> {
                         println!("LLM cost report — last {since_hours}h, by model\n");
                         println!(
                             "{:<10} {:<28} {:>6} {:>10} {:>10} {:>10} {:>10} {:>8} {:>8}",
-                            "backend", "model", "calls", "prompt", "output", "cache", "cost USD", "avg ms", "p95 ms"
+                            "backend",
+                            "model",
+                            "calls",
+                            "prompt",
+                            "output",
+                            "cache",
+                            "cost USD",
+                            "avg ms",
+                            "p95 ms"
                         );
                         println!("{}", "-".repeat(110));
                         let mut total_micro_usd: i64 = 0;
@@ -1708,7 +1797,14 @@ async fn main() -> Result<()> {
                         println!("LLM cost report — last {since_hours}h, by purpose\n");
                         println!(
                             "{:<28} {:>6} {:>10} {:>10} {:>10} {:>10} {:>8} {:>8}",
-                            "purpose", "calls", "prompt", "output", "cache", "cost USD", "avg ms", "p95 ms"
+                            "purpose",
+                            "calls",
+                            "prompt",
+                            "output",
+                            "cache",
+                            "cost USD",
+                            "avg ms",
+                            "p95 ms"
                         );
                         println!("{}", "-".repeat(100));
                         let mut total_micro_usd: i64 = 0;
@@ -1766,8 +1862,12 @@ async fn main() -> Result<()> {
                 report.insert(secret_key.into(), serde_json::Value::Bool(set));
             }
             // Surface whether the per-recipient unsubscribe minter is fully wired.
-            let unsub_ready = std::env::var("SALESMAN_UNSUBSCRIBE_BASE_URL").map(|v| !v.is_empty()).unwrap_or(false)
-                && std::env::var("SALESMAN_UNSUBSCRIBE_HMAC_SECRET").map(|v| !v.is_empty()).unwrap_or(false);
+            let unsub_ready = std::env::var("SALESMAN_UNSUBSCRIBE_BASE_URL")
+                .map(|v| !v.is_empty())
+                .unwrap_or(false)
+                && std::env::var("SALESMAN_UNSUBSCRIBE_HMAC_SECRET")
+                    .map(|v| !v.is_empty())
+                    .unwrap_or(false);
             report.insert(
                 "unsubscribe_minter_ready".into(),
                 serde_json::Value::Bool(unsub_ready),
@@ -1775,7 +1875,10 @@ async fn main() -> Result<()> {
             report.insert("missing_required".into(), serde_json::json!(missing));
             println!("{}", serde_json::to_string_pretty(&report)?);
             if !missing.is_empty() {
-                anyhow::bail!("sender identity incomplete; {} required fields missing", missing.len());
+                anyhow::bail!(
+                    "sender identity incomplete; {} required fields missing",
+                    missing.len()
+                );
             }
         }
 
@@ -1786,9 +1889,15 @@ async fn main() -> Result<()> {
             let mut have_industry = 0usize;
             let mut have_description = 0usize;
             for c in &companies {
-                if c.homepage.is_some() { have_homepage += 1; }
-                if c.industry.is_some() { have_industry += 1; }
-                if c.description.is_some() { have_description += 1; }
+                if c.homepage.is_some() {
+                    have_homepage += 1;
+                }
+                if c.industry.is_some() {
+                    have_industry += 1;
+                }
+                if c.description.is_some() {
+                    have_description += 1;
+                }
             }
             println!(
                 "validate-csv {}\n\
@@ -1814,12 +1923,17 @@ async fn main() -> Result<()> {
             for c in companies.iter().take(3) {
                 println!(
                     "  - {} | homepage={:?} | industry={:?}",
-                    c.display_name, c.homepage.as_ref().map(|u| u.as_str()), c.industry
+                    c.display_name,
+                    c.homepage.as_ref().map(|u| u.as_str()),
+                    c.industry
                 );
             }
         }
 
-        Cmd::QueueClear { campaign, confirm_typed } => {
+        Cmd::QueueClear {
+            campaign,
+            confirm_typed,
+        } => {
             if !confirm_typed {
                 anyhow::bail!(
                     "queue-clear requires --confirm-typed (type the campaign name to proceed)"
@@ -1859,7 +1973,10 @@ async fn main() -> Result<()> {
             sample_drafts,
         } => {
             let state = require_state(cli.database_url.as_deref()).await?;
-            println!("salesman preflight `{campaign}` — {}", chrono::Utc::now().to_rfc3339());
+            println!(
+                "salesman preflight `{campaign}` — {}",
+                chrono::Utc::now().to_rfc3339()
+            );
             println!("==========================================\n");
 
             let mut blockers: Vec<String> = Vec::new();
@@ -1884,115 +2001,140 @@ async fn main() -> Result<()> {
             }
 
             // --- signing key
-            check!("signing key", Ok::<_, anyhow::Error>({
-                let seed = salesman_receipts::default_seed_path();
-                if seed.exists() {
-                    Ok(())
-                } else {
-                    Err(format!("seed file not present at {}", seed.display()))
-                }
-            }));
+            check!(
+                "signing key",
+                Ok::<_, anyhow::Error>({
+                    let seed = salesman_receipts::default_seed_path();
+                    if seed.exists() {
+                        Ok(())
+                    } else {
+                        Err(format!("seed file not present at {}", seed.display()))
+                    }
+                })
+            );
 
             // --- unsubscribe minter
-            check!("unsubscribe minter", Ok::<_, anyhow::Error>({
-                match salesman_outreach::UnsubscribeTokens::from_env() {
-                    Ok(t) => {
-                        if t.base_url().starts_with("https://") {
-                            Ok(())
-                        } else if t.base_url().starts_with("http://localhost")
-                            || t.base_url().starts_with("http://127.0.0.1")
-                        {
-                            Err(
+            check!(
+                "unsubscribe minter",
+                Ok::<_, anyhow::Error>({
+                    match salesman_outreach::UnsubscribeTokens::from_env() {
+                        Ok(t) => {
+                            if t.base_url().starts_with("https://") {
+                                Ok(())
+                            } else if t.base_url().starts_with("http://localhost")
+                                || t.base_url().starts_with("http://127.0.0.1")
+                            {
+                                Err(
                                 "base URL is http://localhost — fine for dev, NOT for production"
                                     .into(),
                             )
-                        } else {
-                            Err("base URL must be HTTPS for Gmail/Yahoo to honor it".into())
+                            } else {
+                                Err("base URL must be HTTPS for Gmail/Yahoo to honor it".into())
+                            }
                         }
+                        Err(e) => Err(format!("not configured: {e}")),
                     }
-                    Err(e) => Err(format!("not configured: {e}")),
-                }
-            }));
+                })
+            );
 
             // --- SMTP env
-            check!("smtp env", Ok::<_, anyhow::Error>({
-                match SmtpConfig::from_env() {
-                    Ok(_) => Ok(()),
-                    Err(e) => Err(format!("{e}")),
-                }
-            }));
+            check!(
+                "smtp env",
+                Ok::<_, anyhow::Error>({
+                    match SmtpConfig::from_env() {
+                        Ok(_) => Ok(()),
+                        Err(e) => Err(format!("{e}")),
+                    }
+                })
+            );
 
             // --- SMTP probe (TCP only; no auth, no SEND)
             if !no_probe {
-                check!("smtp connect", Ok::<_, anyhow::Error>({
-                    match SmtpConfig::from_env() {
-                        Ok(cfg) => {
-                            let connect = tokio::net::TcpStream::connect((cfg.host.as_str(), cfg.port));
-                            let r = tokio::time::timeout(
-                                std::time::Duration::from_secs(5),
-                                connect,
-                            )
-                            .await;
-                            match r {
-                                Ok(Ok(_)) => Ok(()),
-                                Ok(Err(e)) => Err(format!("tcp: {e}")),
-                                Err(_) => Err("timeout (5s)".into()),
+                check!(
+                    "smtp connect",
+                    Ok::<_, anyhow::Error>({
+                        match SmtpConfig::from_env() {
+                            Ok(cfg) => {
+                                let connect =
+                                    tokio::net::TcpStream::connect((cfg.host.as_str(), cfg.port));
+                                let r = tokio::time::timeout(
+                                    std::time::Duration::from_secs(5),
+                                    connect,
+                                )
+                                .await;
+                                match r {
+                                    Ok(Ok(_)) => Ok(()),
+                                    Ok(Err(e)) => Err(format!("tcp: {e}")),
+                                    Err(_) => Err("timeout (5s)".into()),
+                                }
                             }
+                            Err(e) => Err(format!("{e}")),
                         }
-                        Err(e) => Err(format!("{e}")),
-                    }
-                }));
+                    })
+                );
             }
 
             // --- LLM backends
-            check!("llm backends", Ok::<_, anyhow::Error>({
-                let kinds = router.registered_kinds();
-                if kinds.is_empty() {
-                    Err("no backends registered (set ANTHROPIC_API_KEY and/or GEMINI_API_KEY)".into())
-                } else {
-                    Ok(())
-                }
-            }));
+            check!(
+                "llm backends",
+                Ok::<_, anyhow::Error>({
+                    let kinds = router.registered_kinds();
+                    if kinds.is_empty() {
+                        Err(
+                            "no backends registered (set ANTHROPIC_API_KEY and/or GEMINI_API_KEY)"
+                                .into(),
+                        )
+                    } else {
+                        Ok(())
+                    }
+                })
+            );
 
             // --- campaign + prospects
             let cid = state
                 .ensure_campaign(&campaign, "(preflight)", "(unspecified)")
                 .await?;
             let pending_drafts = state.list_drafts_awaiting_approval(cid).await?;
-            check!("campaign + drafts", Ok::<_, anyhow::Error>({
-                if pending_drafts.is_empty() {
-                    Err(format!(
-                        "no awaiting-approval drafts in `{campaign}` — \
+            check!(
+                "campaign + drafts",
+                Ok::<_, anyhow::Error>({
+                    if pending_drafts.is_empty() {
+                        Err(format!(
+                            "no awaiting-approval drafts in `{campaign}` — \
                          run `salesman draft --campaign {campaign}` first"
-                    ))
-                } else {
-                    Ok(())
-                }
-            }));
+                        ))
+                    } else {
+                        Ok(())
+                    }
+                })
+            );
 
             // --- test/demo prospects in queue
-            check!("queue hygiene", Ok::<_, anyhow::Error>({
-                let bad: Vec<&TouchSummary> = pending_drafts
-                    .iter()
-                    .filter(|t| {
-                        let c = t.company.to_ascii_lowercase();
-                        c.contains("test")
-                            || c.contains("example")
-                            || c.contains("demo")
-                            || c == "(testing)"
-                            || c.starts_with("acme")
-                    })
-                    .collect();
-                if bad.is_empty() {
-                    Ok(())
-                } else {
-                    Err(format!(
-                        "{} draft(s) target obvious test companies (acme/test/demo/example) — \
+            check!(
+                "queue hygiene",
+                Ok::<_, anyhow::Error>({
+                    let bad: Vec<&TouchSummary> = pending_drafts
+                        .iter()
+                        .filter(|t| {
+                            let c = t.company.to_ascii_lowercase();
+                            c.contains("test")
+                                || c.contains("example")
+                                || c.contains("demo")
+                                || c == "(testing)"
+                                || c.starts_with("acme")
+                        })
+                        .collect();
+                    if bad.is_empty() {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "{} draft(s) target obvious test companies (acme/test/demo/example) — \
                          queue-clear and re-discover from a real CSV",
-                        bad.len()
-                    ))
-                }
-            }));
+                            bad.len()
+                        ))
+                    }
+                })
+            );
 
             // --- AI-detector pass on drafts
             if !pending_drafts.is_empty() {
@@ -2007,29 +2149,47 @@ async fn main() -> Result<()> {
                         high_score += 1;
                     }
                 }
-                check!("detector ensemble", Ok::<_, anyhow::Error>({
-                    if high_score == 0 {
-                        Ok(())
-                    } else {
-                        Err(format!(
-                            "{}/{} draft(s) score ≥0.6 on the AI-detector ensemble (max {:.2}) \
+                check!(
+                    "detector ensemble",
+                    Ok::<_, anyhow::Error>({
+                        if high_score == 0 {
+                            Ok(())
+                        } else {
+                            Err(format!(
+                                "{}/{} draft(s) score ≥0.6 on the AI-detector ensemble (max {:.2}) \
                              — review and regenerate before sending",
-                            high_score, pending_drafts.len(), max_seen
-                        ))
-                    }
-                }));
+                                high_score,
+                                pending_drafts.len(),
+                                max_seen
+                            ))
+                        }
+                    })
+                );
             }
 
             // --- sample drafts
             if sample_drafts > 0 && !pending_drafts.is_empty() {
-                println!("\nSample drafts (first {} of {}):",
+                println!(
+                    "\nSample drafts (first {} of {}):",
                     sample_drafts.min(pending_drafts.len()),
-                    pending_drafts.len());
+                    pending_drafts.len()
+                );
                 println!("{}", "-".repeat(60));
                 for t in pending_drafts.iter().take(sample_drafts) {
-                    println!("\n[{}] subject: {:?}", t.company, t.subject.as_deref().unwrap_or(""));
+                    println!(
+                        "\n[{}] subject: {:?}",
+                        t.company,
+                        t.subject.as_deref().unwrap_or("")
+                    );
                     let snippet: String = t.body.chars().take(280).collect();
-                    println!("{snippet}{}", if t.body.chars().count() > 280 { "..." } else { "" });
+                    println!(
+                        "{snippet}{}",
+                        if t.body.chars().count() > 280 {
+                            "..."
+                        } else {
+                            ""
+                        }
+                    );
                 }
                 println!("{}", "-".repeat(60));
             }
@@ -2037,14 +2197,20 @@ async fn main() -> Result<()> {
             println!();
             println!("==========================================");
             if blockers.is_empty() && warnings.is_empty() {
-                println!("VERDICT: READY — safe to `salesman send-pending --campaign {campaign} --for-real --confirm-typed`");
+                println!(
+                    "VERDICT: READY — safe to `salesman send-pending --campaign {campaign} --for-real --confirm-typed`"
+                );
             } else if blockers.is_empty() {
                 println!("VERDICT: READY-WITH-WARNINGS ({})", warnings.len());
                 for w in &warnings {
                     println!("  - {w}");
                 }
             } else {
-                println!("VERDICT: BLOCKED — {} blocker(s), {} warning(s)", blockers.len(), warnings.len());
+                println!(
+                    "VERDICT: BLOCKED — {} blocker(s), {} warning(s)",
+                    blockers.len(),
+                    warnings.len()
+                );
                 for b in &blockers {
                     println!("  - {b}");
                 }
@@ -2052,7 +2218,10 @@ async fn main() -> Result<()> {
             }
         }
 
-        Cmd::Doctor { probe_smtp, probe_imap } => {
+        Cmd::Doctor {
+            probe_smtp,
+            probe_imap,
+        } => {
             // Header
             println!("salesman doctor — {}", chrono::Utc::now().to_rfc3339());
             println!("==========================================\n");
@@ -2080,7 +2249,9 @@ async fn main() -> Result<()> {
             print!("[ llm         ]  ");
             let kinds = router.registered_kinds();
             if kinds.is_empty() {
-                println!("FAIL  no backends registered (set ANTHROPIC_API_KEY and/or GEMINI_API_KEY)");
+                println!(
+                    "FAIL  no backends registered (set ANTHROPIC_API_KEY and/or GEMINI_API_KEY)"
+                );
                 required_failures += 1;
             } else {
                 let names: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
@@ -2093,7 +2264,10 @@ async fn main() -> Result<()> {
             if seed.exists() {
                 println!("OK  {}", seed.display());
             } else {
-                println!("WARN  not present (will be generated on first send)  {}", seed.display());
+                println!(
+                    "WARN  not present (will be generated on first send)  {}",
+                    seed.display()
+                );
                 warnings += 1;
             }
 
@@ -2184,7 +2358,11 @@ async fn main() -> Result<()> {
                 if let Some(c) = cost {
                     let total: i64 = c.iter().map(|r| r.cost_micro_usd).sum();
                     print!("[ llm cost 24h]  ");
-                    println!("OK  ${:.4} across {} models", (total as f64) / 1_000_000.0, c.len());
+                    println!(
+                        "OK  ${:.4} across {} models",
+                        (total as f64) / 1_000_000.0,
+                        c.len()
+                    );
                 }
             }
 
@@ -2225,7 +2403,9 @@ async fn main() -> Result<()> {
             } else if required_failures == 0 {
                 println!("VERDICT: YELLOW — {warnings} warning(s); send path may not work yet");
             } else {
-                println!("VERDICT: RED — {required_failures} required failure(s) + {warnings} warning(s)");
+                println!(
+                    "VERDICT: RED — {required_failures} required failure(s) + {warnings} warning(s)"
+                );
                 anyhow::bail!("doctor: required components missing");
             }
         }
@@ -2268,7 +2448,8 @@ async fn main() -> Result<()> {
             }
 
             // signing key
-            let signing_present = std::path::Path::new("/opt/salesman/config/signing.seed").exists();
+            let signing_present =
+                std::path::Path::new("/opt/salesman/config/signing.seed").exists();
             report.insert(
                 "signing_key".into(),
                 serde_json::json!({
@@ -2278,12 +2459,14 @@ async fn main() -> Result<()> {
             );
 
             // smtp + imap env presence
-            report.insert("smtp_env_set".into(), serde_json::Value::from(
-                std::env::var("SALESMAN_SMTP_HOST").is_ok()
-            ));
-            report.insert("imap_env_set".into(), serde_json::Value::from(
-                std::env::var("SALESMAN_IMAP_HOST").is_ok()
-            ));
+            report.insert(
+                "smtp_env_set".into(),
+                serde_json::Value::from(std::env::var("SALESMAN_SMTP_HOST").is_ok()),
+            );
+            report.insert(
+                "imap_env_set".into(),
+                serde_json::Value::from(std::env::var("SALESMAN_IMAP_HOST").is_ok()),
+            );
 
             report.insert("required_ok".into(), serde_json::Value::from(required_ok));
             println!("{}", serde_json::to_string_pretty(&report)?);
@@ -2317,10 +2500,11 @@ async fn main() -> Result<()> {
                     delay_days: s.delay_days.unwrap_or(0),
                 })
                 .collect();
-            let sid = state
-                .create_sequence(campaign_id, &name, &inputs)
-                .await?;
-            println!("created sequence `{name}` (id={sid}) with {} step(s)", inputs.len());
+            let sid = state.create_sequence(campaign_id, &name, &inputs).await?;
+            println!(
+                "created sequence `{name}` (id={sid}) with {} step(s)",
+                inputs.len()
+            );
         }
 
         Cmd::AssignSequence { campaign, sequence } => {
@@ -2330,9 +2514,7 @@ async fn main() -> Result<()> {
                 .await?;
             // Look up sequence by (campaign, name).
             let sid = sqlx_lookup_sequence(&state, campaign_id, &sequence).await?;
-            let n = state
-                .assign_sequence_to_campaign(campaign_id, sid)
-                .await?;
+            let n = state.assign_sequence_to_campaign(campaign_id, sid).await?;
             println!("assigned sequence `{sequence}` to {n} new prospects (idempotent)");
         }
 
@@ -2465,7 +2647,11 @@ async fn main() -> Result<()> {
                             // Single-column file: assume email.
                             "email".to_string()
                         });
-                        let kind = if kind.is_empty() { "email".to_string() } else { kind };
+                        let kind = if kind.is_empty() {
+                            "email".to_string()
+                        } else {
+                            kind
+                        };
                         let reason = cols
                             .get(2)
                             .cloned()
@@ -2480,7 +2666,9 @@ async fn main() -> Result<()> {
                             .await?;
                         imported += 1;
                     }
-                    println!("import: {imported} added, {skipped} skipped (duplicates ignored at DB level)");
+                    println!(
+                        "import: {imported} added, {skipped} skipped (duplicates ignored at DB level)"
+                    );
                 }
                 SuppCmd::Count => {
                     let rows = state.count_suppressions_by_source().await?;
@@ -2517,7 +2705,9 @@ async fn main() -> Result<()> {
         Cmd::TickSequences { batch, product } => {
             let state = require_state(cli.database_url.as_deref()).await?;
             if router.registered_kinds().is_empty() {
-                anyhow::bail!("no LLM backends registered (set ANTHROPIC_API_KEY and/or GEMINI_API_KEY)");
+                anyhow::bail!(
+                    "no LLM backends registered (set ANTHROPIC_API_KEY and/or GEMINI_API_KEY)"
+                );
             }
             let due = state.list_due_prospects(batch).await?;
             if due.is_empty() {
@@ -2560,12 +2750,19 @@ async fn main() -> Result<()> {
                     "product":  product,
                     "angle_hint": format!("step {} of sequence (template: {})", d.current_step, d.template_key),
                 });
-                match salesman_tools::Tool::invoke(&draft_tool, salesman_core::ToolArgs(tool_args)).await {
+                match salesman_tools::Tool::invoke(&draft_tool, salesman_core::ToolArgs(tool_args))
+                    .await
+                {
                     Ok(v) => {
                         let subject = v.get("subject").and_then(|x| x.as_str()).unwrap_or("");
                         let body = v.get("body").and_then(|x| x.as_str()).unwrap_or("");
                         if let Err(e) = state
-                            .insert_touch_draft(d.prospect_id, salesman_core::TouchChannel::Email, Some(subject), body)
+                            .insert_touch_draft(
+                                d.prospect_id,
+                                salesman_core::TouchChannel::Email,
+                                Some(subject),
+                                body,
+                            )
                             .await
                         {
                             tracing::warn!(prospect = %d.prospect_id, "%e" = %e, "draft persist failed");
@@ -2582,7 +2779,10 @@ async fn main() -> Result<()> {
                     }
                 }
             }
-            println!("tick-sequences: due={} drafted={ok} errored={err}", due.len());
+            println!(
+                "tick-sequences: due={} drafted={ok} errored={err}",
+                due.len()
+            );
         }
 
         Cmd::Halt { reason } => {
@@ -2633,7 +2833,10 @@ mod tests {
             parse_csv_row(r#""a,b","c","d""e""#),
             vec!["a,b", "c", r#"d"e"#]
         );
-        assert_eq!(parse_csv_row("alice@example.com"), vec!["alice@example.com"]);
+        assert_eq!(
+            parse_csv_row("alice@example.com"),
+            vec!["alice@example.com"]
+        );
         assert_eq!(parse_csv_row("a,,c"), vec!["a", "", "c"]);
     }
 

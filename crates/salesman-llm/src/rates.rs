@@ -31,37 +31,37 @@ const RATES: &[Rate] = &[
     Rate {
         backend: BackendKind::Claude,
         model: "claude-opus-4-7",
-        input_per_million_micro_usd: 15_000_000,   // $15/M
-        output_per_million_micro_usd: 75_000_000,  // $75/M
+        input_per_million_micro_usd: 15_000_000,    // $15/M
+        output_per_million_micro_usd: 75_000_000,   // $75/M
         cache_hit_per_million_micro_usd: 1_500_000, // $1.50/M (10% of input)
     },
     Rate {
         backend: BackendKind::Claude,
         model: "claude-sonnet-4-6",
-        input_per_million_micro_usd: 3_000_000,    // $3/M
-        output_per_million_micro_usd: 15_000_000,  // $15/M
-        cache_hit_per_million_micro_usd: 300_000,  // $0.30/M
+        input_per_million_micro_usd: 3_000_000,   // $3/M
+        output_per_million_micro_usd: 15_000_000, // $15/M
+        cache_hit_per_million_micro_usd: 300_000, // $0.30/M
     },
     Rate {
         backend: BackendKind::Claude,
         model: "claude-haiku-4-5-20251001",
-        input_per_million_micro_usd: 1_000_000,    // $1/M
-        output_per_million_micro_usd: 5_000_000,   // $5/M
-        cache_hit_per_million_micro_usd: 100_000,  // $0.10/M
+        input_per_million_micro_usd: 1_000_000,   // $1/M
+        output_per_million_micro_usd: 5_000_000,  // $5/M
+        cache_hit_per_million_micro_usd: 100_000, // $0.10/M
     },
     // Gemini — pricing as of 2026-04 (per million tokens, USD).
     Rate {
         backend: BackendKind::Gemini,
         model: "gemini-1.5-pro",
-        input_per_million_micro_usd: 1_250_000,    // $1.25/M (≤128k context)
-        output_per_million_micro_usd: 5_000_000,   // $5/M
+        input_per_million_micro_usd: 1_250_000, // $1.25/M (≤128k context)
+        output_per_million_micro_usd: 5_000_000, // $5/M
         cache_hit_per_million_micro_usd: 1_250_000,
     },
     Rate {
         backend: BackendKind::Gemini,
         model: "gemini-1.5-flash",
-        input_per_million_micro_usd: 75_000,        // $0.075/M
-        output_per_million_micro_usd: 300_000,      // $0.30/M
+        input_per_million_micro_usd: 75_000,   // $0.075/M
+        output_per_million_micro_usd: 300_000, // $0.30/M
         cache_hit_per_million_micro_usd: 75_000,
     },
     // LFI is sovereign / self-hosted. Treat as zero-cost for the ledger.

@@ -72,7 +72,11 @@ impl Tool for SeoMetaTool {
         let page_summary = require_str(&args, "page_summary")?;
         let target_query = require_str(&args, "target_query")?;
         let slug = require_str(&args, "slug")?;
-        let published = args.0.get("published").and_then(|v| v.as_str()).unwrap_or("");
+        let published = args
+            .0
+            .get("published")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
         let system = [
             "You write SEO meta tags. Output STRICT JSON.",
@@ -113,13 +117,15 @@ impl Tool for SeoMetaTool {
             temperature: 0.2,
         };
 
-        let resp = self.router.chat_for(RouteHint::Reasoning, "seo_meta", req).await?;
+        let resp = self
+            .router
+            .chat_for(RouteHint::Reasoning, "seo_meta", req)
+            .await?;
         let raw = resp.message.content.trim();
-        let meta = parse_seo(raw)
-            .map_err(|e| Error::Tool {
-                tool: "content.seo_meta".into(),
-                message: format!("parse: {e}"),
-            })?;
+        let meta = parse_seo(raw).map_err(|e| Error::Tool {
+            tool: "content.seo_meta".into(),
+            message: format!("parse: {e}"),
+        })?;
 
         // Hard-truncate just in case.
         let title = truncate(&meta.title, 60);
@@ -169,12 +175,11 @@ fn parse_seo(raw: &str) -> std::result::Result<SeoMeta, String> {
     if let Ok(s) = serde_json::from_str::<SeoMeta>(stripped) {
         return Ok(s);
     }
-    if let (Some(s), Some(e)) = (raw.find('{'), raw.rfind('}')) {
-        if e > s {
-            if let Ok(parsed) = serde_json::from_str::<SeoMeta>(&raw[s..=e]) {
-                return Ok(parsed);
-            }
-        }
+    if let (Some(s), Some(e)) = (raw.find('{'), raw.rfind('}'))
+        && e > s
+        && let Ok(parsed) = serde_json::from_str::<SeoMeta>(&raw[s..=e])
+    {
+        return Ok(parsed);
     }
     Err("not parseable as SeoMeta JSON".into())
 }
@@ -193,7 +198,9 @@ fn truncate(s: &str, n: usize) -> String {
     } else {
         let mut out = String::new();
         for (i, c) in s.chars().enumerate() {
-            if i >= n - 1 { break; }
+            if i >= n - 1 {
+                break;
+            }
             out.push(c);
         }
         out.push('…');

@@ -129,10 +129,7 @@ impl LlmBackend for ClaudeBackend {
         let usage = Usage {
             prompt_tokens: raw.usage.input_tokens,
             output_tokens: raw.usage.output_tokens,
-            cache_hit_tokens: raw
-                .usage
-                .cache_read_input_tokens
-                .unwrap_or(0),
+            cache_hit_tokens: raw.usage.cache_read_input_tokens.unwrap_or(0),
             cost_micro_usd: 0, // computed by salesman-state from per-model rates
             latency_ms,
         };
@@ -248,7 +245,11 @@ fn build_request(model: &str, req: &ChatRequest) -> Result<Value> {
 }
 
 fn truncate(s: &str, n: usize) -> String {
-    if s.len() <= n { s.to_string() } else { format!("{}...", &s[..n]) }
+    if s.len() <= n {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..n])
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -265,7 +266,9 @@ struct ApiResponse {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ContentBlock {
-    Text { text: String },
+    Text {
+        text: String,
+    },
     ToolUse {
         id: String,
         name: String,

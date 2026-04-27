@@ -71,13 +71,10 @@ impl ImapPoller {
                     tool: "imap.fetch".into(),
                     message: format!("uid={uid}: {e}"),
                 })?;
-            let messages: Vec<_> = stream
-                .try_collect()
-                .await
-                .map_err(|e| Error::Tool {
-                    tool: "imap.fetch_collect".into(),
-                    message: format!("uid={uid}: {e}"),
-                })?;
+            let messages: Vec<_> = stream.try_collect().await.map_err(|e| Error::Tool {
+                tool: "imap.fetch_collect".into(),
+                message: format!("uid={uid}: {e}"),
+            })?;
             for m in messages {
                 let body_bytes = match m.body() {
                     Some(b) => b.to_vec(),
@@ -99,11 +96,9 @@ impl ImapPoller {
                 let _ = session
                     .uid_store(uid.to_string(), "+FLAGS (\\Seen)")
                     .await
-                    .map_err(|e| {
-                        Error::Tool {
-                            tool: "imap.mark_seen".into(),
-                            message: format!("uid={uid}: {e}"),
-                        }
+                    .map_err(|e| Error::Tool {
+                        tool: "imap.mark_seen".into(),
+                        message: format!("uid={uid}: {e}"),
                     })?
                     .collect::<Vec<_>>()
                     .await;

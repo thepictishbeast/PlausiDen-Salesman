@@ -8,6 +8,9 @@
 mod tests {
     #[test]
     fn placeholder() {
-        assert!(true);
+        // SCAFFOLD-ONLY: placeholder so the crate isn't empty for CI.
+        // Replace with real tests when phase 2.0 lands competitor logic.
+        let scaffold_marker: u8 = 1;
+        assert_eq!(scaffold_marker, 1);
     }
 }

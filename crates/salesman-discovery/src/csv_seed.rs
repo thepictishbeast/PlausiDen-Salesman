@@ -72,13 +72,17 @@ impl CsvSeed {
                 } else {
                     format!("https://{s}")
                 };
-                Some(Url::parse(&with_scheme).map_err(|e| {
-                    Error::Validation(format!("homepage `{s}`: {e}"))
-                })?)
+                Some(
+                    Url::parse(&with_scheme)
+                        .map_err(|e| Error::Validation(format!("homepage `{s}`: {e}")))?,
+                )
             }
             _ => None,
         };
-        let size_band = r.size_band.as_deref().and_then(|s| SizeBand::from_str(s).ok());
+        let size_band = r
+            .size_band
+            .as_deref()
+            .and_then(|s| SizeBand::from_str(s).ok());
         Ok(Company {
             id: CompanyId::new(),
             legal_name: r.legal_name,
@@ -118,6 +122,9 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         assert_eq!(companies.len(), 2);
         assert_eq!(companies[0].display_name, "Acme Inc");
-        assert_eq!(companies[1].homepage.as_ref().unwrap().as_str(), "https://beta.example/");
+        assert_eq!(
+            companies[1].homepage.as_ref().unwrap().as_str(),
+            "https://beta.example/"
+        );
     }
 }

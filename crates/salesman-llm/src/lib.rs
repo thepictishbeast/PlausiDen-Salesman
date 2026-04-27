@@ -18,7 +18,7 @@ pub mod rates;
 pub mod router;
 pub mod types;
 
-pub use rates::{compute_cost_micro_usd, lookup_rate, Rate};
+pub use rates::{Rate, compute_cost_micro_usd, lookup_rate};
 pub use router::{LlmCallSink, LlmRouter, RouteHint};
 pub use types::{BackendKind, ChatRequest, ChatResponse, Message, Role, Usage};
 

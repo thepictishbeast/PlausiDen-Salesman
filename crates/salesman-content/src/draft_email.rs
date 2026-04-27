@@ -47,7 +47,7 @@ impl ColdTemplate {
         if !path.exists() {
             return Ok(None);
         }
-        let text = std::fs::read_to_string(&path).map_err(|e| Error::Io(e))?;
+        let text = std::fs::read_to_string(&path).map_err(Error::Io)?;
         let parsed: ColdTemplate = toml::from_str(&text)
             .map_err(|e| Error::Validation(format!("template `{key}` parse: {e}")))?;
         Ok(Some(parsed))
@@ -173,14 +173,17 @@ impl Tool for DraftColdEmailTool {
 
         // Load template if key + dir provided.
         let template = match (&template_key, std::env::var("SALESMAN_TEMPLATES_DIR").ok()) {
-            (Some(key), Some(dir)) => {
-                ColdTemplate::load(std::path::Path::new(&dir), key)?
-            }
+            (Some(key), Some(dir)) => ColdTemplate::load(std::path::Path::new(&dir), key)?,
             _ => None,
         };
 
         let system = self.system_prompt(template.as_ref());
-        let user_initial = self.user_prompt(&prospect, &product, angle_hint.as_deref(), template.as_ref());
+        let user_initial = self.user_prompt(
+            &prospect,
+            &product,
+            angle_hint.as_deref(),
+            template.as_ref(),
+        );
 
         // Auto-rewrite-and-retry loop: max_retries + 1 total attempts.
         // Each attempt that fails the detector gets the detector's
@@ -220,11 +223,17 @@ impl Tool for DraftColdEmailTool {
                 temperature: 0.55 + (attempt as f32) * 0.05,
             };
 
-            let resp = self.router.chat_for(RouteHint::Reasoning, "draft_cold_email", req).await?;
+            let resp = self
+                .router
+                .chat_for(RouteHint::Reasoning, "draft_cold_email", req)
+                .await?;
             let raw = resp.message.content.trim();
             let draft = parse_draft(raw).map_err(|e| Error::Tool {
                 tool: "content.draft_cold_email".into(),
-                message: format!("attempt {attempt}: parse: {e} -- raw: {}", truncate(raw, 200)),
+                message: format!(
+                    "attempt {attempt}: parse: {e} -- raw: {}",
+                    truncate(raw, 200)
+                ),
             })?;
 
             let score = salesman_detector::score(&draft.body, Some(&draft.subject));
@@ -236,7 +245,11 @@ impl Tool for DraftColdEmailTool {
             if score.passes(detector_threshold) {
                 break;
             }
-            tracing::warn!(attempt, score = score.score, "draft failed detector; retrying");
+            tracing::warn!(
+                attempt,
+                score = score.score,
+                "draft failed detector; retrying"
+            );
             feedback = Some(score.reasons().join("\n  "));
         }
 
@@ -264,7 +277,10 @@ impl DraftColdEmailTool {
             "You are a senior B2B sales writer for {}. {}",
             self.sender_company, self.sender_one_liner,
         );
-        let from_line = format!("- First-person from {}. Plain text, no markdown.", self.sender_name);
+        let from_line = format!(
+            "- First-person from {}. Plain text, no markdown.",
+            self.sender_name
+        );
         let mut lines: Vec<String> = vec![
             header,
             String::new(),
@@ -274,17 +290,22 @@ impl DraftColdEmailTool {
             "- Body 80-180 words. One short paragraph of personalization (must reference \
               at least one specific fact about the prospect), one short pitch paragraph \
               (one concrete benefit, not feature dump), one explicit ask (low-friction CTA - \
-              15-min call, demo link, reply with interest).".into(),
+              15-min call, demo link, reply with interest)."
+                .into(),
             "- No emoji. No fake urgency. No fake social proof. No 'I noticed' / \
               'I came across' opener cliches. No 'just wanted to' / \
-              'hope this finds you well'.".into(),
+              'hope this finds you well'."
+                .into(),
             "- End with a clear opt-out: 'Reply STOP and I won't follow up.'".into(),
             "- Do NOT promise things the product doesn't do.".into(),
         ];
 
         if let Some(t) = template {
             lines.push(String::new());
-            lines.push(format!("TEMPLATE GUIDANCE (`{}` — {}):", t.key, t.description));
+            lines.push(format!(
+                "TEMPLATE GUIDANCE (`{}` — {}):",
+                t.key, t.description
+            ));
             lines.push("Use this subject seed as a tonal reference (don't paste verbatim):".into());
             lines.push(format!("  Subject seed: {}", t.subject_seed));
             lines.push("Use this body seed as a STRUCTURE + TONE reference. Do not paste it verbatim; rewrite each section using the prospect facts:".into());
@@ -350,20 +371,24 @@ fn parse_draft(raw: &str) -> std::result::Result<ColdEmailDraft, String> {
         return Ok(d);
     }
     // Last-ditch: try to find the first {...} block.
-    if let (Some(start), Some(end)) = (raw.find('{'), raw.rfind('}')) {
-        if end > start {
-            let slice = &raw[start..=end];
-            if let Ok(d) = serde_json::from_str::<ColdEmailDraft>(slice) {
-                warn!("draft parse: fell back to substring extraction");
-                return Ok(d);
-            }
+    if let (Some(start), Some(end)) = (raw.find('{'), raw.rfind('}'))
+        && end > start
+    {
+        let slice = &raw[start..=end];
+        if let Ok(d) = serde_json::from_str::<ColdEmailDraft>(slice) {
+            warn!("draft parse: fell back to substring extraction");
+            return Ok(d);
         }
     }
     Err("output was not valid JSON in any expected shape".into())
 }
 
 fn truncate(s: &str, n: usize) -> String {
-    if s.len() <= n { s.to_string() } else { format!("{}...", &s[..n]) }
+    if s.len() <= n {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..n])
+    }
 }
 
 #[cfg(test)]
@@ -388,8 +413,7 @@ mod tests {
 
     #[test]
     fn parses_substring_json() {
-        let raw =
-            "Sure! Here is the draft:\n\n{\"subject\":\"x\",\"body\":\"y\"}\n\nLet me know if you want changes.";
+        let raw = "Sure! Here is the draft:\n\n{\"subject\":\"x\",\"body\":\"y\"}\n\nLet me know if you want changes.";
         let d = parse_draft(raw).unwrap();
         assert_eq!(d.subject, "x");
     }

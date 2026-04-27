@@ -107,11 +107,12 @@ fn extract_recipient(body: &str) -> Option<String> {
     // Fallback: <email@host> on a "could not deliver to" line.
     for line in body.lines() {
         let l_lc = line.to_ascii_lowercase();
-        if l_lc.contains("recipient") || l_lc.contains("could not") || l_lc.contains("undelivered")
+        if (l_lc.contains("recipient")
+            || l_lc.contains("could not")
+            || l_lc.contains("undelivered"))
+            && let Some(addr) = extract_angle_addr(line)
         {
-            if let Some(addr) = extract_angle_addr(line) {
-                return Some(addr);
-            }
+            return Some(addr);
         }
     }
     // Last-resort fallback: the first standalone <email@host> in the
@@ -188,7 +189,9 @@ fn extract_status(body: &str) -> Option<String> {
 fn is_enhanced_status_code(s: &str) -> bool {
     let parts: Vec<&str> = s.split('.').collect();
     parts.len() == 3
-        && parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
         && (parts[0] == "4" || parts[0] == "5" || parts[0] == "2")
 }
 

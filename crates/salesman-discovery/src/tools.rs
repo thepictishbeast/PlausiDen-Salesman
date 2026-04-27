@@ -23,7 +23,9 @@ impl Default for CsvSeedTool {
 
 impl CsvSeedTool {
     pub fn new() -> Self {
-        Self { seed: CsvSeed::new() }
+        Self {
+            seed: CsvSeed::new(),
+        }
     }
 }
 
@@ -51,9 +53,11 @@ impl Tool for CsvSeedTool {
     }
 
     async fn invoke(&self, args: ToolArgs) -> Result<Value> {
-        let path = args.0.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
-            Error::Validation("discovery.csv_seed: missing `path`".into())
-        })?;
+        let path = args
+            .0
+            .get("path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| Error::Validation("discovery.csv_seed: missing `path`".into()))?;
         let companies = self.seed.read_path(&PathBuf::from(path))?;
         Ok(json!({ "count": companies.len(), "companies": companies }))
     }
@@ -72,7 +76,9 @@ impl Default for HomepageFetchTool {
 
 impl HomepageFetchTool {
     pub fn new() -> Self {
-        Self { fetcher: Arc::new(HomepageFetcher::new()) }
+        Self {
+            fetcher: Arc::new(HomepageFetcher::new()),
+        }
     }
 }
 
@@ -98,9 +104,10 @@ impl Tool for HomepageFetchTool {
     }
 
     async fn invoke(&self, args: ToolArgs) -> Result<Value> {
-        let url_str = args.0.get("url").and_then(|v| v.as_str()).ok_or_else(|| {
-            Error::Validation("discovery.homepage_fetch: missing `url`".into())
-        })?;
+        let url_str =
+            args.0.get("url").and_then(|v| v.as_str()).ok_or_else(|| {
+                Error::Validation("discovery.homepage_fetch: missing `url`".into())
+            })?;
         let url = Url::parse(url_str).map_err(|e| Error::Validation(format!("url: {e}")))?;
         let facts = self.fetcher.fetch(&url).await?;
         Ok(json!({

@@ -4,7 +4,7 @@
 //! Each adapter wraps a free-or-cheap public API:
 //! - GDELT  — recent news articles mentioning a query (no auth)
 //! - GitHub — org / repo discovery (REST API; works unauthenticated
-//!            with strict rate limits, or with a PAT)
+//!   with strict rate limits, or with a PAT)
 //! - HackerNews — Algolia-backed search of stories + comments
 //!
 //! All three are wrapped as `Tool`s so the agent loop can drive them.

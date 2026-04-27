@@ -25,11 +25,19 @@ pub enum SmtpFailure {
     /// 5xx + a subcode that is unambiguously about the RECIPIENT
     /// being undeliverable. Caller should mark the recipient
     /// suppressed with source="bounce".
-    HardBounce { basic: u16, enhanced: Option<String>, message: String },
+    HardBounce {
+        basic: u16,
+        enhanced: Option<String>,
+        message: String,
+    },
     /// 5xx that is NOT about the recipient (rate limit on sender,
     /// content rejection, policy block). Do NOT auto-suppress; the
     /// owner needs to investigate.
-    PermanentOther { basic: u16, enhanced: Option<String>, message: String },
+    PermanentOther {
+        basic: u16,
+        enhanced: Option<String>,
+        message: String,
+    },
     /// 4xx — try later. Caller should leave the touch in
     /// `awaiting_send` for a retry.
     Transient { basic: u16, message: String },
@@ -41,15 +49,29 @@ pub enum SmtpFailure {
 impl fmt::Display for SmtpFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::HardBounce { basic, enhanced, message } => write!(
+            Self::HardBounce {
+                basic,
+                enhanced,
+                message,
+            } => write!(
                 f,
                 "hard-bounce {basic}{} {message}",
-                enhanced.as_deref().map(|e| format!(" {e}")).unwrap_or_default()
+                enhanced
+                    .as_deref()
+                    .map(|e| format!(" {e}"))
+                    .unwrap_or_default()
             ),
-            Self::PermanentOther { basic, enhanced, message } => write!(
+            Self::PermanentOther {
+                basic,
+                enhanced,
+                message,
+            } => write!(
                 f,
                 "permanent {basic}{} {message}",
-                enhanced.as_deref().map(|e| format!(" {e}")).unwrap_or_default()
+                enhanced
+                    .as_deref()
+                    .map(|e| format!(" {e}"))
+                    .unwrap_or_default()
             ),
             Self::Transient { basic, message } => write!(f, "transient {basic} {message}"),
             Self::Unstructured { message } => write!(f, "unstructured {message}"),
@@ -73,27 +95,27 @@ impl SmtpFailure {
 /// Recipient-fatal enhanced status codes — these and only these
 /// trigger auto-suppression. Conservative on purpose.
 const HARD_BOUNCE_ENHANCED: &[&str] = &[
-    "5.1.1", // bad destination mailbox
-    "5.1.2", // bad destination system
-    "5.1.3", // bad destination mailbox syntax
-    "5.1.6", // mailbox has moved (no forwarding)
+    "5.1.1",  // bad destination mailbox
+    "5.1.2",  // bad destination system
+    "5.1.3",  // bad destination mailbox syntax
+    "5.1.6",  // mailbox has moved (no forwarding)
     "5.1.10", // recipient address has null MX
-    "5.4.1", // no answer from host
-    "5.4.4", // unable to route
+    "5.4.1",  // no answer from host
+    "5.4.4",  // unable to route
     "5.7.27", // sender does not match SPF — recipient-side rejection of OUR mail; counted as hard
 ];
 
 /// Subcodes that are 5xx but explicitly NOT about the recipient.
 /// Matches against a prefix so 5.7.x policy rejections also fall here.
 const PERMANENT_NON_RECIPIENT_PREFIXES: &[&str] = &[
-    "5.0.0", // generic
-    "5.2.",  // mailbox-status (full, unavailable) — could go either way; treat as non-fatal
-    "5.3.",  // mail-system status
-    "5.5.",  // protocol
-    "5.6.",  // media / content
-    "5.7.0", // delivery not authorized
-    "5.7.1", // delivery not authorized (often spam policy)
-    "5.7.7", // message integrity
+    "5.0.0",  // generic
+    "5.2.",   // mailbox-status (full, unavailable) — could go either way; treat as non-fatal
+    "5.3.",   // mail-system status
+    "5.5.",   // protocol
+    "5.6.",   // media / content
+    "5.7.0",  // delivery not authorized
+    "5.7.1",  // delivery not authorized (often spam policy)
+    "5.7.7",  // message integrity
     "5.7.26", // multiple auth checks failed (Gmail)
 ];
 
@@ -176,9 +198,7 @@ fn find_enhanced_code(s: &str) -> Option<String> {
         {
             // Walk forward grabbing digits + dots.
             let mut end = i + 1;
-            while end < bytes.len()
-                && (bytes[end].is_ascii_digit() || bytes[end] == b'.')
-            {
+            while end < bytes.len() && (bytes[end].is_ascii_digit() || bytes[end] == b'.') {
                 end += 1;
             }
             let candidate = &s[i..end];
@@ -199,7 +219,9 @@ mod tests {
     fn classifies_user_unknown_as_hard_bounce() {
         let f = classify("permanent error: 550 5.1.1 <foo@bar.com> user unknown");
         match f {
-            SmtpFailure::HardBounce { basic, enhanced, .. } => {
+            SmtpFailure::HardBounce {
+                basic, enhanced, ..
+            } => {
                 assert_eq!(basic, 550);
                 assert_eq!(enhanced.as_deref(), Some("5.1.1"));
             }

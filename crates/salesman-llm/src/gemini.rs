@@ -272,7 +272,11 @@ fn build_request(req: &ChatRequest) -> Result<Value> {
 }
 
 fn truncate(s: &str, n: usize) -> String {
-    if s.len() <= n { s.to_string() } else { format!("{}...", &s[..n]) }
+    if s.len() <= n {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..n])
+    }
 }
 
 fn uuid_v7_short() -> String {
@@ -376,7 +380,10 @@ mod tests {
         assert_eq!(contents.len(), 1);
         assert_eq!(contents[0]["role"], "user");
         assert_eq!(contents[0]["parts"][0]["text"], "search for X");
-        assert_eq!(body["tools"][0]["functionDeclarations"][0]["name"], "search");
+        assert_eq!(
+            body["tools"][0]["functionDeclarations"][0]["name"],
+            "search"
+        );
     }
 
     #[test]

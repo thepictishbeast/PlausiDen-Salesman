@@ -5,8 +5,8 @@
 
 use crate::State;
 use chrono::Utc;
-use salesman_core::model::{CampaignStatus, TechSignal};
 use salesman_core::model::ReplyKind;
+use salesman_core::model::{CampaignStatus, TechSignal};
 use salesman_core::{
     Campaign, CampaignId, Company, CompanyId, Error, Prospect, ProspectId, Result, TouchId,
     TouchOutcome,
@@ -88,10 +88,18 @@ pub struct TemplateStat {
 
 impl TemplateStat {
     pub fn reply_rate(&self) -> f32 {
-        if self.sent == 0 { 0.0 } else { self.replied as f32 / self.sent as f32 }
+        if self.sent == 0 {
+            0.0
+        } else {
+            self.replied as f32 / self.sent as f32
+        }
     }
     pub fn engaged_rate(&self) -> f32 {
-        if self.sent == 0 { 0.0 } else { self.engaged_replied as f32 / self.sent as f32 }
+        if self.sent == 0 {
+            0.0
+        } else {
+            self.engaged_replied as f32 / self.sent as f32
+        }
     }
 }
 
@@ -113,7 +121,11 @@ impl CampaignCostRow {
     }
     pub fn pct_used(&self) -> Option<f32> {
         self.cost_cap_micro_usd.and_then(|cap| {
-            if cap <= 0 { None } else { Some((self.spent_micro_usd as f32) / (cap as f32) * 100.0) }
+            if cap <= 0 {
+                None
+            } else {
+                Some((self.spent_micro_usd as f32) / (cap as f32) * 100.0)
+            }
         })
     }
 }
@@ -211,13 +223,21 @@ impl PipelineSummary {
              Drafts awaiting approval:  {}\n\
              Suppression list size:     {}\n",
             self.since_hours,
-            self.companies, self.prospects,
-            self.new_prospects, self.contacted, self.engaged,
-            self.won, self.lost, self.suppressed_prospects,
+            self.companies,
+            self.prospects,
+            self.new_prospects,
+            self.contacted,
+            self.engaged,
+            self.won,
+            self.lost,
+            self.suppressed_prospects,
             self.since_hours,
-            self.sent_recent, self.replies_recent, self.optout_recent,
+            self.sent_recent,
+            self.replies_recent,
+            self.optout_recent,
             self.receipts_recent,
-            self.awaiting_approval, self.suppressions
+            self.awaiting_approval,
+            self.suppressions
         )
     }
 }
@@ -288,7 +308,11 @@ impl State {
         if companies.is_empty() {
             return Ok(0);
         }
-        let mut tx = self.pool().begin().await.map_err(|e| Error::Db(e.to_string()))?;
+        let mut tx = self
+            .pool()
+            .begin()
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
         let mut inserted = 0u64;
         for c in companies {
             let result = sqlx::query(
@@ -327,7 +351,8 @@ impl State {
             .fetch_one(self.pool())
             .await
             .map_err(|e| Error::Db(e.to_string()))?;
-        Ok(row.try_get::<i64, _>("n").map_err(|e| Error::Db(e.to_string()))?)
+        row.try_get::<i64, _>("n")
+            .map_err(|e| Error::Db(e.to_string()))
     }
 
     /// Find or create a campaign by name. Returns the id either way.
@@ -390,7 +415,11 @@ impl State {
         if company_ids.is_empty() {
             return Ok(0);
         }
-        let mut tx = self.pool().begin().await.map_err(|e| Error::Db(e.to_string()))?;
+        let mut tx = self
+            .pool()
+            .begin()
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
         let mut inserted = 0u64;
         for cid in company_ids {
             let p = Prospect {
@@ -481,13 +510,21 @@ impl State {
 
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
-            let prospect_id = ProspectId(r.try_get("prospect_id").unwrap_or_else(|_| uuid::Uuid::nil()));
-            let company_id = CompanyId(r.try_get("company_id").unwrap_or_else(|_| uuid::Uuid::nil()));
+            let prospect_id = ProspectId(
+                r.try_get("prospect_id")
+                    .unwrap_or_else(|_| uuid::Uuid::nil()),
+            );
+            let company_id = CompanyId(
+                r.try_get("company_id")
+                    .unwrap_or_else(|_| uuid::Uuid::nil()),
+            );
             let display_name: String = r.try_get("display_name").unwrap_or_default();
             let homepage: Option<String> = r.try_get("homepage").unwrap_or(None);
             let industry: Option<String> = r.try_get("industry").unwrap_or(None);
             let description: Option<String> = r.try_get("description").unwrap_or(None);
-            let tech_signals: serde_json::Value = r.try_get("tech_signals").unwrap_or(serde_json::Value::Array(vec![]));
+            let tech_signals: serde_json::Value = r
+                .try_get("tech_signals")
+                .unwrap_or(serde_json::Value::Array(vec![]));
             out.push(ProspectWithFacts {
                 prospect_id,
                 company_id,
@@ -644,13 +681,20 @@ impl State {
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
             out.push(TouchSummary {
-                touch_id: salesman_core::TouchId(r.try_get("id").unwrap_or_else(|_| uuid::Uuid::nil())),
-                prospect_id: ProspectId(r.try_get("prospect_id").unwrap_or_else(|_| uuid::Uuid::nil())),
+                touch_id: salesman_core::TouchId(
+                    r.try_get("id").unwrap_or_else(|_| uuid::Uuid::nil()),
+                ),
+                prospect_id: ProspectId(
+                    r.try_get("prospect_id")
+                        .unwrap_or_else(|_| uuid::Uuid::nil()),
+                ),
                 company: r.try_get("company").unwrap_or_default(),
                 channel: r.try_get("channel").unwrap_or_default(),
                 subject: r.try_get("subject").unwrap_or(None),
                 body: r.try_get("body").unwrap_or_default(),
-                queued_at: r.try_get("queued_at").unwrap_or_else(|_| chrono::Utc::now()),
+                queued_at: r
+                    .try_get("queued_at")
+                    .unwrap_or_else(|_| chrono::Utc::now()),
             });
         }
         Ok(out)
@@ -747,12 +791,17 @@ impl State {
         for r in rows {
             out.push(TouchSummary {
                 touch_id: TouchId(r.try_get("id").unwrap_or_else(|_| uuid::Uuid::nil())),
-                prospect_id: ProspectId(r.try_get("prospect_id").unwrap_or_else(|_| uuid::Uuid::nil())),
+                prospect_id: ProspectId(
+                    r.try_get("prospect_id")
+                        .unwrap_or_else(|_| uuid::Uuid::nil()),
+                ),
                 company: r.try_get("company").unwrap_or_default(),
                 channel: r.try_get("channel").unwrap_or_default(),
                 subject: r.try_get("subject").unwrap_or(None),
                 body: r.try_get("body").unwrap_or_default(),
-                queued_at: r.try_get("queued_at").unwrap_or_else(|_| chrono::Utc::now()),
+                queued_at: r
+                    .try_get("queued_at")
+                    .unwrap_or_else(|_| chrono::Utc::now()),
             });
         }
         Ok(out)
@@ -828,7 +877,8 @@ impl State {
             tracing::warn!(%from_address, "no prospect matches reply from-address — dropping");
             return Ok(None);
         };
-        let prospect_id_uuid: uuid::Uuid = row.try_get("prospect_id")
+        let prospect_id_uuid: uuid::Uuid = row
+            .try_get("prospect_id")
             .map_err(|e| Error::Db(e.to_string()))?;
 
         let reply_id = uuid::Uuid::now_v7();
@@ -862,10 +912,7 @@ impl State {
     }
 
     /// List replies in `unclassified` state (queue for the classifier).
-    pub async fn list_unclassified_replies(
-        &self,
-        limit: i64,
-    ) -> Result<Vec<UnclassifiedReply>> {
+    pub async fn list_unclassified_replies(&self, limit: i64) -> Result<Vec<UnclassifiedReply>> {
         let rows = sqlx::query(
             "SELECT r.id, r.prospect_id, r.from_address, r.subject, r.body, p.campaign_id
              FROM replies r
@@ -882,8 +929,14 @@ impl State {
         for r in rows {
             out.push(UnclassifiedReply {
                 reply_id: r.try_get("id").unwrap_or_else(|_| uuid::Uuid::nil()),
-                prospect_id: ProspectId(r.try_get("prospect_id").unwrap_or_else(|_| uuid::Uuid::nil())),
-                campaign_id: CampaignId(r.try_get("campaign_id").unwrap_or_else(|_| uuid::Uuid::nil())),
+                prospect_id: ProspectId(
+                    r.try_get("prospect_id")
+                        .unwrap_or_else(|_| uuid::Uuid::nil()),
+                ),
+                campaign_id: CampaignId(
+                    r.try_get("campaign_id")
+                        .unwrap_or_else(|_| uuid::Uuid::nil()),
+                ),
                 from_address: r.try_get("from_address").unwrap_or_default(),
                 subject: r.try_get("subject").unwrap_or(None),
                 body: r.try_get("body").unwrap_or_default(),
@@ -892,11 +945,7 @@ impl State {
         Ok(out)
     }
 
-    pub async fn update_reply_kind(
-        &self,
-        reply_id: uuid::Uuid,
-        kind: ReplyKind,
-    ) -> Result<()> {
+    pub async fn update_reply_kind(&self, reply_id: uuid::Uuid, kind: ReplyKind) -> Result<()> {
         sqlx::query("UPDATE replies SET kind = $2 WHERE id = $1")
             .bind(reply_id)
             .bind(kind.to_string())
@@ -916,7 +965,11 @@ impl State {
         from_address: &str,
         kind: ReplyKind,
     ) -> Result<String> {
-        let mut tx = self.pool().begin().await.map_err(|e| Error::Db(e.to_string()))?;
+        let mut tx = self
+            .pool()
+            .begin()
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
         let mut summary = String::new();
 
         // Always update reply.kind first.
@@ -1019,19 +1072,23 @@ impl State {
         steps: &[SequenceStepInput],
     ) -> Result<uuid::Uuid> {
         if steps.is_empty() {
-            return Err(Error::Validation("sequence must have at least one step".into()));
+            return Err(Error::Validation(
+                "sequence must have at least one step".into(),
+            ));
         }
-        let mut tx = self.pool().begin().await.map_err(|e| Error::Db(e.to_string()))?;
+        let mut tx = self
+            .pool()
+            .begin()
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
         let sequence_id = uuid::Uuid::now_v7();
-        sqlx::query(
-            "INSERT INTO sequences (id, campaign_id, name) VALUES ($1, $2, $3)",
-        )
-        .bind(sequence_id)
-        .bind(campaign_id.0)
-        .bind(name)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| Error::Db(e.to_string()))?;
+        sqlx::query("INSERT INTO sequences (id, campaign_id, name) VALUES ($1, $2, $3)")
+            .bind(sequence_id)
+            .bind(campaign_id.0)
+            .bind(name)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
 
         for (idx, s) in steps.iter().enumerate() {
             sqlx::query(
@@ -1077,10 +1134,7 @@ impl State {
     /// Advance a prospect through its sequence after a successful send.
     /// Loads the step's delay, schedules next_due_at = NOW + delay.
     /// Returns true if advanced, false if already at the last step.
-    pub async fn advance_prospect_in_sequence(
-        &self,
-        prospect_id: ProspectId,
-    ) -> Result<bool> {
+    pub async fn advance_prospect_in_sequence(&self, prospect_id: ProspectId) -> Result<bool> {
         let row = sqlx::query(
             "SELECT pss.sequence_id, pss.current_step,
                     (SELECT MAX(position) FROM sequence_steps WHERE sequence_id = pss.sequence_id) AS max_pos,
@@ -1141,10 +1195,7 @@ impl State {
 
     /// List prospect-sequence-states whose next_due_at has passed and
     /// are not paused — the work queue for the sequence scheduler.
-    pub async fn list_due_prospects(
-        &self,
-        limit: i64,
-    ) -> Result<Vec<DueProspect>> {
+    pub async fn list_due_prospects(&self, limit: i64) -> Result<Vec<DueProspect>> {
         let rows = sqlx::query(
             "SELECT pss.prospect_id, pss.sequence_id, pss.current_step,
                     s.template_key, s.channel, s.delay_days
@@ -1162,8 +1213,13 @@ impl State {
         Ok(rows
             .into_iter()
             .map(|r| DueProspect {
-                prospect_id: ProspectId(r.try_get("prospect_id").unwrap_or_else(|_| uuid::Uuid::nil())),
-                sequence_id: r.try_get("sequence_id").unwrap_or_else(|_| uuid::Uuid::nil()),
+                prospect_id: ProspectId(
+                    r.try_get("prospect_id")
+                        .unwrap_or_else(|_| uuid::Uuid::nil()),
+                ),
+                sequence_id: r
+                    .try_get("sequence_id")
+                    .unwrap_or_else(|_| uuid::Uuid::nil()),
                 current_step: r.try_get::<i32, _>("current_step").unwrap_or(0) as u32,
                 template_key: r.try_get("template_key").unwrap_or_default(),
                 channel: r.try_get("channel").unwrap_or_default(),
@@ -1247,7 +1303,8 @@ impl State {
             .fetch_one(self.pool())
             .await
             .map_err(|e| Error::Db(e.to_string()))?;
-        Ok(row.try_get::<i64, _>("n").map_err(|e| Error::Db(e.to_string()))?)
+        row.try_get::<i64, _>("n")
+            .map_err(|e| Error::Db(e.to_string()))
     }
 
     /// Page through the suppression list. `source_filter` (when Some)
@@ -1429,12 +1486,16 @@ impl State {
             out.push(Receipt {
                 id: salesman_core::ReceiptId(r.try_get("id").unwrap_or_else(|_| uuid::Uuid::nil())),
                 event_kind: r.try_get("event_kind").unwrap_or_default(),
-                event_payload: r.try_get("event_payload").unwrap_or(serde_json::Value::Null),
+                event_payload: r
+                    .try_get("event_payload")
+                    .unwrap_or(serde_json::Value::Null),
                 prev_hash: r.try_get("prev_hash").unwrap_or_default(),
                 hash: r.try_get("hash").unwrap_or_default(),
                 signature: r.try_get("signature").unwrap_or_default(),
                 signing_key_id: r.try_get("signing_key_id").unwrap_or_default(),
-                created_at: r.try_get("created_at").unwrap_or_else(|_| chrono::Utc::now()),
+                created_at: r
+                    .try_get("created_at")
+                    .unwrap_or_else(|_| chrono::Utc::now()),
             });
         }
         Ok(out)
@@ -1509,7 +1570,10 @@ impl State {
             .fetch_optional(self.pool())
             .await
             .map_err(|e| Error::Db(e.to_string()))?;
-        Ok(row.and_then(|r| r.try_get::<Option<i64>, _>("cost_cap_micro_usd").unwrap_or(None)))
+        Ok(row.and_then(|r| {
+            r.try_get::<Option<i64>, _>("cost_cap_micro_usd")
+                .unwrap_or(None)
+        }))
     }
 
     /// True if the campaign is over its cost cap (or no cap is set →
@@ -1762,7 +1826,9 @@ impl State {
                 subject: r.try_get("subject").unwrap_or(None),
                 body: r.try_get("body").unwrap_or_default(),
                 kind: r.try_get("kind").unwrap_or_default(),
-                received_at: r.try_get("received_at").unwrap_or_else(|_| chrono::Utc::now()),
+                received_at: r
+                    .try_get("received_at")
+                    .unwrap_or_else(|_| chrono::Utc::now()),
             })
             .collect())
     }

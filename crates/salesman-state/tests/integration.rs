@@ -107,7 +107,10 @@ async fn full_round_trip() {
         )
         .expect("sign");
     let receipt_id = receipt.id;
-    state.insert_receipt(&receipt).await.expect("insert_receipt");
+    state
+        .insert_receipt(&receipt)
+        .await
+        .expect("insert_receipt");
     let chain_top = state
         .get_last_hash(signer.key_id())
         .await
@@ -159,5 +162,10 @@ async fn full_round_trip() {
 
     // Touch the unused parameters to silence unused-import warnings.
     let _: ContactId = ContactId::new();
-    let _ = (ContactKind::Person, ReplyKind::Engaged, default_seed_path(), ProspectId::new());
+    let _ = (
+        ContactKind::Person,
+        ReplyKind::Engaged,
+        default_seed_path(),
+        ProspectId::new(),
+    );
 }

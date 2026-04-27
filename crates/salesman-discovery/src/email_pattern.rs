@@ -48,22 +48,22 @@ impl EmailPatternGuesser {
         let li = l.chars().next().unwrap_or('x');
 
         let mut candidates: Vec<(String, &str, f32)> = vec![
-            (format!("{f}.{l}@{d}"),  "first.last", 0.42),
-            (format!("{f}{l}@{d}"),   "firstlast",  0.18),
-            (format!("{fi}{l}@{d}"),  "flast",      0.12),
-            (format!("{f}{li}@{d}"),  "firstl",     0.05),
-            (format!("{f}@{d}"),      "first",      0.10),
-            (format!("{l}@{d}"),      "last",       0.04),
-            (format!("{l}.{f}@{d}"),  "last.first", 0.03),
-            (format!("{f}_{l}@{d}"),  "first_last", 0.02),
-            (format!("{f}-{l}@{d}"),  "first-last", 0.02),
-            (format!("{fi}.{l}@{d}"), "f.last",     0.02),
+            (format!("{f}.{l}@{d}"), "first.last", 0.42),
+            (format!("{f}{l}@{d}"), "firstlast", 0.18),
+            (format!("{fi}{l}@{d}"), "flast", 0.12),
+            (format!("{f}{li}@{d}"), "firstl", 0.05),
+            (format!("{f}@{d}"), "first", 0.10),
+            (format!("{l}@{d}"), "last", 0.04),
+            (format!("{l}.{f}@{d}"), "last.first", 0.03),
+            (format!("{f}_{l}@{d}"), "first_last", 0.02),
+            (format!("{f}-{l}@{d}"), "first-last", 0.02),
+            (format!("{fi}.{l}@{d}"), "f.last", 0.02),
         ];
         // Drop any duplicates (single-letter first/last collapses).
         let mut seen = std::collections::HashSet::new();
         candidates.retain(|(e, _, _)| seen.insert(e.clone()));
         // Drop any with empty pre-@ part.
-        candidates.retain(|(e, _, _)| e.split('@').next().map_or(false, |p| !p.is_empty()));
+        candidates.retain(|(e, _, _)| e.split('@').next().is_some_and(|p| !p.is_empty()));
         candidates.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
         candidates
             .into_iter()

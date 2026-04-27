@@ -56,9 +56,7 @@ pub struct SmtpConfig {
 
 impl SmtpConfig {
     pub fn from_env() -> Result<Self> {
-        let env = |k: &str| {
-            std::env::var(k).map_err(|_| Error::Config(format!("env {k} not set")))
-        };
+        let env = |k: &str| std::env::var(k).map_err(|_| Error::Config(format!("env {k} not set")));
         // The minter is best-effort: if either env var is missing we
         // fall back to the static `list_unsubscribe` (if any). A
         // missing minter is logged as a deliverability warning by
@@ -72,19 +70,19 @@ impl SmtpConfig {
         };
         Ok(Self {
             host: env("SALESMAN_SMTP_HOST")?,
-            port: env("SALESMAN_SMTP_PORT")?.parse().map_err(|_| {
-                Error::Config("SALESMAN_SMTP_PORT not a valid u16".into())
-            })?,
+            port: env("SALESMAN_SMTP_PORT")?
+                .parse()
+                .map_err(|_| Error::Config("SALESMAN_SMTP_PORT not a valid u16".into()))?,
             username: env("SALESMAN_SMTP_USERNAME")?,
             password: Zeroizing::new(env("SALESMAN_SMTP_PASSWORD")?),
             from_name: env("SALESMAN_FROM_NAME")?,
             from_email: env("SALESMAN_FROM_EMAIL")?,
             reply_to: std::env::var("SALESMAN_REPLY_TO").ok(),
-            compliance_footer: std::env::var("SALESMAN_COMPLIANCE_FOOTER")
-                .unwrap_or_else(|_| {
-                    "PlausiDen — sovereign data tools.\n\
-                     Reply STOP to opt out of further messages.".to_string()
-                }),
+            compliance_footer: std::env::var("SALESMAN_COMPLIANCE_FOOTER").unwrap_or_else(|_| {
+                "PlausiDen — sovereign data tools.\n\
+                     Reply STOP to opt out of further messages."
+                    .to_string()
+            }),
             list_unsubscribe: std::env::var("SALESMAN_LIST_UNSUBSCRIBE").ok(),
             unsubscribe_tokens,
         })
@@ -114,7 +112,12 @@ impl SmtpSender {
 
     /// Send a single email. Returns the data needed to construct a
     /// receipt. Caller MUST have already done a suppression check.
-    pub async fn send_email(&self, to_email: &str, subject: &str, body: &str) -> Result<SendOutcome> {
+    pub async fn send_email(
+        &self,
+        to_email: &str,
+        subject: &str,
+        body: &str,
+    ) -> Result<SendOutcome> {
         let from = Mailbox::new(
             Some(self.config.from_name.clone()),
             self.config
@@ -142,28 +145,25 @@ impl SmtpSender {
         // (Apple Mail, Thunderbird older versions, plain-text CLI mail)
         // will not render the header link.
         let footer_with_unsub = match &unsub_url {
-            Some(url) if self.config.unsubscribe_tokens.is_some() => format!(
-                "{}\nUnsubscribe: {}",
-                self.config.compliance_footer,
-                url
-            ),
+            Some(url) if self.config.unsubscribe_tokens.is_some() => {
+                format!("{}\nUnsubscribe: {}", self.config.compliance_footer, url)
+            }
             _ => self.config.compliance_footer.clone(),
         };
         let full_body = format!("{body}\n\n--\n{footer_with_unsub}");
 
-        let mut builder = Message::builder()
-            .from(from)
-            .to(to)
-            .subject(subject);
+        let mut builder = Message::builder().from(from).to(to).subject(subject);
 
         if let Some(reply) = &self.config.reply_to {
-            let reply_mb = Mailbox::from_str(reply)
-                .map_err(|e| Error::Config(format!("reply_to: {e}")))?;
+            let reply_mb =
+                Mailbox::from_str(reply).map_err(|e| Error::Config(format!("reply_to: {e}")))?;
             builder = builder.reply_to(reply_mb);
         }
         if let Some(url) = &unsub_url {
             builder = builder.header(ListUnsubscribe(format!("<{url}>")));
-            builder = builder.header(ListUnsubscribePost("List-Unsubscribe=One-Click".to_string()));
+            builder = builder.header(ListUnsubscribePost(
+                "List-Unsubscribe=One-Click".to_string(),
+            ));
         }
 
         let msg = builder
@@ -179,7 +179,9 @@ impl SmtpSender {
         })?;
 
         Ok(SendOutcome {
-            smtp_message_id: extract_message_id(resp.message().collect::<Vec<_>>().join("\n").as_str()),
+            smtp_message_id: extract_message_id(
+                resp.message().collect::<Vec<_>>().join("\n").as_str(),
+            ),
             smtp_response_code: resp.code().to_string(),
             sent_at: chrono::Utc::now(),
             from: self.config.from_email.clone(),

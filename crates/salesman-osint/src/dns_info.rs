@@ -18,10 +18,10 @@ use serde_json::{Value, json};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DnsInfo {
-    pub a:   Vec<String>,
-    pub mx:  Vec<String>,
+    pub a: Vec<String>,
+    pub mx: Vec<String>,
     pub txt: Vec<String>,
-    pub ns:  Vec<String>,
+    pub ns: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -38,9 +38,9 @@ impl DnsInfoClient {
             Ok(addrs) => addrs.map(|sa| sa.ip().to_string()).collect(),
             Err(_) => Vec::new(),
         };
-        let mx  = dig_query(domain, "MX").await.unwrap_or_default();
+        let mx = dig_query(domain, "MX").await.unwrap_or_default();
         let txt = dig_query(domain, "TXT").await.unwrap_or_default();
-        let ns  = dig_query(domain, "NS").await.unwrap_or_default();
+        let ns = dig_query(domain, "NS").await.unwrap_or_default();
         Ok(DnsInfo { a, mx, txt, ns })
     }
 }

@@ -14,7 +14,11 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 pub async fn healthz() -> impl IntoResponse {
-    (StatusCode::OK, [(header::CONTENT_TYPE, "text/plain")], "ok\n")
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/plain")],
+        "ok\n",
+    )
 }
 
 pub async fn pipeline_summary_json(
@@ -84,9 +88,7 @@ pub async fn draft_reject(
     Ok(Redirect::to("/drafts").into_response())
 }
 
-pub async fn receipts_html(
-    State(app): State<Arc<AppState>>,
-) -> Result<Html<String>, ApiError> {
+pub async fn receipts_html(State(app): State<Arc<AppState>>) -> Result<Html<String>, ApiError> {
     let receipts = app.state.list_recent_receipts(100).await?;
     // Try to load signing key for verify; if missing, mark all as "unverified".
     let signer = Signer::load_or_generate(&default_seed_path(), &app.signing_key_id).ok();
@@ -98,7 +100,12 @@ pub async fn receipts_html(
             Some(vk) => verify_receipt(r, vk).is_ok(),
             None => false,
         };
-        rows.push((r.created_at, r.event_kind.clone(), hex::encode(&r.hash[..8.min(r.hash.len())]), verified));
+        rows.push((
+            r.created_at,
+            r.event_kind.clone(),
+            hex::encode(&r.hash[..8.min(r.hash.len())]),
+            verified,
+        ));
     }
     Ok(Html(html::receipts_table(&rows)))
 }
@@ -154,11 +161,7 @@ pub async fn unsubscribe_get(
                 .into_response();
         }
     };
-    let already = app
-        .state
-        .is_suppressed(&email)
-        .await
-        .unwrap_or(false);
+    let already = app.state.is_suppressed(&email).await.unwrap_or(false);
     (
         StatusCode::OK,
         [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
@@ -252,9 +255,15 @@ impl From<salesman_core::Error> for ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         tracing::warn!("%e" = %self.0, "api error");
-        (StatusCode::INTERNAL_SERVER_ERROR, format!("error: {}", self.0)).into_response()
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("error: {}", self.0),
+        )
+            .into_response()
     }
 }
 
 #[allow(dead_code)]
-fn _swallow_unused<T>(_: T) -> SR<()> { Ok(()) }
+fn _swallow_unused<T>(_: T) -> SR<()> {
+    Ok(())
+}

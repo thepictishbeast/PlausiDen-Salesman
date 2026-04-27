@@ -70,7 +70,11 @@ impl Tool for CaseStudyDraftTool {
             .0
             .get("products_used")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
             .unwrap_or_default();
         if products_used.is_empty() {
             return Err(Error::Validation(
@@ -131,7 +135,10 @@ impl Tool for CaseStudyDraftTool {
             temperature: 0.4,
         };
 
-        let resp = self.router.chat_for(RouteHint::Reasoning, "case_study", req).await?;
+        let resp = self
+            .router
+            .chat_for(RouteHint::Reasoning, "case_study", req)
+            .await?;
         Ok(json!({
             "markdown": resp.message.content.trim(),
             "customer_name": customer_name,

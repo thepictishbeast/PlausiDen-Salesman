@@ -64,20 +64,23 @@ proptest! {
 
     #[test]
     fn forward_chain_allowed(from in arb_state(), to in arb_state()) {
-        if let (Some(i), Some(j)) = (position_in_chain(from), position_in_chain(to)) {
-            if !TERMINALS.contains(&from) {
-                let allowed = from.can_transition_to(to);
-                prop_assert_eq!(allowed, j >= i);
-            }
+        if let (Some(i), Some(j)) = (position_in_chain(from), position_in_chain(to))
+            && !TERMINALS.contains(&from)
+        {
+            let allowed = from.can_transition_to(to);
+            prop_assert_eq!(allowed, j >= i);
         }
     }
 
     #[test]
     fn backward_chain_disallowed(from in arb_state(), to in arb_state()) {
-        if let (Some(i), Some(j)) = (position_in_chain(from), position_in_chain(to)) {
-            if !TERMINALS.contains(&from) && j < i && to != FunnelState::Lost && to != FunnelState::Suppressed {
-                prop_assert!(!from.can_transition_to(to));
-            }
+        if let (Some(i), Some(j)) = (position_in_chain(from), position_in_chain(to))
+            && !TERMINALS.contains(&from)
+            && j < i
+            && to != FunnelState::Lost
+            && to != FunnelState::Suppressed
+        {
+            prop_assert!(!from.can_transition_to(to));
         }
     }
 }

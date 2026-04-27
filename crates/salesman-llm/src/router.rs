@@ -99,9 +99,10 @@ impl LlmRouter {
             RouteHint::Sovereign => self.default_sovereign,
             RouteHint::Backend(k) => k,
         };
-        let backend = self.backends.get(&kind).ok_or_else(|| Error::Config(
-            format!("LLM backend `{kind}` not registered"),
-        ))?;
+        let backend = self
+            .backends
+            .get(&kind)
+            .ok_or_else(|| Error::Config(format!("LLM backend `{kind}` not registered")))?;
         let model = backend.model().to_string();
         let resp = backend.chat(req).await?;
 

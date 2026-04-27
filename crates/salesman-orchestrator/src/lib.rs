@@ -44,11 +44,7 @@ impl Orchestrator {
     /// Drive a conversation forward up to `max_steps` LLM turns.
     /// Returns the final response (or the last response if `max_steps`
     /// was hit without a terminal answer).
-    pub async fn run(
-        &self,
-        hint: RouteHint,
-        mut messages: Vec<Message>,
-    ) -> Result<ChatResponse> {
+    pub async fn run(&self, hint: RouteHint, mut messages: Vec<Message>) -> Result<ChatResponse> {
         let tool_schemas = self
             .tools
             .schemas()

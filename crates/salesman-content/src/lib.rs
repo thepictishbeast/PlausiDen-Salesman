@@ -20,4 +20,4 @@ pub use classify_reply::{ClassifyReply, ReplyClassifyTool};
 pub use comparison_page::ComparisonPageTool;
 pub use draft_email::{ColdEmailDraft, DraftColdEmailTool};
 pub use seo_meta::{SeoMeta, SeoMetaTool};
-pub use site::{render_site, RenderedPage, SiteConfig};
+pub use site::{RenderedPage, SiteConfig, render_site};

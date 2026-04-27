@@ -91,7 +91,11 @@ impl UnsubscribeTokens {
         let token = self.token_for(email);
         // The base URL may already have a `?` (e.g. for analytics
         // params). Pick the right separator.
-        let sep = if self.base_url.contains('?') { '&' } else { '?' };
+        let sep = if self.base_url.contains('?') {
+            '&'
+        } else {
+            '?'
+        };
         format!("{}{sep}t={token}", self.base_url)
     }
 
@@ -133,8 +137,8 @@ impl UnsubscribeTokens {
     fn mac(&self, msg: &[u8]) -> Vec<u8> {
         // SAFETY: HmacSha256::new_from_slice only fails on zero-length
         // keys, which we forbid in `new()` via MIN_SECRET_BYTES.
-        let mut mac = HmacSha256::new_from_slice(&self.secret)
-            .expect("HMAC accepts any non-empty key");
+        let mut mac =
+            HmacSha256::new_from_slice(&self.secret).expect("HMAC accepts any non-empty key");
         mac.update(msg);
         mac.finalize().into_bytes().to_vec()
     }
@@ -146,19 +150,18 @@ fn decode_secret(raw: &str) -> Result<Vec<u8>> {
     // base64url. (A pure-hex string is also valid base64url but
     // decodes to garbage of a different length, so the order matters.)
     let looks_hex = !trimmed.is_empty()
-        && trimmed.len() % 2 == 0
+        && trimmed.len().is_multiple_of(2)
         && trimmed.chars().all(|c| c.is_ascii_hexdigit());
-    if looks_hex {
-        if let Ok(b) = hex::decode(trimmed) {
-            if b.len() >= MIN_SECRET_BYTES {
-                return Ok(b);
-            }
-        }
+    if looks_hex
+        && let Ok(b) = hex::decode(trimmed)
+        && b.len() >= MIN_SECRET_BYTES
+    {
+        return Ok(b);
     }
-    if let Ok(b) = URL_SAFE_NO_PAD.decode(trimmed.as_bytes()) {
-        if b.len() >= MIN_SECRET_BYTES {
-            return Ok(b);
-        }
+    if let Ok(b) = URL_SAFE_NO_PAD.decode(trimmed.as_bytes())
+        && b.len() >= MIN_SECRET_BYTES
+    {
+        return Ok(b);
     }
     Err(Error::Config(format!(
         "SALESMAN_UNSUBSCRIBE_HMAC_SECRET must decode (hex or base64url) to ≥{MIN_SECRET_BYTES} bytes"
@@ -249,7 +252,8 @@ mod tests {
 
     #[test]
     fn url_uses_correct_separator() {
-        let t = UnsubscribeTokens::new(vec![0u8; 32], "https://example.test/u?campaign=42").unwrap();
+        let t =
+            UnsubscribeTokens::new(vec![0u8; 32], "https://example.test/u?campaign=42").unwrap();
         let url = t.url_for("alice@example.com");
         assert!(url.starts_with("https://example.test/u?campaign=42&t="));
     }
