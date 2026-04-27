@@ -342,6 +342,7 @@ fn build_tools(router: Arc<LlmRouter>) -> ToolRegistry {
     tools.register(Arc::new(salesman_osint::GdeltTool::default()));
     tools.register(Arc::new(salesman_osint::GithubOrgTool::default()));
     tools.register(Arc::new(salesman_osint::HnTool::default()));
+    tools.register(Arc::new(salesman_osint::WikipediaTool::default()));
     tools.register(Arc::new(DraftColdEmailTool::new(
         router.clone(),
         "the PlausiDen team",

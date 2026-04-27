@@ -17,7 +17,9 @@
 pub mod gdelt;
 pub mod github_org;
 pub mod hn;
+pub mod wikipedia;
 
 pub use gdelt::{GdeltClient, GdeltTool};
 pub use github_org::{GithubOrgClient, GithubOrgTool};
 pub use hn::{HnClient, HnTool};
+pub use wikipedia::{WikipediaClient, WikipediaTool};
