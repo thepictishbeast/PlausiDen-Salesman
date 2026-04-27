@@ -833,6 +833,18 @@ enum Cmd {
         #[arg(long)]
         interest: String,
     },
+    /// Append a free-text note to a prospect (e.g. "introduced by
+    /// Mike Chen", "no decision until Q3"). Lands in
+    /// prospects.tags['notes'] (deduped); drafter sees it on every
+    /// subsequent touch via to_prompt_json. Symmetric to `salesman tag`
+    /// but for unstructured operator context rather than topical
+    /// interests.
+    Note {
+        #[arg(long)]
+        prospect_id: String,
+        #[arg(long)]
+        text: String,
+    },
     /// Dump the full conversation thread for one prospect — outbound
     /// touches we sent + inbound replies they sent, oldest first.
     /// Useful for "what have we said to this person?" right before
@@ -5869,6 +5881,28 @@ async fn main() -> Result<()> {
             } else {
                 println!(
                     "no change — prospect {prospect_id} already had interest=\"{interest}\" \
+                     (or the trimmed value was empty)"
+                );
+            }
+            let tags = state.get_prospect_tags(pid).await?;
+            println!(
+                "tags now: {}",
+                serde_json::to_string_pretty(&tags).unwrap_or_default()
+            );
+        }
+
+        Cmd::Note { prospect_id, text } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let pid = salesman_core::ProspectId(
+                uuid::Uuid::parse_str(&prospect_id)
+                    .map_err(|e| anyhow::anyhow!("invalid prospect-id: {e}"))?,
+            );
+            let added = state.add_prospect_note(pid, &text).await?;
+            if added {
+                println!("noted prospect {prospect_id}: \"{text}\"");
+            } else {
+                println!(
+                    "no change — prospect {prospect_id} already had that note \
                      (or the trimmed value was empty)"
                 );
             }

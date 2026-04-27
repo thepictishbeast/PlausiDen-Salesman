@@ -801,6 +801,51 @@ impl State {
         Ok(row.is_some())
     }
 
+    /// Append a free-text `note` to `prospects.tags['notes']`
+    /// (deduped on trimmed value). Symmetric to add_prospect_interest
+    /// but for unstructured operator context (e.g. "introduced by
+    /// Mike Chen", "no decision until Q3"). Drafter sees them via
+    /// to_prompt_json so every subsequent touch can reference them.
+    pub async fn add_prospect_note(&self, prospect_id: ProspectId, note: &str) -> Result<bool> {
+        let cleaned = note.trim();
+        if cleaned.is_empty() {
+            return Ok(false);
+        }
+        let row = sqlx::query(
+            "UPDATE prospects \
+             SET tags = jsonb_set( \
+                 COALESCE(tags, '{}'::jsonb), \
+                 '{notes}', \
+                 ( \
+                   SELECT to_jsonb(array_agg(DISTINCT i)) \
+                   FROM unnest( \
+                     COALESCE( \
+                       ARRAY( \
+                         SELECT jsonb_array_elements_text( \
+                           COALESCE(tags->'notes', '[]'::jsonb) \
+                         ) \
+                       ), \
+                       ARRAY[]::TEXT[] \
+                     ) || ARRAY[$2::TEXT] \
+                   ) AS i \
+                 ), \
+                 true \
+             ) \
+             WHERE id = $1 \
+               AND ( \
+                 NOT (tags ? 'notes') \
+                 OR NOT (tags->'notes' @> to_jsonb($2::TEXT)) \
+               ) \
+             RETURNING id",
+        )
+        .bind(prospect_id.0)
+        .bind(cleaned)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(row.is_some())
+    }
+
     /// Read the per-prospect tags JSONB. Returns `{}` when the
     /// prospect doesn't exist or has no tags set yet.
     pub async fn get_prospect_tags(&self, prospect_id: ProspectId) -> Result<serde_json::Value> {
