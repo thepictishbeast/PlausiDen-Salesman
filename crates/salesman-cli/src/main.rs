@@ -10,7 +10,13 @@
 //!   backends     list registered LLM backends + models
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum CostsBy {
+    Model,
+    Purpose,
+}
 use salesman_content::{DraftColdEmailTool, ReplyClassifyTool};
 use salesman_discovery::{
     BraveSearch, BraveSearchTool, CsvSeed, CsvSeedTool, EmailPatternTool, HomepageFetchTool,
@@ -206,10 +212,18 @@ enum Cmd {
         #[arg(long, default_value_t = 24)]
         since_hours: i64,
     },
-    /// Print LLM cost report by (backend, model) over a time window.
+    /// Print LLM cost report over a time window. Default is by
+    /// (backend, model); pass `--by purpose` to roll up by the
+    /// chat_for(purpose) tag instead — useful for answering
+    /// "which subsystem is eating budget".
     Costs {
         #[arg(long, default_value_t = 24)]
         since_hours: i64,
+        /// Group rows by this dimension. `model` is the default
+        /// (backend + model), `purpose` rolls up across models by the
+        /// purpose tag the caller passed to chat_for.
+        #[arg(long, default_value = "model")]
+        by: CostsBy,
     },
     /// Per-template performance stats (drafted / sent / replied / engaged).
     TemplateStats,
@@ -1502,40 +1516,78 @@ async fn main() -> Result<()> {
             }
         }
 
-        Cmd::Costs { since_hours } => {
+        Cmd::Costs { since_hours, by } => {
             let state = require_state(cli.database_url.as_deref()).await?;
-            let rows = state.cost_summary(since_hours).await?;
-            if rows.is_empty() {
-                println!("No LLM calls in the last {since_hours}h.");
-            } else {
-                println!("LLM cost report — last {since_hours}h\n");
-                println!(
-                    "{:<10} {:<28} {:>6} {:>10} {:>10} {:>10} {:>10} {:>8} {:>8}",
-                    "backend", "model", "calls", "prompt", "output", "cache", "cost USD", "avg ms", "p95 ms"
-                );
-                println!("{}", "-".repeat(110));
-                let mut total_micro_usd: i64 = 0;
-                for r in &rows {
-                    println!(
-                        "{:<10} {:<28} {:>6} {:>10} {:>10} {:>10} {:>10.4} {:>8} {:>8}",
-                        r.backend,
-                        r.model,
-                        r.count,
-                        r.prompt_tokens,
-                        r.output_tokens,
-                        r.cache_hit_tokens,
-                        (r.cost_micro_usd as f64) / 1_000_000.0,
-                        r.avg_latency_ms,
-                        r.p95_latency_ms,
-                    );
-                    total_micro_usd += r.cost_micro_usd;
+            match by {
+                CostsBy::Model => {
+                    let rows = state.cost_summary(since_hours).await?;
+                    if rows.is_empty() {
+                        println!("No LLM calls in the last {since_hours}h.");
+                    } else {
+                        println!("LLM cost report — last {since_hours}h, by model\n");
+                        println!(
+                            "{:<10} {:<28} {:>6} {:>10} {:>10} {:>10} {:>10} {:>8} {:>8}",
+                            "backend", "model", "calls", "prompt", "output", "cache", "cost USD", "avg ms", "p95 ms"
+                        );
+                        println!("{}", "-".repeat(110));
+                        let mut total_micro_usd: i64 = 0;
+                        for r in &rows {
+                            println!(
+                                "{:<10} {:<28} {:>6} {:>10} {:>10} {:>10} {:>10.4} {:>8} {:>8}",
+                                r.backend,
+                                r.model,
+                                r.count,
+                                r.prompt_tokens,
+                                r.output_tokens,
+                                r.cache_hit_tokens,
+                                (r.cost_micro_usd as f64) / 1_000_000.0,
+                                r.avg_latency_ms,
+                                r.p95_latency_ms,
+                            );
+                            total_micro_usd += r.cost_micro_usd;
+                        }
+                        println!("{}", "-".repeat(110));
+                        println!(
+                            "TOTAL: ${:.4} USD across {} models",
+                            (total_micro_usd as f64) / 1_000_000.0,
+                            rows.len()
+                        );
+                    }
                 }
-                println!("{}", "-".repeat(110));
-                println!(
-                    "TOTAL: ${:.4} USD across {} models",
-                    (total_micro_usd as f64) / 1_000_000.0,
-                    rows.len()
-                );
+                CostsBy::Purpose => {
+                    let rows = state.cost_by_purpose(since_hours).await?;
+                    if rows.is_empty() {
+                        println!("No LLM calls in the last {since_hours}h.");
+                    } else {
+                        println!("LLM cost report — last {since_hours}h, by purpose\n");
+                        println!(
+                            "{:<28} {:>6} {:>10} {:>10} {:>10} {:>10} {:>8} {:>8}",
+                            "purpose", "calls", "prompt", "output", "cache", "cost USD", "avg ms", "p95 ms"
+                        );
+                        println!("{}", "-".repeat(100));
+                        let mut total_micro_usd: i64 = 0;
+                        for r in &rows {
+                            println!(
+                                "{:<28} {:>6} {:>10} {:>10} {:>10} {:>10.4} {:>8} {:>8}",
+                                r.purpose,
+                                r.count,
+                                r.prompt_tokens,
+                                r.output_tokens,
+                                r.cache_hit_tokens,
+                                (r.cost_micro_usd as f64) / 1_000_000.0,
+                                r.avg_latency_ms,
+                                r.p95_latency_ms,
+                            );
+                            total_micro_usd += r.cost_micro_usd;
+                        }
+                        println!("{}", "-".repeat(100));
+                        println!(
+                            "TOTAL: ${:.4} USD across {} purpose tag(s)",
+                            (total_micro_usd as f64) / 1_000_000.0,
+                            rows.len()
+                        );
+                    }
+                }
             }
         }
 

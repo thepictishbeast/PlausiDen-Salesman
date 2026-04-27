@@ -146,6 +146,18 @@ pub struct CostSummaryRow {
 }
 
 #[derive(Debug, Clone)]
+pub struct PurposeCostRow {
+    pub purpose: String,
+    pub count: i64,
+    pub prompt_tokens: i64,
+    pub output_tokens: i64,
+    pub cache_hit_tokens: i64,
+    pub cost_micro_usd: i64,
+    pub avg_latency_ms: i64,
+    pub p95_latency_ms: i64,
+}
+
+#[derive(Debug, Clone)]
 pub struct PipelineSummary {
     pub companies: i64,
     pub prospects: i64,
@@ -1436,6 +1448,44 @@ impl State {
             .map(|r| CostSummaryRow {
                 backend: r.try_get("backend").unwrap_or_default(),
                 model: r.try_get("model").unwrap_or_default(),
+                count: r.try_get("n").unwrap_or(0),
+                prompt_tokens: r.try_get("prompt").unwrap_or(0),
+                output_tokens: r.try_get("output").unwrap_or(0),
+                cache_hit_tokens: r.try_get("cache_hit").unwrap_or(0),
+                cost_micro_usd: r.try_get("micro_usd").unwrap_or(0),
+                avg_latency_ms: r.try_get("avg_latency").unwrap_or(0),
+                p95_latency_ms: r.try_get("p95_latency").unwrap_or(0),
+            })
+            .collect())
+    }
+
+    /// LLM cost rolled up by `purpose` tag (the chat_for(purpose) the
+    /// caller passed). Returned ORDER BY cost DESC so the most
+    /// expensive subsystem floats to the top of the operator's
+    /// report.
+    pub async fn cost_by_purpose(&self, since_hours: i64) -> Result<Vec<PurposeCostRow>> {
+        let rows = sqlx::query(
+            "SELECT purpose,
+                    COUNT(*)::BIGINT          AS n,
+                    SUM(prompt_tokens)::BIGINT  AS prompt,
+                    SUM(output_tokens)::BIGINT  AS output,
+                    SUM(cache_hit_tokens)::BIGINT AS cache_hit,
+                    SUM(cost_micro_usd)::BIGINT AS micro_usd,
+                    AVG(latency_ms)::BIGINT   AS avg_latency,
+                    PERCENTILE_DISC(0.95) WITHIN GROUP (ORDER BY latency_ms)::BIGINT AS p95_latency
+             FROM llm_calls
+             WHERE created_at > NOW() - ($1 || ' hours')::INTERVAL
+             GROUP BY purpose
+             ORDER BY micro_usd DESC",
+        )
+        .bind(since_hours.to_string())
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| PurposeCostRow {
+                purpose: r.try_get("purpose").unwrap_or_default(),
                 count: r.try_get("n").unwrap_or(0),
                 prompt_tokens: r.try_get("prompt").unwrap_or(0),
                 output_tokens: r.try_get("output").unwrap_or(0),
