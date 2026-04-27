@@ -66,6 +66,7 @@ pub fn score(body: &str, subject: Option<&str>) -> RiskScore {
     check_overused_signal_words(body, &mut hits);
     check_not_just_x_its_y(body, &mut hits);
     check_marketing_superlative_density(body, &mut hits);
+    check_unanchored_numeric_claims(body, &mut hits);
     check_empty_hedge_phrases(body, &mut hits);
     check_recap_connectives(body, &mut hits);
 
@@ -205,6 +206,92 @@ fn check_overused_signal_words(body: &str, out: &mut Vec<SignalHit>) {
                 evidence: format!("`{needle}` appears {n}× (threshold {threshold})"),
             });
         }
+    }
+}
+
+/// Catch numeric claims that read like fabricated marketing
+/// metrics — "cut X by 60%", "saved $40K", "improved by 3x" —
+/// that aren't tied to anything specific in the message.
+///
+/// We can't fully verify "trace to facts" without the input facts
+/// in scope; this is a soft-fail at 0.40 that flags any draft
+/// containing 2+ numeric claims with percent / dollar / multiplier
+/// shapes. The operator decides — they're often FINE if the
+/// numbers are real, but should re-read carefully.
+fn check_unanchored_numeric_claims(body: &str, out: &mut Vec<SignalHit>) {
+    let bytes = body.as_bytes();
+    let mut hits = 0u32;
+    let mut samples: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        // Look for: number-followed-by-{%, x, K/M, dollar-prefixed}.
+        if c.is_ascii_digit() {
+            // Read the run of digits + optional ',' or '.'.
+            let start = i;
+            while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b',' || bytes[i] == b'.') {
+                i += 1;
+            }
+            if i >= bytes.len() {
+                break;
+            }
+            let after = bytes[i];
+            // Skip spaces between number and unit.
+            let mut j = i;
+            while j < bytes.len() && bytes[j] == b' ' {
+                j += 1;
+            }
+            if j >= bytes.len() {
+                break;
+            }
+            let suffix = bytes[j];
+            // Must be % | x | K | M | "th" | preceded by $.
+            let mut matched = false;
+            if after == b'%' || suffix == b'%' {
+                matched = true;
+            } else if (after == b'x' || after == b'X')
+                && (i + 1 >= bytes.len() || !bytes[i + 1].is_ascii_alphanumeric())
+            {
+                // "3x" but not "3xa".
+                matched = true;
+            } else if (suffix == b'x' || suffix == b'X')
+                && (j + 1 >= bytes.len() || !bytes[j + 1].is_ascii_alphanumeric())
+            {
+                matched = true;
+            } else if start > 0 && bytes[start - 1] == b'$' {
+                matched = true;
+            } else if (suffix == b'K' || suffix == b'M' || suffix == b'B')
+                && (j + 1 >= bytes.len() || !bytes[j + 1].is_ascii_alphanumeric())
+            {
+                matched = true;
+            }
+            if matched {
+                hits += 1;
+                let lo = start.saturating_sub(20);
+                let hi = (j + 4).min(bytes.len());
+                let mut a = lo;
+                while !body.is_char_boundary(a) && a > 0 {
+                    a -= 1;
+                }
+                let mut b = hi;
+                while !body.is_char_boundary(b) && b < body.len() {
+                    b += 1;
+                }
+                if samples.len() < 3 {
+                    samples.push(body[a..b].chars().take(50).collect::<String>());
+                }
+            }
+            continue;
+        }
+        i += 1;
+    }
+    if hits >= 2 {
+        out.push(SignalHit {
+            name: "unanchored_numeric_claim".into(),
+            // Soft signal — operator review, not auto-fail.
+            weight: 0.40,
+            evidence: format!("{hits} numeric claim(s); samples: {samples:?}"),
+        });
     }
 }
 
@@ -403,6 +490,33 @@ mod tests {
                     multifaceted approach can help.";
         let r = score(body, None);
         assert!(r.score >= 0.65, "got {} reasons={:?}", r.score, r.reasons());
+    }
+
+    #[test]
+    fn unanchored_numeric_claims_flag_softly() {
+        let body = "We cut their CI time by 60% and saved them $40K \
+                    on infra in 3 months. Want to chat?";
+        let r = score(body, None);
+        // Soft signal at 0.40 — the operator reviews + can override.
+        assert!(
+            r.hits.iter().any(|h| h.name == "unanchored_numeric_claim"),
+            "expected unanchored_numeric_claim hit; got reasons={:?}",
+            r.reasons()
+        );
+    }
+
+    #[test]
+    fn single_numeric_claim_does_not_flag() {
+        // A draft with ONE specific number is fine — that's how
+        // honest specifics look. Only a stack triggers.
+        let body = "Tested it on a 50TB/day fixture; latency was \
+                    flat at p99. Want me to send the bench?";
+        let r = score(body, None);
+        assert!(
+            !r.hits.iter().any(|h| h.name == "unanchored_numeric_claim"),
+            "single-number draft should not flag; got reasons={:?}",
+            r.reasons()
+        );
     }
 
     #[test]
