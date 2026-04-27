@@ -1,0 +1,45 @@
+# Phase 1, security-segment variant of `introduction`.
+# Tone: peer-to-peer, technically specific, no marketing fluff.
+# Anchor on a concrete security pattern the prospect's team would
+# actually recognize.
+
+key         = "introduction_security"
+description = "First-touch for security teams. Lead with a specific technical observation."
+segment     = "security"
+delay_days  = 0
+
+subject_seed = "{{specific_security_observation_three_words}}"
+
+body_seed = """
+{{specific_observation_about_their_security_posture_or_tooling}}
+
+{{our_product}} is what we built for the same problem. One concrete
+diff vs {{prospect_likely_incumbent}}:
+{{single_concrete_technical_difference}}.
+
+If that resonates, 15-min architecture chat next week? Or I can
+send the threat-model doc + you can decide if it's worth talking.
+
+— {{sender_name}}
+"""
+
+mandatory_phrases = ["Reply STOP and I won't follow up."]
+
+forbidden_phrases = [
+  # Same global blocklist
+  "I hope this email finds you well",
+  "I noticed",
+  "I came across",
+  "Just wanted to reach out",
+  "synergize",
+  "leverage",
+  "best-in-class",
+  "industry-leading",
+  # Security-specific anti-tells
+  "robust security posture",
+  "comprehensive solution",
+  "next-generation",
+  "AI-powered security",  # mostly meaningless to actual practitioners
+  "zero trust" ,           # overused; only use if PROSPECT mentioned it first
+  "single pane of glass",
+]

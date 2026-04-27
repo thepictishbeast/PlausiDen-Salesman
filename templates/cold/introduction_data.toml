@@ -1,0 +1,39 @@
+# Phase 1, data-team-segment variant of `introduction`.
+# Tone: specific about pipelines/warehouses/cost, not "data-driven".
+# Always cite a concrete number when one is available.
+
+key         = "introduction_data"
+description = "First-touch for data engineering / analytics teams."
+segment     = "data"
+delay_days  = 0
+
+subject_seed = "{{specific_pipeline_or_cost_observation_short}}"
+
+body_seed = """
+{{specific_observation_about_their_data_stack_or_cost_pattern}}
+
+{{our_product}} ships with {{single_concrete_data_capability}} —
+useful when {{specific_pipeline_pain_we_observed}}.
+
+If you want a sandbox, the demo data set + config is one curl
+away. Or 15 min next week if you'd rather hear it first.
+
+— {{sender_name}}
+"""
+
+mandatory_phrases = ["Reply STOP and I won't follow up."]
+
+forbidden_phrases = [
+  "I hope this email finds you well",
+  "I noticed",
+  "Just wanted to reach out",
+  # Data-specific anti-tells
+  "data-driven",            # universal, meaningless
+  "actionable insights",
+  "single source of truth",
+  "self-service analytics", # only use if they're already on this hook
+  "modern data stack",
+  "AI-ready",
+  "democratize data",
+  "unlock the power of your data",
+]

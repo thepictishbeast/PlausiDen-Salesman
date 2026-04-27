@@ -1,0 +1,39 @@
+# Phase 1, devops/SRE-segment variant of `introduction`.
+# Tone: short, operational, pain-aware. Never use "scale" abstractly.
+
+key         = "introduction_devops"
+description = "First-touch for SRE/devops teams. Lead with a concrete operational observation."
+segment     = "devops"
+delay_days  = 0
+
+subject_seed = "{{specific_observation_about_their_stack}}"
+
+body_seed = """
+{{concrete_operational_observation_one_sentence}}
+
+We built {{our_product}} after hitting the same thing in 2023.
+Specific diff vs {{prospect_likely_incumbent}}:
+{{specific_operational_or_cost_or_runtime_diff}}.
+
+If you want to test it, the install is one binary + a config file.
+Reply with "send it" if you'd rather see than hear about it.
+
+— {{sender_name}}
+"""
+
+mandatory_phrases = ["Reply STOP and I won't follow up."]
+
+forbidden_phrases = [
+  "I hope this email finds you well",
+  "I noticed",
+  "Just wanted to reach out",
+  # Devops-specific anti-tells
+  "scale your infrastructure",
+  "enterprise-grade",
+  "production-ready",       # everything claims this; means nothing
+  "battle-tested",
+  "DevOps best practices",
+  "SLO-driven",             # only use if THEY mentioned it
+  "observability platform",
+  "single source of truth",
+]

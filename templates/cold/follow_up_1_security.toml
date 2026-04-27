@@ -1,0 +1,37 @@
+# Phase 2, security-segment follow-up. Lead with a doc/comparison
+# instead of asking. Security teams hate being asked.
+
+key         = "follow_up_1_security"
+description = "First follow-up for security teams. Lead with substance, not an ask."
+segment     = "security"
+delay_days  = 5
+
+subject_seed = "re: {{previous_subject}}"
+
+body_seed = """
+Bumping in case it slipped past.
+
+Different framing: I wrote up a comparison of {{our_product}} vs
+{{prospect_likely_incumbent}} focused on
+{{specific_security_dimension_pricing_or_residency_or_detection}}:
+
+  {{comparison_page_url}}
+
+It's honest about where {{prospect_likely_incumbent}} wins (so it's
+not a hatchet job).
+
+— {{sender_name}}
+"""
+
+mandatory_phrases = ["Reply STOP and I won't follow up."]
+
+forbidden_phrases = [
+  "circle back",
+  "touch base",
+  "checking in",
+  "wanted to make sure you saw",
+  "robust security posture",
+  "comprehensive solution",
+  "next-generation",
+  "single pane of glass",
+]

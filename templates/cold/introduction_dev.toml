@@ -1,0 +1,40 @@
+# Phase 1, generic-developer-segment variant of `introduction`.
+# Tone: terse, code-aware, no "developer experience" abstractions.
+# If you can paste a four-line code example, do it.
+
+key         = "introduction_dev"
+description = "First-touch for individual contributor developers."
+segment     = "dev"
+delay_days  = 0
+
+subject_seed = "{{specific_codebase_observation_short}}"
+
+body_seed = """
+{{specific_observation_about_their_codebase_or_stack}}
+
+We built {{our_product}} because {{specific_problem_we_hit}}.
+Concretely: {{tiny_code_or_config_example_or_one_specific_metric}}
+
+If interesting, take a look:
+{{repo_or_docs_link}}
+
+No pitch attached. Reply if useful, ignore if not.
+
+— {{sender_name}}
+"""
+
+mandatory_phrases = ["Reply STOP and I won't follow up."]
+
+forbidden_phrases = [
+  "I hope this email finds you well",
+  "I noticed",
+  "Just wanted to reach out",
+  # Dev-specific anti-tells
+  "developer experience",   # universal, meaningless
+  "boost productivity",
+  "10x engineer",
+  "AI pair programmer",
+  "ship faster",
+  "focus on what matters",
+  "developer-first",
+]
