@@ -1,0 +1,26 @@
+%% Touch outcome lifecycle. Strictly enforced in
+%% salesman-state::approve_touch / reject_touch / mark_touch_sent.
+
+stateDiagram-v2
+    [*] --> Drafted: insert_touch_draft
+    Drafted --> AwaitingApproval: (always — no in-between state today)
+
+    AwaitingApproval --> Approved: salesman approve
+    AwaitingApproval --> Rejected: salesman reject
+    AwaitingApproval --> Suppressed: opt-out reply lands first
+
+    Approved --> Sent: send-pending --for-real (SMTP success)
+    Approved --> Failed: send-pending --for-real (SMTP error)
+    Approved --> Suppressed: opt-out reply lands first
+    Approved --> Bounced: bounce notification
+
+    Sent --> [*]
+    Rejected --> [*]
+    Suppressed --> [*]
+    Failed --> [*]
+    Bounced --> [*]
+
+    note right of Sent
+        Records receipt_id (Ed25519 signature on the
+        send event, chained to the previous receipt).
+    end note

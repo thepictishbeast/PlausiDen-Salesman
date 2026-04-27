@@ -161,6 +161,8 @@ enum Cmd {
         #[arg(long, default_value_t = 24)]
         since_hours: i64,
     },
+    /// Per-template performance stats (drafted / sent / replied / engaged).
+    TemplateStats,
     /// Health probe — JSON output. Exit 1 if any required component
     /// is missing.
     Status,
@@ -914,6 +916,23 @@ async fn main() -> Result<()> {
             let state = require_state(cli.database_url.as_deref()).await?;
             let s = state.pipeline_summary(since_hours).await?;
             println!("{}", s.render_text());
+        }
+
+        Cmd::TemplateStats => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let stats = state.template_stats().await?;
+            if stats.is_empty() {
+                println!("no template-tagged touches yet");
+            } else {
+                println!("{:<24} {:>8} {:>6} {:>8} {:>8} {:>8}",
+                    "template", "drafted", "sent", "replied", "engaged", "reply%");
+                println!("{}", "-".repeat(70));
+                for s in &stats {
+                    println!("{:<24} {:>8} {:>6} {:>8} {:>8} {:>7.1}%",
+                        s.template_key, s.drafted, s.sent, s.replied, s.engaged_replied,
+                        s.reply_rate() * 100.0);
+                }
+            }
         }
 
         Cmd::Costs { since_hours } => {

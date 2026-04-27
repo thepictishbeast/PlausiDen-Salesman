@@ -1,0 +1,74 @@
+%% Salesman pipeline (mermaid; render with mmdc to SVG)
+flowchart LR
+    subgraph operator
+        OP[operator CLI]
+    end
+
+    subgraph discovery
+        CSV[CSV seed] --> Companies
+        Brave[Brave Search] --> Companies
+        HP[Homepage fetcher] --> Companies
+    end
+
+    subgraph state[(Postgres)]
+        Companies
+        Prospects
+        Touches
+        Replies
+        Suppressions
+        Receipts
+        LLMCalls[llm_calls]
+        Sequences
+    end
+
+    subgraph llm[LLM router]
+        Claude
+        Gemini
+        LFI[LFI - future]
+    end
+
+    subgraph tools
+        Draft[draft_cold_email]
+        Classify[reply.classify]
+        Compare[comparison_page]
+        OSINT[osint.gdelt/.github_org/.hn_mentions]
+    end
+
+    subgraph outreach
+        SMTP[lettre SMTP]
+        IMAP[IMAP poller]
+    end
+
+    subgraph defense
+        Detector[detector ensemble]
+        RateCap[rate caps]
+        Suppress[suppression check]
+    end
+
+    subgraph receipts
+        Sign[Ed25519 signer]
+        Chain[hash chain]
+    end
+
+    OP --> Companies
+    Companies --> Prospects
+    Prospects --> Draft
+    Draft --> llm
+    Draft --> Detector
+    Detector -->|fail| Draft
+    Detector -->|pass| Touches
+    Touches -->|approve| RateCap
+    RateCap --> Suppress
+    Suppress --> SMTP
+    SMTP --> Sign
+    Sign --> Chain
+    Chain --> Receipts
+    SMTP --> Touches
+    IMAP --> Replies
+    Replies --> Classify
+    Classify --> llm
+    Classify --> Prospects
+    Compare --> llm
+    OSINT --> llm
+    llm --> LLMCalls
+    Sequences --> Prospects

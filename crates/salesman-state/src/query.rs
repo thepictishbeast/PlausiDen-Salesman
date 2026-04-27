@@ -42,6 +42,24 @@ pub struct DueProspect {
 }
 
 #[derive(Debug, Clone)]
+pub struct TemplateStat {
+    pub template_key: String,
+    pub drafted: i64,
+    pub sent: i64,
+    pub replied: i64,
+    pub engaged_replied: i64,
+}
+
+impl TemplateStat {
+    pub fn reply_rate(&self) -> f32 {
+        if self.sent == 0 { 0.0 } else { self.replied as f32 / self.sent as f32 }
+    }
+    pub fn engaged_rate(&self) -> f32 {
+        if self.sent == 0 { 0.0 } else { self.engaged_replied as f32 / self.sent as f32 }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct LlmCallRecord {
     pub backend: String,
     pub model: String,
@@ -403,7 +421,8 @@ impl State {
     }
 
     /// Insert a draft Touch in `awaiting_approval` outcome. The
-    /// caller chose the channel + content; we just persist.
+    /// caller chose the channel + content; we just persist. Optional
+    /// template_key threads through for the L4 stats query.
     pub async fn insert_touch_draft(
         &self,
         prospect_id: ProspectId,
@@ -411,35 +430,71 @@ impl State {
         subject: Option<&str>,
         body: &str,
     ) -> Result<salesman_core::TouchId> {
-        let touch = salesman_core::Touch {
-            id: salesman_core::TouchId::new(),
-            prospect_id,
-            channel,
-            subject: subject.map(String::from),
-            body: body.to_string(),
-            queued_at: Utc::now(),
-            sent_at: None,
-            outcome: salesman_core::TouchOutcome::AwaitingApproval,
-            receipt_id: None,
-        };
+        self.insert_touch_draft_with_template(prospect_id, channel, subject, body, None)
+            .await
+    }
+
+    /// Same as `insert_touch_draft`, but also records `template_key`.
+    pub async fn insert_touch_draft_with_template(
+        &self,
+        prospect_id: ProspectId,
+        channel: salesman_core::TouchChannel,
+        subject: Option<&str>,
+        body: &str,
+        template_key: Option<&str>,
+    ) -> Result<salesman_core::TouchId> {
+        let id = salesman_core::TouchId::new();
         sqlx::query(
             "INSERT INTO touches
-             (id, prospect_id, channel, subject, body, queued_at, sent_at, outcome, receipt_id)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+             (id, prospect_id, channel, subject, body, queued_at, sent_at, outcome, receipt_id, template_key)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
         )
-        .bind(touch.id.0)
-        .bind(touch.prospect_id.0)
-        .bind(touch.channel.to_string())
-        .bind(&touch.subject)
-        .bind(&touch.body)
-        .bind(touch.queued_at)
-        .bind(touch.sent_at)
-        .bind(touch.outcome.to_string())
-        .bind(touch.receipt_id.map(|x| x.0))
+        .bind(id.0)
+        .bind(prospect_id.0)
+        .bind(channel.to_string())
+        .bind(subject)
+        .bind(body)
+        .bind(Utc::now())
+        .bind(None::<chrono::DateTime<chrono::Utc>>)
+        .bind(salesman_core::TouchOutcome::AwaitingApproval.to_string())
+        .bind(None::<uuid::Uuid>)
+        .bind(template_key)
         .execute(self.pool())
         .await
         .map_err(|e| Error::Db(e.to_string()))?;
-        Ok(touch.id)
+        Ok(id)
+    }
+
+    /// Per-template performance: drafted, sent, replied (any kind),
+    /// engaged-replied. The bandit reads this to weight template
+    /// selection.
+    pub async fn template_stats(&self) -> Result<Vec<TemplateStat>> {
+        let rows = sqlx::query(
+            "SELECT
+               t.template_key,
+               COUNT(*) FILTER (WHERE t.outcome != 'rejected')::BIGINT AS drafted,
+               COUNT(*) FILTER (WHERE t.outcome = 'sent')::BIGINT     AS sent,
+               COUNT(DISTINCT r.id) FILTER (WHERE r.id IS NOT NULL)::BIGINT AS replied,
+               COUNT(DISTINCT r.id) FILTER (WHERE r.kind = 'engaged')::BIGINT AS engaged_replied
+             FROM touches t
+             LEFT JOIN replies r ON r.touch_id = t.id
+             WHERE t.template_key IS NOT NULL
+             GROUP BY t.template_key
+             ORDER BY drafted DESC",
+        )
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| TemplateStat {
+                template_key: r.try_get("template_key").unwrap_or_default(),
+                drafted: r.try_get("drafted").unwrap_or(0),
+                sent: r.try_get("sent").unwrap_or(0),
+                replied: r.try_get("replied").unwrap_or(0),
+                engaged_replied: r.try_get("engaged_replied").unwrap_or(0),
+            })
+            .collect())
     }
 
     /// List touches in awaiting-approval state for a campaign.

@@ -1,0 +1,43 @@
+%% FunnelState transition graph (mermaid). Source of truth lives in
+%% salesman-core::FunnelState::can_transition_to and is proptested.
+
+stateDiagram-v2
+    [*] --> New: discover
+
+    New --> Qualified: qualify (LLM + operator)
+    New --> Suppressed: opt-out reply or manual
+    New --> Lost: bounce or manual
+
+    Qualified --> Contacted: send-pending succeeds
+    Qualified --> Suppressed
+    Qualified --> Lost
+
+    Contacted --> Engaged: positive / question reply
+    Contacted --> Suppressed
+    Contacted --> Lost
+
+    Engaged --> Meeting: scheduled call
+    Engaged --> Suppressed
+    Engaged --> Lost
+
+    Meeting --> Proposal
+    Meeting --> Suppressed
+    Meeting --> Lost
+
+    Proposal --> Won: signed
+    Proposal --> Lost
+
+    Won --> [*]
+    Lost --> [*]
+    Suppressed --> [*]
+
+    note right of Suppressed
+        Reachable from any non-terminal state.
+        Triggered automatically on opt-out reply or
+        explicit operator suppress.
+    end note
+
+    note right of Lost
+        Reachable from any non-terminal state.
+        Triggered on bounce, manual, or explicit reject.
+    end note
