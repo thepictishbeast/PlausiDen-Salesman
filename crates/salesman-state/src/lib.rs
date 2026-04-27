@@ -15,7 +15,7 @@ pub mod query;
 pub use query::{
     CampaignCostRow, CostSummaryRow, DueProspect, LlmCallRecord, PipelineSummary,
     ProspectWithFacts, PurposeCostRow, ReplyNeedingResponse, ReplyRow, SequenceStepInput,
-    SuppressionRow, TemplateStat, TouchSummary, UnclassifiedReply,
+    SuppressionRow, TemplateStat, TouchSummary, TriggerEventRow, UnclassifiedReply,
 };
 
 /// Thin wrapper around a Postgres connection pool. Created at startup,

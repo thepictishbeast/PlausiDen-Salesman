@@ -294,6 +294,27 @@ pub struct TouchSummary {
     pub queued_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// A single trigger event surfaced by the trigger-scanner. The
+/// drafter consumes these as personalization anchors.
+#[derive(Debug, Clone)]
+pub struct TriggerEventRow {
+    pub id: uuid::Uuid,
+    pub prospect_id: ProspectId,
+    pub company: String,
+    pub source: String,
+    pub headline: String,
+    pub url: Option<String>,
+    pub recency_score: f32,
+    pub relevance_score: f32,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl TriggerEventRow {
+    pub fn rank(&self) -> f32 {
+        self.recency_score * self.relevance_score
+    }
+}
+
 impl State {
     /// Insert a new company. Returns the assigned id (caller-supplied).
     pub async fn insert_company(&self, c: &Company) -> Result<CompanyId> {
@@ -444,6 +465,24 @@ impl State {
             .and_then(|r| r.try_get::<i64, _>("secs").ok())
             .unwrap_or(0);
         Ok((secs / 86400).max(0))
+    }
+
+    /// Look up the prospect-row id for a (campaign, company) pair.
+    /// Returns None when the pair has no prospect yet (not seeded).
+    pub async fn find_prospect_by_company_in_campaign(
+        &self,
+        campaign_id: CampaignId,
+        company_id: CompanyId,
+    ) -> Result<Option<ProspectId>> {
+        let row = sqlx::query(
+            "SELECT id FROM prospects WHERE campaign_id = $1 AND company_id = $2 LIMIT 1",
+        )
+        .bind(campaign_id.0)
+        .bind(company_id.0)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(row.map(|r| ProspectId(r.try_get("id").unwrap_or_else(|_| uuid::Uuid::nil()))))
     }
 
     /// Add (campaign, company) pairs as Prospects in the `New` state.
@@ -2102,5 +2141,127 @@ impl State {
                 )
             })
             .collect())
+    }
+
+    // -----------------------------------------------------------------
+    // trigger events
+    // -----------------------------------------------------------------
+
+    /// Insert a trigger event for a prospect. Idempotent on
+    /// (prospect, source, url) so re-running the scanner doesn't
+    /// produce duplicates. Returns true when a row was actually
+    /// inserted, false on conflict.
+    pub async fn insert_trigger_event(
+        &self,
+        prospect_id: ProspectId,
+        source: &str,
+        headline: &str,
+        url: Option<&str>,
+        recency_score: f32,
+        relevance_score: f32,
+        raw: &serde_json::Value,
+    ) -> Result<bool> {
+        let row = sqlx::query(
+            "INSERT INTO trigger_events
+             (id, prospect_id, source, headline, url, recency_score, relevance_score, raw)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (prospect_id, source, url) DO NOTHING
+             RETURNING id",
+        )
+        .bind(uuid::Uuid::now_v7())
+        .bind(prospect_id.0)
+        .bind(source)
+        .bind(headline)
+        .bind(url)
+        .bind(recency_score)
+        .bind(relevance_score)
+        .bind(raw)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(row.is_some())
+    }
+
+    /// Top trigger events across (optionally) one campaign in the
+    /// last `since_hours`. Sorted by recency × relevance descending.
+    /// `unused_only` filters to triggers we haven't already used to
+    /// anchor a touch — that's the operator's "what should I send
+    /// today" view.
+    pub async fn list_trigger_events(
+        &self,
+        campaign_id: Option<CampaignId>,
+        since_hours: i64,
+        unused_only: bool,
+        limit: i64,
+    ) -> Result<Vec<TriggerEventRow>> {
+        let mut sql = String::from(
+            "SELECT te.id, te.prospect_id, te.source, te.headline, te.url, \
+                    te.recency_score, te.relevance_score, te.created_at, \
+                    c.display_name AS company_name \
+             FROM trigger_events te \
+             JOIN prospects p ON p.id = te.prospect_id \
+             JOIN companies c ON c.id = p.company_id \
+             WHERE te.created_at > NOW() - ($1 || ' hours')::INTERVAL ",
+        );
+        if unused_only {
+            sql.push_str("AND te.used_in_touch IS NULL ");
+        }
+        if campaign_id.is_some() {
+            sql.push_str("AND p.campaign_id = $2 ");
+        }
+        sql.push_str(
+            "ORDER BY (te.recency_score * te.relevance_score) DESC, te.created_at DESC \
+             LIMIT ",
+        );
+        let limit_pos = if campaign_id.is_some() { "$3" } else { "$2" };
+        sql.push_str(limit_pos);
+
+        let mut q = sqlx::query(&sql).bind(since_hours.to_string());
+        if let Some(cid) = campaign_id {
+            q = q.bind(cid.0);
+        }
+        q = q.bind(limit);
+        let rows = q
+            .fetch_all(self.pool())
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| TriggerEventRow {
+                id: r.try_get("id").unwrap_or_else(|_| uuid::Uuid::nil()),
+                prospect_id: ProspectId(
+                    r.try_get("prospect_id")
+                        .unwrap_or_else(|_| uuid::Uuid::nil()),
+                ),
+                company: r.try_get("company_name").unwrap_or_default(),
+                source: r.try_get("source").unwrap_or_default(),
+                headline: r.try_get("headline").unwrap_or_default(),
+                url: r.try_get("url").unwrap_or(None),
+                recency_score: r.try_get("recency_score").unwrap_or(0.0),
+                relevance_score: r.try_get("relevance_score").unwrap_or(0.0),
+                created_at: r
+                    .try_get("created_at")
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+            })
+            .collect())
+    }
+
+    /// Mark a trigger event as having been used to anchor a touch.
+    /// Idempotent.
+    pub async fn mark_trigger_used(
+        &self,
+        trigger_id: uuid::Uuid,
+        touch_id: salesman_core::TouchId,
+    ) -> Result<u64> {
+        let r = sqlx::query(
+            "UPDATE trigger_events SET used_in_touch = $2 \
+             WHERE id = $1 AND used_in_touch IS NULL",
+        )
+        .bind(trigger_id)
+        .bind(touch_id.0)
+        .execute(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(r.rows_affected())
     }
 }

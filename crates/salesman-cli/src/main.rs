@@ -19,6 +19,39 @@ enum CostsBy {
 }
 
 #[derive(Subcommand, Debug)]
+enum TriggerCmd {
+    /// Poll the OSINT sources for each prospect in the campaign and
+    /// persist any new trigger events. Idempotent — re-running won't
+    /// produce duplicates. Run nightly via systemd timer for best
+    /// effect.
+    Scan {
+        #[arg(long)]
+        campaign: String,
+        /// How many days back to consider an event "fresh". Older
+        /// events get exponentially-decaying recency_score.
+        #[arg(long, default_value_t = 14)]
+        max_age_days: i64,
+        /// Cap per prospect to keep the run bounded.
+        #[arg(long, default_value_t = 5)]
+        max_per_prospect: usize,
+    },
+    /// "What should I send today?" — ranked recent triggers across
+    /// (optionally) one campaign, top N. Default is unused triggers
+    /// only — ones we haven't already used to anchor a touch.
+    List {
+        #[arg(long)]
+        campaign: Option<String>,
+        #[arg(long, default_value_t = 168)]
+        since_hours: i64,
+        #[arg(long, default_value_t = 25)]
+        top: i64,
+        /// Set to false to include triggers already used in a touch.
+        #[arg(long, default_value_t = true)]
+        unused_only: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 enum SuppCmd {
     /// List recent suppressions (newest first). --source filters to
     /// just one origin tag (manual / bounce / reply_optout / one_click /
@@ -299,6 +332,14 @@ enum Cmd {
     DraftReplies {
         #[arg(long, default_value_t = 25)]
         batch: i64,
+    },
+    /// Trigger-event scanner — find people to email TODAY based on
+    /// real signals (recent news, GitHub activity, HN mentions).
+    /// `scan` polls the OSINT sources for each prospect; `list`
+    /// shows the operator's "what should I send today" ranked view.
+    Triggers {
+        #[command(subcommand)]
+        action: TriggerCmd,
     },
     /// Show recent classified replies for a campaign.
     Inbox {
@@ -615,6 +656,33 @@ async fn sqlx_lookup_sequence(
     let row = row.ok_or_else(|| anyhow::anyhow!("sequence `{name}` not found in campaign"))?;
     let id: uuid::Uuid = row.try_get("id")?;
     Ok(id)
+}
+
+/// Map a GDELT-format `seen_at` timestamp ("YYYYMMDDhhmmss") + a
+/// horizon (max-age in days) to a recency score in [0,1]. Now → 1.0,
+/// exactly `max_age_days` old → ~0.0. Half-life ≈ max_age_days/3.
+fn recency_score_from_seen_at(seen_at: &str, max_age_days: i64) -> f32 {
+    let now = chrono::Utc::now();
+    let parsed = if seen_at.len() >= 14 {
+        chrono::NaiveDateTime::parse_from_str(&seen_at[..14], "%Y%m%d%H%M%S").ok()
+    } else if seen_at.len() >= 8 {
+        chrono::NaiveDate::parse_from_str(&seen_at[..8], "%Y%m%d")
+            .ok()
+            .and_then(|d| d.and_hms_opt(0, 0, 0))
+    } else {
+        None
+    };
+    let dt = match parsed {
+        Some(d) => d.and_utc(),
+        None => return 0.5,
+    };
+    let age_secs = (now - dt).num_seconds().max(0) as f32;
+    let max_secs = (max_age_days as f32) * 86400.0;
+    if age_secs >= max_secs {
+        return 0.0;
+    }
+    let half_life = max_secs / 3.0;
+    (0.5f32).powf(age_secs / half_life).clamp(0.0, 1.0)
 }
 
 fn pct(n: usize, total: usize) -> f32 {
@@ -3258,6 +3326,151 @@ async fn main() -> Result<()> {
                     "VERDICT: RED — {blockers} blocker(s) + {warnings} warning(s); fix before send"
                 );
                 anyhow::bail!("dns-check: {blockers} blocker(s)");
+            }
+        }
+
+        Cmd::Triggers { action } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            match action {
+                TriggerCmd::Scan { campaign, max_age_days, max_per_prospect } => {
+                    let campaign_id = state
+                        .ensure_campaign(&campaign, "(triggers-scan)", "(unspecified)")
+                        .await?;
+                    let companies = state.list_companies_for_campaign(campaign_id).await?;
+                    println!(
+                        "triggers scan `{campaign}`: probing GDELT for {} companies (max-age {max_age_days}d)\n",
+                        companies.len()
+                    );
+                    let gdelt = salesman_osint::GdeltClient::new();
+                    let mut new_inserts = 0u32;
+                    let mut probed = 0u32;
+                    for (_company_id, name, _homepage) in &companies {
+                        // Find the prospect-id for this company in this campaign.
+                        let prospect_id = match state
+                            .find_prospect_by_company_in_campaign(campaign_id, _company_id.clone())
+                            .await?
+                        {
+                            Some(p) => p,
+                            None => continue,
+                        };
+                        probed += 1;
+                        let hits = match gdelt.search_news(name, max_per_prospect as u32).await {
+                            Ok(h) => h,
+                            Err(e) => {
+                                tracing::warn!(company = %name, "%e" = %e, "gdelt search failed");
+                                continue;
+                            }
+                        };
+                        for hit in hits {
+                            let recency = recency_score_from_seen_at(&hit.seen_at, max_age_days);
+                            // Cheap relevance heuristic: full-name match boosts; partial suffices.
+                            let relevance = if hit
+                                .title
+                                .to_ascii_lowercase()
+                                .contains(&name.to_ascii_lowercase())
+                            {
+                                0.85
+                            } else {
+                                0.5
+                            };
+                            let raw = serde_json::json!({
+                                "seen_at": hit.seen_at,
+                                "source_country": hit.source_country,
+                            });
+                            match state
+                                .insert_trigger_event(
+                                    prospect_id,
+                                    "gdelt",
+                                    &hit.title,
+                                    Some(&hit.url),
+                                    recency,
+                                    relevance,
+                                    &raw,
+                                )
+                                .await
+                            {
+                                Ok(true) => new_inserts += 1,
+                                Ok(false) => {} // duplicate
+                                Err(e) => {
+                                    tracing::warn!(company = %name, "%e" = %e, "insert_trigger_event failed");
+                                }
+                            }
+                        }
+                    }
+                    println!(
+                        "triggers scan complete: probed {probed} prospect(s); inserted {new_inserts} new trigger(s). \
+                         Run `salesman triggers list --campaign {campaign}` to review."
+                    );
+                }
+                TriggerCmd::List {
+                    campaign,
+                    since_hours,
+                    top,
+                    unused_only,
+                } => {
+                    let campaign_id = match campaign.as_deref() {
+                        Some(name) => Some(
+                            state
+                                .ensure_campaign(name, "(triggers-list)", "(unspecified)")
+                                .await?,
+                        ),
+                        None => None,
+                    };
+                    let rows = state
+                        .list_trigger_events(campaign_id, since_hours, unused_only, top)
+                        .await?;
+                    if cli.json {
+                        let v = serde_json::json!({
+                            "since_hours": since_hours,
+                            "unused_only": unused_only,
+                            "count": rows.len(),
+                            "triggers": rows.iter().map(|r| serde_json::json!({
+                                "id": r.id.to_string(),
+                                "prospect_id": r.prospect_id.0.to_string(),
+                                "company": r.company,
+                                "source": r.source,
+                                "headline": r.headline,
+                                "url": r.url,
+                                "rank": r.rank(),
+                                "recency_score": r.recency_score,
+                                "relevance_score": r.relevance_score,
+                                "created_at": r.created_at.to_rfc3339(),
+                            })).collect::<Vec<_>>(),
+                        });
+                        println!("{}", serde_json::to_string_pretty(&v)?);
+                        return Ok(());
+                    }
+                    if rows.is_empty() {
+                        println!("(no trigger events match — run `triggers scan` first or widen the window)");
+                    } else {
+                        println!(
+                            "=== top {} trigger event(s){} — last {since_hours}h ===\n",
+                            rows.len(),
+                            campaign
+                                .as_deref()
+                                .map(|c| format!(" in `{c}`"))
+                                .unwrap_or_default(),
+                        );
+                        for (i, r) in rows.iter().enumerate() {
+                            let head = if r.headline.chars().count() > 80 {
+                                format!("{}…", r.headline.chars().take(79).collect::<String>())
+                            } else {
+                                r.headline.clone()
+                            };
+                            println!(
+                                "{:>2}. [{:.2}] {} ({}) — {}",
+                                i + 1,
+                                r.rank(),
+                                r.company,
+                                r.source,
+                                head,
+                            );
+                            if let Some(u) = &r.url {
+                                println!("     {u}");
+                            }
+                        }
+                    }
+                }
             }
         }
 
