@@ -2602,6 +2602,7 @@ dependencies = [
  "chrono",
  "clap",
  "dialoguer",
+ "reqwest",
  "salesman-content",
  "salesman-core",
  "salesman-detector",

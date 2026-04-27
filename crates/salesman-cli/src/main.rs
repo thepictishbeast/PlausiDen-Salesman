@@ -464,6 +464,17 @@ enum Cmd {
     Alerts {
         #[arg(long, default_value_t = 24)]
         since_hours: i64,
+        /// Post the digest to a Slack/Discord/Mattermost incoming
+        /// webhook. URL via env $SALESMAN_ALERT_WEBHOOK_URL or this
+        /// flag. Detects Slack-vs-Discord-vs-generic by hostname.
+        /// Only posts when there's something interesting (positive
+        /// reply, opt-out, bounce spike, or competitor mention).
+        #[arg(long)]
+        webhook: Option<String>,
+        /// Always post the digest, even when nothing interesting
+        /// happened. Useful for "I want a daily 'all clear' ping."
+        #[arg(long, default_value_t = false)]
+        webhook_always: bool,
     },
     /// Print LLM cost report over a time window. Default is by
     /// (backend, model); pass `--by purpose` to roll up by the
@@ -795,6 +806,39 @@ async fn sqlx_lookup_sequence(
     let row = row.ok_or_else(|| anyhow::anyhow!("sequence `{name}` not found in campaign"))?;
     let id: uuid::Uuid = row.try_get("id")?;
     Ok(id)
+}
+
+/// POST a text payload to a Slack / Discord / Mattermost incoming
+/// webhook. Detects the platform by hostname so the JSON shape
+/// matches: Slack expects `{ text }`, Discord expects `{ content }`,
+/// generic falls back to Slack-shape (most platforms accept it).
+async fn post_alert_webhook(url: &str, text: &str) -> anyhow::Result<()> {
+    // SAFETY: rustls + 10s timeout — Client::build() cannot fail.
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .expect("reqwest construction infallible with these settings");
+    let lc = url.to_ascii_lowercase();
+    let body = if lc.contains("discord") {
+        serde_json::json!({ "content": text })
+    } else if lc.contains("mattermost") {
+        serde_json::json!({ "text": text })
+    } else {
+        // Slack + most everything else.
+        serde_json::json!({ "text": text })
+    };
+    let resp = http
+        .post(url)
+        .json(&body)
+        .send()
+        .await
+        .with_context(|| format!("POST {url}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("webhook returned {status}: {body}");
+    }
+    Ok(())
 }
 
 /// Map a GDELT-format `seen_at` timestamp ("YYYYMMDDhhmmss") + a
@@ -2260,8 +2304,17 @@ async fn main() -> Result<()> {
             }
         }
 
-        Cmd::Alerts { since_hours } => {
+        Cmd::Alerts {
+            since_hours,
+            webhook,
+            webhook_always,
+        } => {
             let state = require_state(cli.database_url.as_deref()).await?;
+            // Resolve webhook URL: --webhook flag takes precedence over
+            // env. Empty string after env-default counts as unset.
+            let webhook_url: Option<String> = webhook
+                .or_else(|| std::env::var("SALESMAN_ALERT_WEBHOOK_URL").ok())
+                .filter(|s| !s.trim().is_empty());
             let positive = state
                 .list_replies_since_with_kinds(since_hours, &["engaged", "question"])
                 .await
@@ -2403,6 +2456,67 @@ async fn main() -> Result<()> {
                 "→ nothing important; carry on".to_string()
             };
             println!("{banner}");
+
+            // Webhook fan-out: fire-and-forget. Failure logs +
+            // surfaces inline but doesn't error the command.
+            if let Some(url) = webhook_url {
+                let any_action = !positive.is_empty()
+                    || !optouts.is_empty()
+                    || !bounces.is_empty()
+                    || !competitor_replies.is_empty();
+                if any_action || webhook_always {
+                    let mut text = format!("*Salesman alerts — last {since_hours}h*\n");
+                    text.push_str(&format!("{banner}\n"));
+                    if !positive.is_empty() {
+                        text.push_str(&format!(
+                            "\n*Positive replies ({})*\n",
+                            positive.len()
+                        ));
+                        for r in positive.iter().take(5) {
+                            text.push_str(&format!(
+                                "• {} — `{}` ({})\n",
+                                r.from_address,
+                                r.kind,
+                                r.subject.as_deref().unwrap_or("(no subject)"),
+                            ));
+                        }
+                    }
+                    if !competitor_replies.is_empty() {
+                        text.push_str(&format!(
+                            "\n*Competitor mentions ({})*\n",
+                            competitor_replies.len()
+                        ));
+                        for (reply, comps, _) in competitor_replies.iter().take(5) {
+                            text.push_str(&format!(
+                                "• {} — comparing to {}\n",
+                                reply.from_address,
+                                comps.join(", "),
+                            ));
+                        }
+                    }
+                    if !bounces.is_empty() {
+                        text.push_str(&format!(
+                            "\n*Auto-suppressed bounces ({})*\n",
+                            bounces.len()
+                        ));
+                    }
+                    if !optouts.is_empty() {
+                        text.push_str(&format!(
+                            "\n*Opt-outs ({})*\n",
+                            optouts.len()
+                        ));
+                    }
+                    match post_alert_webhook(&url, &text).await {
+                        Ok(()) => {
+                            println!("(posted to webhook)");
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "webhook post failed");
+                            println!("(webhook post failed: {e})");
+                        }
+                    }
+                }
+            }
         }
 
         Cmd::Score {
