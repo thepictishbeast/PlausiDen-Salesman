@@ -7,15 +7,19 @@ work session.
 
 ## Active
 
-### B1 — Email forwarding to a real inbox  *(in progress, other Claude on web-01 is fixing)*
-Status: messages successfully Saved to `/var/mail/vhosts/plausiden.com/william/`
-on web-01 (mail.plausiden.com), but owner reads mail elsewhere.
-Either set up a Postfix virtual alias forward to Gmail, OR have
-owner read the Dovecot mailbox via IMAP/webmail.
-Verifies: I send a test email; owner replies "got it."
-Unblocks: every other communication channel. Until this is fixed,
-all my emails (including daily summaries + alerts) accumulate
-unread.
+### B1 — Sieve classification on web-01  *(deployed by web-01 Claude — pending verification)*
+Owner explicitly does NOT want Gmail forwarding. The fix is
+server-side: web-01 has a typed Sieve `internal_source` rule
+(score 100) that pins From: @vultr.guest, @plausiden.com,
+@plausiden.internal, @web-01.plausiden.internal directly into
+INBOX, beating other classifiers.
+Verifies: I send a fresh test from openclaw with one of the covered
+From-domains; web-01 confirms it lands in INBOX.
+Test in flight: queue ID 8407E4DF598 from salesman@vultr.guest
+(2026-04-27 04:26 UTC).
+Pre-fix emails (the 14+) are in Promotions/new and Updates folders —
+not lost; owner reclassifies manually with `doveadm move`.
+Unblocks: every other communication channel.
 
 ### B2 — Sender domain decision
 Pick the actual sending domain (recommendation:
