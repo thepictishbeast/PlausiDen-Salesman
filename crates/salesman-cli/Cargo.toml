@@ -15,9 +15,12 @@ salesman-core = { path = "../salesman-core" }
 salesman-llm = { path = "../salesman-llm" }
 salesman-tools = { path = "../salesman-tools" }
 salesman-orchestrator = { path = "../salesman-orchestrator" }
+salesman-state = { path = "../salesman-state" }
+salesman-discovery = { path = "../salesman-discovery" }
 clap = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+url = { workspace = true }

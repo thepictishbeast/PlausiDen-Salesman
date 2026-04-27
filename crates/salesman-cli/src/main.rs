@@ -1,45 +1,45 @@
 //! salesman — operator CLI.
 //!
 //! Subcommands:
-//!   plan      — round-trip a fake prospect through the orchestrator
-//!               with the EchoTool registered. If `ANTHROPIC_API_KEY`
-//!               or `GEMINI_API_KEY` are set, those backends register
-//!               automatically and the model is actually called.
-//!   discover  — placeholder; lands in Phase 1.1.
-//!   halt      — kill switch (placeholder; persists a halt marker
-//!               that workers will respect).
-//!   tools     — list registered tools.
-//!   backends  — list registered LLM backends + which models.
+//!   plan         agent loop with a goal (calls real LLMs if keys set)
+//!   migrate      run database migrations
+//!   discover     ingest a CSV of companies into a campaign
+//!   enrich       fetch homepages for all companies in a campaign
+//!   halt         kill switch (stub)
+//!   tools        list registered tools (incl. discovery tools)
+//!   backends     list registered LLM backends + models
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use salesman_llm::{LlmBackend, LlmRouter, Message, Role, RouteHint};
+use salesman_discovery::{CsvSeed, CsvSeedTool, HomepageFetchTool, HomepageFetcher};
 use salesman_llm::claude::ClaudeBackend;
 use salesman_llm::gemini::GeminiBackend;
+use salesman_llm::{LlmBackend, LlmRouter, Message, Role, RouteHint};
 use salesman_orchestrator::Orchestrator;
+use salesman_state::State;
 use salesman_tools::{EchoTool, ToolRegistry};
+use std::path::PathBuf;
 use std::sync::Arc;
+use url::Url;
 
 const DEFAULT_CLAUDE_MODEL: &str = "claude-sonnet-4-6";
 const DEFAULT_GEMINI_MODEL: &str = "gemini-1.5-flash";
 
 #[derive(Parser, Debug)]
-#[command(
-    name = "salesman",
-    about = "PlausiDen-Salesman operator CLI",
-    version
-)]
+#[command(name = "salesman", about = "PlausiDen-Salesman operator CLI", version)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
 
-    /// Override the Claude model (env: SALESMAN_CLAUDE_MODEL).
     #[arg(long, env = "SALESMAN_CLAUDE_MODEL", default_value = DEFAULT_CLAUDE_MODEL)]
     claude_model: String,
 
-    /// Override the Gemini model (env: SALESMAN_GEMINI_MODEL).
     #[arg(long, env = "SALESMAN_GEMINI_MODEL", default_value = DEFAULT_GEMINI_MODEL)]
     gemini_model: String,
+
+    /// Postgres connection string (for migrate / discover / enrich).
+    #[arg(long, env = "SALESMAN_DATABASE_URL")]
+    database_url: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -48,14 +48,30 @@ enum Cmd {
     Plan {
         #[arg(long, default_value = "demo: introduce yourself in one short sentence")]
         goal: String,
-        /// Routing hint: reasoning | deep | bulk | grounded
         #[arg(long, default_value = "reasoning")]
         hint: String,
     },
-    /// Discovery stub (lands in Phase 1.1).
+    /// Run pending database migrations.
+    Migrate,
+    /// Ingest a CSV of companies into a campaign.
     Discover {
         #[arg(long)]
-        query: String,
+        campaign: String,
+        #[arg(long, default_value = "imported via CLI")]
+        goal: String,
+        #[arg(long, default_value = "unspecified")]
+        segment: String,
+        #[arg(long)]
+        from_csv: PathBuf,
+    },
+    /// Fetch homepages for all companies in a campaign + write
+    /// extracted facts back into companies.
+    Enrich {
+        #[arg(long)]
+        campaign: String,
+        /// Concurrency cap (don't hammer one host).
+        #[arg(long, default_value_t = 4)]
+        concurrency: u32,
     },
     /// Kill switch — pauses every active campaign.
     Halt {
@@ -87,6 +103,14 @@ fn build_router(claude_model: &str, gemini_model: &str) -> LlmRouter {
     router
 }
 
+fn build_tools() -> ToolRegistry {
+    let mut tools = ToolRegistry::new();
+    tools.register(Arc::new(EchoTool));
+    tools.register(Arc::new(CsvSeedTool::new()));
+    tools.register(Arc::new(HomepageFetchTool::new()));
+    tools
+}
+
 fn parse_hint(s: &str) -> RouteHint {
     match s.to_ascii_lowercase().as_str() {
         "deep" | "deep_reasoning" | "opus" => RouteHint::DeepReasoning,
@@ -95,6 +119,14 @@ fn parse_hint(s: &str) -> RouteHint {
         "sovereign" | "lfi" => RouteHint::Sovereign,
         _ => RouteHint::Reasoning,
     }
+}
+
+async fn require_state(database_url: Option<&str>) -> Result<State> {
+    let url = database_url.context(
+        "SALESMAN_DATABASE_URL not set (or pass --database-url) — required for db operations",
+    )?;
+    let state = State::connect(url).await?;
+    Ok(state)
 }
 
 #[tokio::main]
@@ -107,10 +139,7 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
-
-    let mut tools = ToolRegistry::new();
-    tools.register(Arc::new(EchoTool));
-    let tools = Arc::new(tools);
+    let tools = Arc::new(build_tools());
     let router = Arc::new(build_router(&cli.claude_model, &cli.gemini_model));
 
     match cli.cmd {
@@ -136,27 +165,130 @@ async fn main() -> Result<()> {
             ];
             match orch.run(parse_hint(&hint), messages).await {
                 Ok(resp) => {
-                    println!("ORCH OK ({:?}, {}ms): {}",
-                        resp.finish_reason, resp.usage.latency_ms, resp.message.content);
+                    println!(
+                        "ORCH OK ({:?}, {}ms): {}",
+                        resp.finish_reason, resp.usage.latency_ms, resp.message.content
+                    );
                     if !resp.message.tool_calls.is_empty() {
-                        println!("(model also requested {} tool call(s))",
-                            resp.message.tool_calls.len());
+                        println!(
+                            "(model also requested {} tool call(s))",
+                            resp.message.tool_calls.len()
+                        );
                     }
                 }
                 Err(e) => println!("ORCH ERR: {e}"),
             }
         }
-        Cmd::Discover { query } => {
-            println!("(stub) discover query={query} — lands in Phase 1.1");
+
+        Cmd::Migrate => {
+            let _state = require_state(cli.database_url.as_deref()).await?;
+            println!("migrations applied (or already current)");
         }
+
+        Cmd::Discover {
+            campaign,
+            goal,
+            segment,
+            from_csv,
+        } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let seed = CsvSeed::new();
+            let companies = seed.read_path(&from_csv)?;
+            let company_ids: Vec<_> = companies.iter().map(|c| c.id).collect();
+            let inserted_companies = state.insert_companies(&companies).await?;
+            let campaign_id = state.ensure_campaign(&campaign, &goal, &segment).await?;
+            let inserted_prospects = state
+                .upsert_prospects_for_campaign(campaign_id, &company_ids)
+                .await?;
+            println!(
+                "campaign `{campaign}` (id={campaign_id}): \
+                 parsed {} CSV row(s), inserted {} new companies, \
+                 added {} new prospects",
+                companies.len(),
+                inserted_companies,
+                inserted_prospects,
+            );
+        }
+
+        Cmd::Enrich {
+            campaign,
+            concurrency,
+        } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let campaign_id = state
+                .ensure_campaign(&campaign, "(enrich-only)", "(unspecified)")
+                .await?;
+            let listings = state.list_companies_for_campaign(campaign_id).await?;
+            let total = listings.len();
+            let fetcher = Arc::new(HomepageFetcher::new());
+            let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency.max(1) as usize));
+            let mut tasks = Vec::new();
+            for (id, name, homepage) in listings {
+                let Some(homepage) = homepage else { continue };
+                let url = match Url::parse(&homepage) {
+                    Ok(u) => u,
+                    Err(e) => {
+                        tracing::warn!(%name, err = %e, "skipping unparseable homepage");
+                        continue;
+                    }
+                };
+                let permit = semaphore.clone().acquire_owned().await.unwrap();
+                let fetcher = fetcher.clone();
+                tasks.push(tokio::spawn(async move {
+                    let _permit = permit;
+                    let result = fetcher.fetch(&url).await;
+                    (id, name, result)
+                }));
+            }
+            let mut ok = 0u32;
+            let mut err = 0u32;
+            for t in tasks {
+                let (id, name, res) = t.await.unwrap();
+                match res {
+                    Ok(facts) => {
+                        ok += 1;
+                        tracing::info!(
+                            %name,
+                            status = facts.status,
+                            title = ?facts.title,
+                            signals = facts.tech_signals.len(),
+                            "enriched"
+                        );
+                        if let Err(e) = state
+                            .update_company_enrichment(
+                                id,
+                                facts.title.as_deref(),
+                                facts.meta_description.as_deref(),
+                                &facts.tech_signals,
+                            )
+                            .await
+                        {
+                            tracing::warn!(%name, "%e" = %e, "enrich write-back failed");
+                            err += 1;
+                            ok -= 1;
+                        }
+                    }
+                    Err(e) => {
+                        err += 1;
+                        tracing::warn!(%name, "%e" = %e, "enrich failed");
+                    }
+                }
+            }
+            println!("enrich `{campaign}`: total={total} ok={ok} err={err}");
+        }
+
         Cmd::Halt { reason } => {
             println!("(stub) halt requested: {reason} — lands in Phase 1.4");
         }
+
         Cmd::Tools => {
-            for name in tools.names() {
+            let mut names = tools.names();
+            names.sort();
+            for name in names {
                 println!("- {name}");
             }
         }
+
         Cmd::Backends => {
             let kinds = router.registered_kinds();
             if kinds.is_empty() {
