@@ -15,7 +15,7 @@ pub mod query;
 pub use query::{
     CampaignCostRow, CostSummaryRow, DueProspect, LlmCallRecord, PipelineSummary,
     ProspectWithFacts, PurposeCostRow, ReplyNeedingResponse, ReplyRow, SequenceStepInput,
-    SuppressionRow, TemplateStat, TouchSummary, TriggerEventInsert, TriggerEventRow,
+    SuppressionRow, TemplateStat, ThreadTurn, TouchSummary, TriggerEventInsert, TriggerEventRow,
     UnclassifiedReply,
 };
 

@@ -275,6 +275,23 @@ pub struct ReplyRow {
     pub received_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// One turn in a prospect's conversation thread. Either an
+/// outbound touch we sent or an inbound reply they sent. The
+/// reply-drafter consumes a chronological list of these so it can
+/// reference the prior back-and-forth instead of treating every
+/// reply as if it's the first.
+#[derive(Debug, Clone)]
+pub struct ThreadTurn {
+    pub at: chrono::DateTime<chrono::Utc>,
+    /// "outbound" for touches we sent; "reply" for inbound replies.
+    pub role: String,
+    pub subject: Option<String>,
+    pub body: String,
+    /// Only set on inbound replies — the classifier kind
+    /// (engaged / question / objection / …).
+    pub reply_kind: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct UnclassifiedReply {
     pub reply_id: uuid::Uuid,
@@ -1527,6 +1544,50 @@ impl State {
             });
         }
         Ok(out)
+    }
+
+    /// Chronological conversation thread for a prospect: outbound
+    /// touches we sent + inbound replies they sent, oldest first.
+    /// Used by the reply-drafter to anchor responses in the prior
+    /// back-and-forth instead of treating every reply as if it's
+    /// the first turn. `limit` caps the total turns (touches +
+    /// replies combined) to bound prompt size — keep around 6.
+    pub async fn list_thread_for_prospect(
+        &self,
+        prospect_id: ProspectId,
+        limit: i64,
+    ) -> Result<Vec<ThreadTurn>> {
+        let rows = sqlx::query(
+            "(SELECT 'outbound' AS role, t.queued_at AS at, \
+                     t.subject AS subject, t.body AS body, \
+                     NULL::TEXT AS reply_kind \
+              FROM touches t \
+              WHERE t.prospect_id = $1 \
+                AND t.outcome IN ('sent', 'approved')) \
+             UNION ALL \
+             (SELECT 'reply' AS role, r.received_at AS at, \
+                     r.subject AS subject, r.body AS body, \
+                     r.kind AS reply_kind \
+              FROM replies r \
+              WHERE r.prospect_id = $1) \
+             ORDER BY at \
+             LIMIT $2",
+        )
+        .bind(prospect_id.0)
+        .bind(limit)
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| ThreadTurn {
+                at: r.try_get("at").unwrap_or_else(|_| chrono::Utc::now()),
+                role: r.try_get("role").unwrap_or_default(),
+                subject: r.try_get("subject").unwrap_or(None),
+                body: r.try_get("body").unwrap_or_default(),
+                reply_kind: r.try_get("reply_kind").unwrap_or(None),
+            })
+            .collect())
     }
 
     pub async fn update_reply_kind(&self, reply_id: uuid::Uuid, kind: ReplyKind) -> Result<()> {

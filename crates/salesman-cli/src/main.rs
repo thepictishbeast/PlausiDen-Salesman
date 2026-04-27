@@ -2649,6 +2649,36 @@ async fn main() -> Result<()> {
                     "industry":     r.industry,
                     "description":  r.description,
                 });
+                // U54: pull the prior conversation thread for this
+                // prospect (oldest first, capped) and pass it to the
+                // drafter so multi-turn threads anchor in past context
+                // instead of re-introducing the prospect every reply.
+                let prior_thread_value =
+                    match state.list_thread_for_prospect(r.prospect_id, 6).await {
+                        Ok(turns) => {
+                            let arr: Vec<serde_json::Value> = turns
+                                .into_iter()
+                                .map(|t| {
+                                    serde_json::json!({
+                                        "role": t.role,
+                                        "at": t.at.to_rfc3339(),
+                                        "subject": t.subject,
+                                        "body": t.body,
+                                        "reply_kind": t.reply_kind,
+                                    })
+                                })
+                                .collect();
+                            Some(serde_json::Value::Array(arr))
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                prospect = %r.prospect_id.0, "%e" = %e,
+                                "thread fetch failed; drafting without prior context",
+                            );
+                            None
+                        }
+                    };
+
                 let mut args = serde_json::json!({
                     "prospect": prospect_json,
                     "outbound_subject": r.outbound_subject,
@@ -2657,6 +2687,9 @@ async fn main() -> Result<()> {
                     "inbound_body":     r.inbound_body,
                     "inbound_kind":     r.inbound_kind,
                 });
+                if let Some(thread_v) = prior_thread_value {
+                    args["prior_thread"] = thread_v;
+                }
                 // Pass the pricing catalog through to the drafter
                 // ONLY when this inbound looks pricing-shaped; the
                 // drafter already has the keyword check internally

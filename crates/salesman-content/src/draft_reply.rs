@@ -184,29 +184,29 @@ impl DraftReplyTool {
         format!("{base}{suffix}")
     }
 
-    fn user_prompt(
-        &self,
-        prospect: &Value,
-        outbound_subject: Option<&str>,
-        outbound_body: Option<&str>,
-        inbound_subject: Option<&str>,
-        inbound_body: &str,
-        inbound_kind: &str,
-    ) -> String {
+    fn user_prompt(&self, ctx: ReplyDraftContext<'_>) -> String {
         let mut out = String::new();
         out.push_str("Prospect facts (JSON):\n");
-        out.push_str(&serde_json::to_string_pretty(prospect).unwrap_or_default());
+        out.push_str(&serde_json::to_string_pretty(ctx.prospect).unwrap_or_default());
         out.push_str("\n\n");
-        if let (Some(sub), Some(body)) = (outbound_subject, outbound_body) {
+        if let Some(thread_v) = ctx.prior_thread
+            && let Some(turns) = thread_v.as_array()
+            && !turns.is_empty()
+        {
+            out.push_str(format_prior_thread(turns).as_str());
+        }
+        if let (Some(sub), Some(body)) = (ctx.outbound_subject, ctx.outbound_body) {
             out.push_str(&format!(
-                "Original outbound (your earlier message):\n> Subject: {sub}\n> {}\n\n",
+                "Original outbound (the message they're replying to):\n> Subject: {sub}\n> {}\n\n",
                 body.lines().take(40).collect::<Vec<_>>().join("\n> ")
             ));
         }
         out.push_str(&format!(
-            "Inbound reply (classified as `{inbound_kind}`):\n> Subject: {sub}\n> {body}\n\n",
-            sub = inbound_subject.unwrap_or("(no subject)"),
-            body = inbound_body
+            "Inbound reply (classified as `{kind}`):\n> Subject: {sub}\n> {body}\n\n",
+            kind = ctx.inbound_kind,
+            sub = ctx.inbound_subject.unwrap_or("(no subject)"),
+            body = ctx
+                .inbound_body
                 .lines()
                 .take(80)
                 .collect::<Vec<_>>()
@@ -215,6 +215,59 @@ impl DraftReplyTool {
         out.push_str("Draft the reply now.\n");
         out
     }
+}
+
+/// Bundle of inputs for `DraftReplyTool::user_prompt`. Keeps the
+/// method signature under the seven-arg lint and gives callers one
+/// thing to construct instead of passing six positional Options.
+#[derive(Debug, Clone, Copy)]
+pub struct ReplyDraftContext<'a> {
+    pub prospect: &'a Value,
+    pub prior_thread: Option<&'a Value>,
+    pub outbound_subject: Option<&'a str>,
+    pub outbound_body: Option<&'a str>,
+    pub inbound_subject: Option<&'a str>,
+    pub inbound_body: &'a str,
+    pub inbound_kind: &'a str,
+}
+
+/// Render a prior-thread JSON array (each element a
+/// `{ role, at, subject, body, reply_kind? }` from
+/// `State::list_thread_for_prospect`) into a compact
+/// "CONVERSATION HISTORY" block for the reply-drafter prompt.
+/// Excludes the most recent two turns (the inbound being replied
+/// to and the outbound it's responding to) — those are already
+/// supplied in detail elsewhere in the prompt. Each prior body
+/// is line-truncated so the total prompt stays bounded.
+pub fn format_prior_thread(turns: &[Value]) -> String {
+    if turns.len() <= 2 {
+        return String::new();
+    }
+    let earlier = &turns[..turns.len() - 2];
+    let mut out = String::from(
+        "Conversation history (oldest → newest, excluding the two most recent turns):\n",
+    );
+    for t in earlier {
+        let role = t.get("role").and_then(|v| v.as_str()).unwrap_or("?");
+        let at = t.get("at").and_then(|v| v.as_str()).unwrap_or("?");
+        let subject = t.get("subject").and_then(|v| v.as_str()).unwrap_or("");
+        let body = t.get("body").and_then(|v| v.as_str()).unwrap_or("");
+        let kind = t
+            .get("reply_kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let kind_tag = if kind.is_empty() {
+            String::new()
+        } else {
+            format!(" ({kind})")
+        };
+        out.push_str(&format!("- [{role}{kind_tag} @ {at}] {subject}\n"));
+        for line in body.lines().take(6) {
+            out.push_str(&format!("    {line}\n"));
+        }
+    }
+    out.push('\n');
+    out
 }
 
 #[async_trait]
@@ -313,6 +366,7 @@ impl Tool for DraftReplyTool {
             .map(str::to_string);
         let meeting_calendar = args.0.get("meeting_calendar").cloned();
         let objection_match = args.0.get("objection_match").cloned();
+        let prior_thread = args.0.get("prior_thread").cloned();
 
         // Refuse to draft on terminal kinds. The classifier already
         // suppressed optout/bounce; spam shouldn't get a reply.
@@ -345,14 +399,15 @@ impl Tool for DraftReplyTool {
         } else {
             self.system_prompt()
         };
-        let user = self.user_prompt(
-            &prospect,
-            outbound_subject.as_deref(),
-            outbound_body.as_deref(),
-            inbound_subject.as_deref(),
-            &inbound_body,
-            &inbound_kind,
-        );
+        let user = self.user_prompt(ReplyDraftContext {
+            prospect: &prospect,
+            prior_thread: prior_thread.as_ref(),
+            outbound_subject: outbound_subject.as_deref(),
+            outbound_body: outbound_body.as_deref(),
+            inbound_subject: inbound_subject.as_deref(),
+            inbound_body: &inbound_body,
+            inbound_kind: &inbound_kind,
+        });
 
         let req = ChatRequest {
             messages: vec![
@@ -689,5 +744,53 @@ mod tests {
             .expect("should match");
         assert_eq!(v["key"], "trust");
         assert_eq!(v["posture"], "honest");
+    }
+
+    // -----------------------------------------------------------------
+    // U54: prior-thread formatting
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn format_prior_thread_skips_when_under_three_turns() {
+        // Two turns: those are the inbound + outbound shown elsewhere
+        // in the prompt, so we'd duplicate. Should produce empty.
+        let turns = vec![
+            serde_json::json!({"role":"outbound","at":"t1","subject":"hi","body":"a"}),
+            serde_json::json!({"role":"reply","at":"t2","subject":"re: hi","body":"b"}),
+        ];
+        assert!(format_prior_thread(&turns).is_empty());
+    }
+
+    #[test]
+    fn format_prior_thread_excludes_last_two() {
+        let turns = vec![
+            serde_json::json!({"role":"outbound","at":"t1","subject":"intro","body":"a1\na2"}),
+            serde_json::json!({"role":"reply","at":"t2","subject":"re: intro","body":"b1","reply_kind":"engaged"}),
+            serde_json::json!({"role":"outbound","at":"t3","subject":"re: intro","body":"c1"}),
+            serde_json::json!({"role":"reply","at":"t4","subject":"re: intro","body":"d1"}),
+        ];
+        let out = format_prior_thread(&turns);
+        // First two turns appear; last two excluded.
+        assert!(out.contains("[outbound @ t1]"), "got: {out}");
+        assert!(out.contains("[reply (engaged) @ t2]"), "got: {out}");
+        assert!(!out.contains("@ t3]"));
+        assert!(!out.contains("@ t4]"));
+        // Body lines should be indented.
+        assert!(out.contains("    a1"));
+    }
+
+    #[test]
+    fn format_prior_thread_truncates_long_bodies() {
+        let many_lines: String = (0..50).map(|i| format!("line{i}\n")).collect();
+        let turns = vec![
+            serde_json::json!({"role":"outbound","at":"t0","subject":"x","body":many_lines}),
+            serde_json::json!({"role":"reply","at":"t1","subject":"x","body":"hi"}),
+            serde_json::json!({"role":"outbound","at":"t2","subject":"x","body":"hi"}),
+        ];
+        let out = format_prior_thread(&turns);
+        assert!(out.contains("line0"));
+        assert!(out.contains("line5"));
+        // Capped at 6 lines per turn per the implementation.
+        assert!(!out.contains("line6"));
     }
 }
