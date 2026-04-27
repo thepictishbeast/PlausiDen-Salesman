@@ -1,0 +1,16 @@
+[Unit]
+Description=Run salesman-daily.sh once a day (autonomous orchestration)
+Requires=salesman-daily.service
+
+[Timer]
+# 07:00 UTC daily. Tune to your timezone — pick a slot that's
+# BEFORE your usual review window so drafts are ready when you
+# open the inbox.
+OnCalendar=*-*-* 07:00:00
+RandomizedDelaySec=10min
+AccuracySec=1min
+Persistent=true
+Unit=salesman-daily.service
+
+[Install]
+WantedBy=timers.target
