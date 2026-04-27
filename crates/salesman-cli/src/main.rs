@@ -4129,14 +4129,14 @@ async fn main() -> Result<()> {
                         .await?;
                     let companies = state.list_companies_for_campaign(campaign_id).await?;
                     println!(
-                        "triggers scan `{campaign}`: probing GDELT for {} companies (max-age {max_age_days}d)\n",
+                        "triggers scan `{campaign}`: probing GDELT + HN for {} companies (max-age {max_age_days}d)\n",
                         companies.len()
                     );
                     let gdelt = salesman_osint::GdeltClient::new();
+                    let hn = salesman_osint::HnClient::new();
                     let mut new_inserts = 0u32;
                     let mut probed = 0u32;
                     for (_company_id, name, _homepage) in &companies {
-                        // Find the prospect-id for this company in this campaign.
                         let prospect_id = match state
                             .find_prospect_by_company_in_campaign(campaign_id, _company_id.clone())
                             .await?
@@ -4145,16 +4145,17 @@ async fn main() -> Result<()> {
                             None => continue,
                         };
                         probed += 1;
+
+                        // ---- GDELT (news) ----
                         let hits = match gdelt.search_news(name, max_per_prospect as u32).await {
                             Ok(h) => h,
                             Err(e) => {
                                 tracing::warn!(company = %name, "%e" = %e, "gdelt search failed");
-                                continue;
+                                vec![]
                             }
                         };
                         for hit in hits {
                             let recency = recency_score_from_seen_at(&hit.seen_at, max_age_days);
-                            // Cheap relevance heuristic: full-name match boosts; partial suffices.
                             let relevance = if hit
                                 .title
                                 .to_ascii_lowercase()
@@ -4170,26 +4171,80 @@ async fn main() -> Result<()> {
                             });
                             match state
                                 .insert_trigger_event(
-                                    prospect_id,
-                                    "gdelt",
-                                    &hit.title,
-                                    Some(&hit.url),
-                                    recency,
-                                    relevance,
-                                    &raw,
+                                    prospect_id, "gdelt", &hit.title, Some(&hit.url),
+                                    recency, relevance, &raw,
                                 )
                                 .await
                             {
                                 Ok(true) => new_inserts += 1,
-                                Ok(false) => {} // duplicate
+                                Ok(false) => {}
                                 Err(e) => {
-                                    tracing::warn!(company = %name, "%e" = %e, "insert_trigger_event failed");
+                                    tracing::warn!(company = %name, "%e" = %e, "insert (gdelt) failed");
+                                }
+                            }
+                        }
+
+                        // ---- HN (community discussion) ----
+                        let hn_hits = match hn.search(name, max_per_prospect as u32).await {
+                            Ok(h) => h,
+                            Err(e) => {
+                                tracing::warn!(company = %name, "%e" = %e, "hn search failed");
+                                vec![]
+                            }
+                        };
+                        for h in hn_hits {
+                            let title = h.title.clone().unwrap_or_else(|| {
+                                h.story_text.clone().unwrap_or_else(|| {
+                                    h.comment_text.clone().unwrap_or_default()
+                                })
+                            });
+                            if title.is_empty() {
+                                continue;
+                            }
+                            // ISO 8601 date — recency_score helper expects YYYYMMDD;
+                            // convert by stripping non-digits and taking first 14.
+                            let condensed: String = h
+                                .created_at
+                                .chars()
+                                .filter(|c| c.is_ascii_digit())
+                                .collect();
+                            let recency = recency_score_from_seen_at(&condensed, max_age_days);
+                            // Title match → high relevance; otherwise body-only mention.
+                            let lc_title = title.to_ascii_lowercase();
+                            let relevance = if lc_title.contains(&name.to_ascii_lowercase()) {
+                                0.85
+                            } else {
+                                0.55
+                            };
+                            let raw = serde_json::json!({
+                                "object_id": h.object_id,
+                                "points": h.points,
+                                "author": h.author,
+                                "created_at": h.created_at,
+                            });
+                            // Prefer the post URL if present; fall back to the
+                            // canonical HN story URL.
+                            let url = h.url.as_deref().filter(|u| !u.is_empty()).unwrap_or(&h.story_url);
+                            // Trim title for column-friendliness (tags + hashes
+                            // can balloon to ≥200 chars).
+                            let headline: String = title.chars().take(200).collect();
+                            match state
+                                .insert_trigger_event(
+                                    prospect_id, "hn", &headline, Some(url),
+                                    recency, relevance, &raw,
+                                )
+                                .await
+                            {
+                                Ok(true) => new_inserts += 1,
+                                Ok(false) => {}
+                                Err(e) => {
+                                    tracing::warn!(company = %name, "%e" = %e, "insert (hn) failed");
                                 }
                             }
                         }
                     }
                     println!(
-                        "triggers scan complete: probed {probed} prospect(s); inserted {new_inserts} new trigger(s). \
+                        "triggers scan complete: probed {probed} prospect(s); inserted {new_inserts} new trigger(s) across GDELT + HN. \
                          Run `salesman triggers list --campaign {campaign}` to review."
                     );
                 }
