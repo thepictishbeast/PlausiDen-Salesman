@@ -1,0 +1,45 @@
+# Default robots.txt for the salesman-rendered marketing site.
+# Allow well-known search engines + reading bots.
+# Disallow LLM training crawlers by default — flip to allow if owner
+# decides they want PlausiDen content in those datasets.
+
+User-agent: Googlebot
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+User-agent: DuckDuckBot
+Allow: /
+
+User-agent: Brave-Search-Bot
+Allow: /
+
+# LLM training crawlers — opt OUT by default.
+User-agent: GPTBot
+Disallow: /
+
+User-agent: ClaudeBot
+Disallow: /
+
+User-agent: Google-Extended
+Disallow: /
+
+User-agent: PerplexityBot
+Disallow: /
+
+User-agent: ChatGPT-User
+Disallow: /
+
+User-agent: cohere-ai
+Disallow: /
+
+User-agent: anthropic-ai
+Disallow: /
+
+# Default for everyone else
+User-agent: *
+Allow: /
+Crawl-delay: 5
+
+Sitemap: https://plausiden.com/sitemap.xml
