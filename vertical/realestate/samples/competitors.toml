@@ -1,0 +1,66 @@
+# Real-estate competitor library — when a lead/seller mentions
+# one of these in a reply, the operator gets pinged + the
+# objection-library "online-only" + "fees-too-high" branches kick in
+# during reply drafting.
+
+[[competitors]]
+name = "Zillow"
+aliases = ["zillow", "zestimate"]
+positioning = "Listing search + algorithmic estimate; not transactional, not local."
+where_we_win = [
+    "real comps from inside the market, not algorithmic averages",
+    "actual showings + negotiation; Zillow can't represent you",
+    "local context: schools, HOAs, flood, traffic, upcoming construction",
+]
+
+[[competitors]]
+name = "Redfin"
+aliases = ["redfin"]
+positioning = "Discount-fee brokerage; salaried agents; less per-client time."
+where_we_win = [
+    "your transaction isn't a quota line item",
+    "negotiation experience on multiple-offer + appraisal-gap situations",
+    "the agent who took the listing is the one who shows up to closing",
+]
+
+[[competitors]]
+name = "Compass"
+aliases = ["compass"]
+positioning = "Tech-forward national brokerage with a marketing-heavy reputation."
+
+[[competitors]]
+name = "Opendoor"
+aliases = ["opendoor", "ibuyer", "offerpad"]
+positioning = "Instant-cash-offer iBuyer; typically 8-12% below market net of fees."
+where_we_win = [
+    "list-price often nets 10-20% more even after our commission",
+    "they make money on the resale; the spread comes out of your equity",
+    "we handle the convenience side (showings, paperwork) without taking the spread",
+]
+
+[[competitors]]
+name = "FSBO"
+aliases = ["fsbo", "for sale by owner"]
+positioning = "DIY listing + sale; ~8% of US sales; works best for off-market private buyers."
+
+[[competitors]]
+name = "Sotheby's"
+aliases = ["sotheby's", "sothebys"]
+positioning = "Luxury-brand brokerage with global marketing reach."
+
+[[competitors]]
+name = "Keller Williams"
+aliases = ["keller williams", "kw"]
+positioning = "Largest US franchise; agent-quality varies widely by office."
+
+[[competitors]]
+name = "Coldwell Banker"
+aliases = ["coldwell banker", "cb"]
+
+[[competitors]]
+name = "REMAX"
+aliases = ["remax", "re/max"]
+
+[[competitors]]
+name = "Berkshire Hathaway"
+aliases = ["berkshire hathaway", "bhhs"]

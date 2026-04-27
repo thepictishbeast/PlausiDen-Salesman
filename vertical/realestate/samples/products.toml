@@ -1,0 +1,55 @@
+# Real-estate "products" — what an agent offers. Auto-angle picker
+# uses these to match a lead's situation to the right service.
+
+[[products]]
+name = "Listing"
+one_liner = "Full-service listing — pricing, marketing, showings, negotiation, close."
+ideal_customer = "Homeowner ready to sell in the next 1-3 months. Open to a market-aware list price."
+key_angles = [
+    "data-driven CMA grounded in last-90-day comps in the specific neighborhood",
+    "marketing plan with virtual tour + targeted social",
+    "negotiation track record on multiple-offer situations",
+    "we handle the showings + paperwork; you live your life",
+]
+
+[[products]]
+name = "Buyer Representation"
+one_liner = "Buyer-side fiduciary — search, tour, offer, close. Your interests, not the seller's."
+ideal_customer = "Pre-approved or cash buyer in 30-90 day window. First-timers welcome."
+key_angles = [
+    "I show you EVERY listing in your range, not just my own",
+    "honest neighborhood notes — schools, traffic, flood, HOA gotchas",
+    "negotiation that protects your inspection + appraisal contingencies",
+    "lender + inspector + title referrals from people I'd use myself",
+]
+
+[[products]]
+name = "Investor Acquisition"
+one_liner = "Investor-side rep for SFR + small multifamily. Cap-rate + value-add lens, not lifestyle."
+ideal_customer = "1-30 unit landlord or aspiring landlord. Cash or DSCR loan."
+key_angles = [
+    "I underwrite the deal myself before showing it to you",
+    "rent-comp data from the actual neighborhood, not Zillow estimates",
+    "1031 exchange experience with local QIs",
+    "off-market access via my landlord network",
+]
+
+[[products]]
+name = "Off-Market Pocket Listing"
+one_liner = "Quietly-shopped sale for sellers who want privacy + only-the-right-buyers."
+ideal_customer = "Estate, divorce, or high-profile seller; investor unloading a portfolio."
+key_angles = [
+    "no public-facing MLS exposure",
+    "vetted-buyer-only showings",
+    "we close on YOUR timeline, not the market's",
+]
+
+[[products]]
+name = "Listing Consultation"
+one_liner = "1-hr CMA + listing-prep walkthrough. Honest read on what your house will fetch."
+ideal_customer = "Homeowner thinking about selling but not ready to sign. Tire-kickers welcome."
+key_angles = [
+    "no pressure — sometimes the answer is 'wait 6 months'",
+    "concrete punch list of pre-list improvements with ROI estimates",
+    "we'll show you the comps you don't see on Zillow",
+]

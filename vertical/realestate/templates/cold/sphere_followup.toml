@@ -1,0 +1,37 @@
+# "Sphere of influence" check-in — past clients + neighbors +
+# friends-of-friends. NOT a pitch; a useful local data point that
+# keeps the agent top-of-mind without being annoying.
+
+key         = "sphere_followup"
+description = "Quarterly sphere check-in. One useful local data point + an open door."
+segment     = "sphere"
+delay_days  = 90
+
+subject_seed = "{{neighborhood}} numbers — Q{{quarter}}"
+
+body_seed = """
+{{first_name}},
+
+Quick local data point — homes in {{neighborhood}} this quarter sold at a median {{quarter_median_price}} ({{change_vs_last_quarter}} from last quarter), with {{median_days_on_market}} days on market. {{notable_recent_sale_summary}}.
+
+Not a pitch — just figured you might find it useful. If you ever want a real number on your place, you know where to find me.
+
+Hope you're well.
+
+— {{agent_first_name}}
+"""
+
+mandatory_phrases = ["Reply STOP and I won't follow up."]
+
+forbidden_phrases = [
+  "I hope this email finds you well",
+  "luxury",
+  "stunning",
+  "must-see",
+  "won't last",
+  "act now",
+  "exclusive",
+  "dream home",
+  "thinking of selling",
+  "ready to sell",
+]

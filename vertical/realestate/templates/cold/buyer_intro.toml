@@ -1,0 +1,36 @@
+# First-touch to a registered buyer lead. Anchor in their search
+# criteria + a specific recent comp. The drafter pulls these
+# placeholders from the prospect facts.
+
+key         = "buyer_intro"
+description = "First-touch to a buyer who registered for listing alerts."
+segment     = "buyer"
+delay_days  = 0
+
+subject_seed = "{{neighborhood}} comps for the price range you set"
+
+body_seed = """
+{{first_name}},
+
+Saw your alert for {{bed_count}}+ bedroom homes in {{neighborhood}} under {{max_price}}. Three new ones came up this week — the standout is {{specific_listing_address_or_signal}}.
+
+Want me to show you that one + two others I'd actually walk into myself? I keep my buyer list short — I'd rather see five with you than fifty.
+
+— {{agent_first_name}}
+{{agent_brokerage}} | {{license_number}}
+"""
+
+mandatory_phrases = ["Reply STOP and I won't follow up."]
+
+forbidden_phrases = [
+  "I hope this email finds you well",
+  "luxury",
+  "stunning",
+  "tastefully",
+  "must-see",
+  "dream home",
+  "won't last",
+  "act now",
+  "exclusive",
+  "I came across",
+]

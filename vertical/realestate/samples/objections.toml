@@ -1,0 +1,108 @@
+# Real-estate objection library — what sellers + buyers actually
+# push back with. Talking points are anchor-facts, not scripts.
+
+[[objections]]
+key = "fees-too-high"
+matches = [
+    "commission too high",
+    "commission is high",
+    "6%",
+    "6 percent",
+    "5%",
+    "save the commission",
+    "discount agent",
+]
+talking_points = [
+    "Total commission is split with the buyer's agent; my side is half of what gets quoted.",
+    "Last 12 months in this market: agent-listed homes sold ~9% higher net than FSBO after concessions.",
+    "Pricing strategy + marketing reach is what offsets the fee — happy to show you the comps.",
+    "Open to a flexible structure if there's a clean reason (off-market, repeat client, two-deal package).",
+]
+posture = "calm; no defensiveness; lead with the math, not the feelings"
+
+[[objections]]
+key = "not-the-right-time"
+matches = [
+    "not the right time",
+    "wait until spring",
+    "wait for rates",
+    "market is bad",
+    "market is crashing",
+    "going to drop",
+]
+talking_points = [
+    "Acknowledge the timing concern; do NOT push.",
+    "Local data point: in this submarket, last 90 days have shown X — actual numbers, not vibes.",
+    "Offer to set a price-alert + send a 1-page market memo monthly so they can decide on real data.",
+    "If they're serious about waiting, set a calendar reminder for the trigger they care about (rates ≤ X%, season change).",
+]
+posture = "respectful; ground in real local numbers; leave a useful artifact"
+
+[[objections]]
+key = "FSBO"
+matches = [
+    "fsbo",
+    "for sale by owner",
+    "doing it myself",
+    "selling it ourselves",
+    "list it on zillow",
+]
+talking_points = [
+    "FSBO can absolutely work — about 8% of sales nationally.",
+    "Things FSBO sellers most commonly miss: pricing strategy under multiple offers, financing-contingency vetting, appraisal gap negotiation, repair-credit math.",
+    "Offer a free 1-hr consult — I'll tell them what I'd do differently and what's actually working in this market. No commitment.",
+    "If they go FSBO and want à-la-carte help (paperwork review, listing photos, MLS-only listing for $X), say so.",
+]
+posture = "respectful of their choice; offer help without pushing the full package"
+
+[[objections]]
+key = "already-have-an-agent"
+matches = [
+    "already have an agent",
+    "working with an agent",
+    "have a realtor",
+    "have a friend who's an agent",
+]
+talking_points = [
+    "Acknowledge + don't badmouth — small market, agents talk.",
+    "Ask one practical question: 'How's that going? Are they showing you everything in your range?' Their answer tells you everything.",
+    "Leave the door open: 'If anything changes, I'm here.'",
+    "Offer to send the market memo monthly so they have an outside data point.",
+]
+posture = "honest + low-pressure; the door stays open"
+
+[[objections]]
+key = "online-only"
+matches = [
+    "zillow",
+    "redfin",
+    "opendoor",
+    "i'll just buy from",
+    "we can do this online",
+    "ibuyer",
+]
+talking_points = [
+    "Online estimates are useful for a ballpark — they're trained on closed sales, not on what's listed today.",
+    "iBuyer offers: typically 8-12% below market; they need to make money on the resale.",
+    "Zillow Zestimate is ~80% accurate within ±10% on this submarket — fine for browsing, dangerous for pricing.",
+    "Offer a free CMA in person; takes 20 minutes; they can decide what to do with it.",
+]
+posture = "no trash-talk; show concrete numbers; give them an out"
+
+[[objections]]
+key = "trust"
+matches = [
+    "never met you",
+    "don't know you",
+    "any references",
+    "how long have you been doing",
+    "rookie",
+    "new to this",
+]
+talking_points = [
+    "Honest: years in business + closed-deal count + neighborhoods specialized in.",
+    "Offer two recent client references they can call directly — no curated testimonials.",
+    "Public license + reviews — handful of links, not a sales reel.",
+    "Suggest meeting at a coffee shop near them — face-to-face is the fastest trust-builder in this business.",
+]
+posture = "honest about what you are; lead with verifiable, not narrative"

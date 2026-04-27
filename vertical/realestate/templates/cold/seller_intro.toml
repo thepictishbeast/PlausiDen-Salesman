@@ -1,0 +1,38 @@
+# First-touch to a likely seller — sourced from public signals
+# (FSBO sign, expired listing, life-event). Lead with a specific
+# recent neighborhood data point, not a pitch.
+
+key         = "seller_intro"
+description = "First-touch to a likely seller (FSBO / expired listing / life event)."
+segment     = "seller"
+delay_days  = 0
+
+subject_seed = "{{address}} — quick CMA from this week"
+
+body_seed = """
+Hi {{first_name}},
+
+Pulled the most recent comps for {{address}} — the closest two sold at {{comp_one_price}} and {{comp_two_price}} in the last 30 days, both with {{comp_distinguishing_feature}}.
+
+If you're thinking about listing, I'd send you the full sheet (5-7 comps + days-on-market) and a no-pressure read on what your number looks like. Reply yes and I'll have it over today.
+
+If you're not selling, ignore this — I won't follow up.
+
+— {{agent_first_name}}
+{{agent_brokerage}} | {{license_number}}
+"""
+
+mandatory_phrases = ["I won't follow up."]
+
+forbidden_phrases = [
+  "I hope this email finds you well",
+  "luxury",
+  "stunning",
+  "must-see",
+  "won't last",
+  "act now",
+  "exclusive",
+  "dream home",
+  "I came across",
+  "thinking of selling",
+]
