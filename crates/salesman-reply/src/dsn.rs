@@ -387,4 +387,43 @@ Diagnostic-Code: smtp; 550-5.1.1 The email account that you tried to reach does 
         let d = r.detect_dsn().unwrap();
         assert_eq!(d.status.as_deref(), Some("4.2.0"));
     }
+
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+
+        // detect_dsn never panics on arbitrary header / body content.
+        #[test]
+        fn detect_never_panics(
+            from in ".{0,64}",
+            subject in ".{0,128}",
+            body in ".{0,512}",
+        ) {
+            let r = reply(&from, &subject, &body);
+            let _ = r.detect_dsn();
+        }
+
+        // Replies that look nothing like a DSN never get classified
+        // as one. We use a printable-ASCII generator that excludes
+        // the trigger keywords.
+        #[test]
+        fn benign_reply_never_detected(
+            // exclude DSN signal words
+            body in "[a-zA-Z0-9 .,!?\\n]{0,400}",
+        ) {
+            let body_lc = body.to_ascii_lowercase();
+            let has_signal = body_lc.contains("final-recipient")
+                || body_lc.contains("status: 5.")
+                || body_lc.contains("status: 4.")
+                || body_lc.contains("could not be delivered")
+                || body_lc.contains("recipient failed");
+            if has_signal {
+                return Ok(()); // not benign
+            }
+            let r = reply("alice@customer.example", "Re: hello", &body);
+            let detected = r.detect_dsn().is_some();
+            prop_assert!(!detected);
+        }
+    }
 }

@@ -2784,6 +2784,7 @@ dependencies = [
  "chrono",
  "futures",
  "mail-parser",
+ "proptest",
  "rustls",
  "rustls-pki-types",
  "salesman-core",
