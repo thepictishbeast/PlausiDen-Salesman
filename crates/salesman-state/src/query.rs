@@ -14,6 +14,34 @@ use salesman_core::{
 use salesman_receipts::Receipt;
 use sqlx::Row;
 
+/// Fire a Postgres NOTIFY on the `salesman_event` channel. Any LISTEN-er
+/// (e.g. PlausiDen-CRM ingest) gets the JSON payload. Best-effort; a
+/// failure here does NOT fail the calling write — we log + continue.
+pub(crate) async fn notify_event(pool: &sqlx::PgPool, kind: &str, payload: serde_json::Value) {
+    let envelope = serde_json::json!({
+        "kind": kind,
+        "at": chrono::Utc::now().to_rfc3339(),
+        "payload": payload,
+    });
+    // pg_notify safely escapes the string; max payload 8000 bytes per
+    // pg_notify limits. We truncate aggressively.
+    let json = envelope.to_string();
+    let json_truncated = if json.len() > 7800 {
+        let mut s = json[..7800].to_string();
+        s.push_str("...TRUNCATED");
+        s
+    } else {
+        json
+    };
+    let result = sqlx::query("SELECT pg_notify('salesman_event', $1)")
+        .bind(&json_truncated)
+        .execute(pool)
+        .await;
+    if let Err(e) = result {
+        tracing::warn!("%e" = %e, kind, "notify_event failed (non-fatal)");
+    }
+}
+
 fn random_pick(keys: &[String], default_key: &str) -> String {
     if keys.is_empty() {
         return default_key.to_string();
@@ -641,7 +669,7 @@ impl State {
 
     /// Move a touch from `approved` → `sent`. Records sent_at and a
     /// receipt_id linkage. Strict — does not transition from any other
-    /// state.
+    /// state. Fires a `touch.sent` NOTIFY on success.
     pub async fn mark_touch_sent(
         &self,
         touch_id: TouchId,
@@ -659,6 +687,18 @@ impl State {
         .execute(self.pool())
         .await
         .map_err(|e| Error::Db(e.to_string()))?;
+        if result.rows_affected() > 0 {
+            notify_event(
+                self.pool(),
+                "touch.sent",
+                serde_json::json!({
+                    "touch_id": touch_id.to_string(),
+                    "receipt_id": receipt_id.to_string(),
+                    "sent_at": sent_at.to_rfc3339(),
+                }),
+            )
+            .await;
+        }
         Ok(result.rows_affected())
     }
 
@@ -785,6 +825,17 @@ impl State {
         .execute(self.pool())
         .await
         .map_err(|e| Error::Db(e.to_string()))?;
+
+        notify_event(
+            self.pool(),
+            "reply.received",
+            serde_json::json!({
+                "reply_id": reply_id.to_string(),
+                "prospect_id": prospect_id_uuid.to_string(),
+                "from_address": from_address,
+            }),
+        )
+        .await;
         Ok(Some(reply_id))
     }
 
@@ -919,6 +970,18 @@ impl State {
         if summary.is_empty() {
             summary.push_str("no transition (kind doesn't drive a state change)");
         }
+        // Notify after the tx commits.
+        notify_event(
+            self.pool(),
+            "reply.classified",
+            serde_json::json!({
+                "reply_id": reply_id.to_string(),
+                "prospect_id": prospect_id.to_string(),
+                "kind": kind.to_string(),
+                "summary": summary,
+            }),
+        )
+        .await;
         Ok(summary)
     }
 
