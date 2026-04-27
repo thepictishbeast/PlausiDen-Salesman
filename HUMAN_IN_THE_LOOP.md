@@ -24,6 +24,21 @@ even if tests pass.
 **Code:** `salesman-cli/src/main.rs::Cmd::Approve` +
 `salesman-state::approve_touch` (UPDATE WHERE outcome = 'awaiting_approval')
 
+### Gate 1.5 — proof-send to operator inbox (recommended for first real send)
+**Where:** `salesman send-pending --campaign <name> --for-real --test-send-to=<your-address>`
+**Who:** human operator
+**What it does:**
+- Sends EXACTLY ONE message — the first approved touch — but
+  redirected to the operator's address instead of the prospect's.
+- Body + subject + headers are the REAL ones (so the operator sees
+  exactly what the prospect would see).
+- Touch is NOT marked as sent. No receipt is logged. The real
+  recipient is NOT contacted.
+- Operator reads the message, verifies it looks right, then re-runs
+  WITHOUT `--test-send-to` to send for real.
+**Recommended use:** every first run against a new sender identity,
+new template, or new prospect segment.
+
 ### Gate 2 — `approved` → `sent`
 **Where:** `salesman send-pending --campaign <name> --for-real`
 **Who:** human operator (the `--for-real` flag is the act)
