@@ -219,8 +219,19 @@ enum Cmd {
         domain_quarantine_threshold: i64,
         /// HARD cap on touches sent in this single invocation. A
         /// reputation safeguard against accidental large batches.
+        /// Note: by default the sender-warmup curve may further
+        /// LOWER this cap; the effective cap is min(max_batch,
+        /// warmup_cap_for_age). Pass --no-warmup to skip the curve.
         #[arg(long, default_value_t = 25)]
         max_batch: u32,
+        /// Disable the sender-warmup gradient. By default a fresh
+        /// campaign caps at 5/day for days 1-3, 10 for days 4-7, 25
+        /// for days 8-14, 100 thereafter — a curve that protects the
+        /// new sender domain's reputation. Pass --no-warmup ONLY if
+        /// you've already warmed this domain via another channel; it
+        /// is NOT recommended.
+        #[arg(long, default_value_t = false)]
+        no_warmup: bool,
         /// Max NEW domains (not previously touched in this campaign)
         /// allowed in one batch. Reputation safeguard against
         /// burning the IP on a fresh list. Operator raises explicitly.
@@ -1270,15 +1281,47 @@ async fn main() -> Result<()> {
             per_domain_max,
             domain_quarantine_threshold,
             max_batch,
+            no_warmup,
             ack_new_domains,
             no_pause,
             confirm_typed,
             test_send_to,
         } => {
+            let warmup = !no_warmup;
             let state = require_state(cli.database_url.as_deref()).await?;
             let campaign_id = state
                 .ensure_campaign(&campaign, "(send-only)", "(unspecified)")
                 .await?;
+
+            // Sender-warmup gradient: a young campaign on a fresh
+            // sender domain MUST start small and ramp. Reputation
+            // damage from a cold-flood is permanent and the cost of
+            // recovery is months. The curve below is conservative and
+            // matches what mailbox providers (especially Gmail) expect
+            // — see Postmaster Tools docs.
+            let age_days = state.campaign_age_days(campaign_id).await.unwrap_or(0);
+            let warmup_cap: u32 = if warmup {
+                match age_days {
+                    0..=2 => 5,
+                    3..=6 => 10,
+                    7..=13 => 25,
+                    _ => 100,
+                }
+            } else {
+                u32::MAX
+            };
+            let effective_max_batch = max_batch.min(warmup_cap);
+            if warmup && effective_max_batch < max_batch {
+                println!(
+                    "warmup: campaign age {age_days}d → cap {effective_max_batch}/batch \
+                     (operator passed --max-batch={max_batch}; gradient takes precedence). \
+                     Pass --no-warmup to override (NOT recommended)."
+                );
+            }
+            // Re-bind so the rest of the function uses the warmup-
+            // adjusted cap without further changes.
+            let max_batch = effective_max_batch;
+
             let approved = state.list_approved_touches(campaign_id).await?;
 
             // ----- reputation pre-flight (BEFORE any SMTP work) ---

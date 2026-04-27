@@ -405,6 +405,25 @@ impl State {
         }))
     }
 
+    /// Days since the campaign was created. Used to enforce the
+    /// sender-warmup gradient — younger campaigns have lower
+    /// per-batch caps to protect the new sender domain's reputation.
+    /// Returns 0 for a campaign created today.
+    pub async fn campaign_age_days(&self, id: CampaignId) -> Result<i64> {
+        let row = sqlx::query(
+            "SELECT EXTRACT(EPOCH FROM (NOW() - created_at))::BIGINT AS secs \
+             FROM campaigns WHERE id = $1",
+        )
+        .bind(id.0)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        let secs = row
+            .and_then(|r| r.try_get::<i64, _>("secs").ok())
+            .unwrap_or(0);
+        Ok((secs / 86400).max(0))
+    }
+
     /// Add (campaign, company) pairs as Prospects in the `New` state.
     /// Idempotent — re-running for the same pair is a no-op.
     pub async fn upsert_prospects_for_campaign(
