@@ -1345,7 +1345,13 @@ async fn main() -> Result<()> {
                 anyhow::bail!("touch {touch} is in `{outcome}`, not awaiting_approval");
             }
 
-            let risk = salesman_detector::score(&body, subject.as_deref());
+            // Fact-trace gate (U44): pull the prospect facts the
+            // drafter saw, so the detector can verify that any
+            // numeric claim in the body traces back to real input
+            // data — not a fabricated stat.
+            let facts = state.touch_facts(touch_id).await.unwrap_or(None);
+            let risk =
+                salesman_detector::score_with_facts(&body, subject.as_deref(), facts.as_ref());
             if !risk.passes(detector_threshold) {
                 if let Some(ref reason) = force_override {
                     tracing::warn!(

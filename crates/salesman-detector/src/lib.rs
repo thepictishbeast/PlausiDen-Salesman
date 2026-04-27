@@ -56,6 +56,25 @@ pub struct SignalHit {
 /// Run the ensemble against a draft body. Subject is checked too if
 /// non-empty.
 pub fn score(body: &str, subject: Option<&str>) -> RiskScore {
+    score_with_facts(body, subject, None)
+}
+
+/// Same as `score`, plus a hard fact-trace gate when `facts` is
+/// provided. Every numeric claim in the body whose digit run does
+/// NOT appear in the facts JSONB is flagged as `fabricated_numeric_claim`
+/// at weight 0.85 — strong enough to fail the standard 0.50 detector
+/// threshold on its own. The soft `unanchored_numeric_claim` heuristic
+/// is suppressed when facts are present (the harder check supersedes it).
+///
+/// Why this matters: stops the drafter from inventing stats. If the
+/// LLM writes "saved 60% on incident response" but no input fact
+/// mentions 60, the claim was hallucinated and the message MUST NOT
+/// ship. Closes the single biggest "AI invents numbers" failure mode.
+pub fn score_with_facts(
+    body: &str,
+    subject: Option<&str>,
+    facts: Option<&serde_json::Value>,
+) -> RiskScore {
     let mut hits = Vec::new();
     if let Some(s) = subject {
         check_subject(s, &mut hits);
@@ -66,7 +85,11 @@ pub fn score(body: &str, subject: Option<&str>) -> RiskScore {
     check_overused_signal_words(body, &mut hits);
     check_not_just_x_its_y(body, &mut hits);
     check_marketing_superlative_density(body, &mut hits);
-    check_unanchored_numeric_claims(body, &mut hits);
+    if let Some(f) = facts {
+        check_fabricated_numeric_claims(body, f, &mut hits);
+    } else {
+        check_unanchored_numeric_claims(body, &mut hits);
+    }
     check_empty_hedge_phrases(body, &mut hits);
     check_recap_connectives(body, &mut hits);
 
@@ -283,6 +306,185 @@ fn check_unanchored_numeric_claims(body: &str, out: &mut Vec<SignalHit>) {
             evidence: format!("{hits} numeric claim(s); samples: {samples:?}"),
         });
     }
+}
+
+/// Hard fact-trace gate: every numeric claim in `body` must trace
+/// back to a digit run in `facts` (the JSONB the drafter received).
+///
+/// The check is digit-run based, not semantic: extract each numeric
+/// claim from body (same scanner the soft heuristic uses), then look
+/// up its DIGIT STRING in a serialized walk of the facts JSON. If
+/// the digits don't appear with non-digit boundaries on either side,
+/// the claim is fabricated and we emit a high-weight hit.
+///
+/// BUG ASSUMPTION: digit-run match is necessary but not sufficient
+/// for "the claim is true". A draft that says "60% improvement in
+/// breach rate" passes the gate if any input fact mentions 60 (e.g.
+/// "founded in 1960"). That's an acceptable false-NEGATIVE rate at
+/// this layer; the higher-weight strong-tell signals + operator
+/// review still gate the send. The point is to catch hallucinations,
+/// not enforce semantic faithfulness.
+fn check_fabricated_numeric_claims(
+    body: &str,
+    facts: &serde_json::Value,
+    out: &mut Vec<SignalHit>,
+) {
+    let haystack = fact_haystack(facts);
+    let bytes = body.as_bytes();
+    let mut samples: Vec<String> = Vec::new();
+    let mut hits = 0u32;
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c.is_ascii_digit() {
+            let start = i;
+            while i < bytes.len()
+                && (bytes[i].is_ascii_digit() || bytes[i] == b',' || bytes[i] == b'.')
+            {
+                i += 1;
+            }
+            if i >= bytes.len() {
+                break;
+            }
+            let after = bytes[i];
+            let mut j = i;
+            while j < bytes.len() && bytes[j] == b' ' {
+                j += 1;
+            }
+            if j >= bytes.len() {
+                break;
+            }
+            let suffix = bytes[j];
+            let next_after_i_ok = i + 1 >= bytes.len() || !bytes[i + 1].is_ascii_alphanumeric();
+            let next_after_j_ok = j + 1 >= bytes.len() || !bytes[j + 1].is_ascii_alphanumeric();
+            let is_claim_shape = (after == b'%' || suffix == b'%')
+                || ((after == b'x' || after == b'X') && next_after_i_ok)
+                || ((suffix == b'x' || suffix == b'X') && next_after_j_ok)
+                || (start > 0 && bytes[start - 1] == b'$')
+                || ((suffix == b'K' || suffix == b'M' || suffix == b'B') && next_after_j_ok);
+            if is_claim_shape {
+                let digits: String = body[start..i]
+                    .chars()
+                    .filter(|c| c.is_ascii_digit())
+                    .collect();
+                if !digits.is_empty() {
+                    // The claim "$40K" can be quoted in facts as "40K"
+                    // OR as "$40,000". Build candidate digit forms so
+                    // either spelling anchors the claim.
+                    let mut candidates: Vec<String> = vec![digits.clone()];
+                    let magnitude = if suffix == b'K' {
+                        Some(1_000u64)
+                    } else if suffix == b'M' {
+                        Some(1_000_000u64)
+                    } else if suffix == b'B' {
+                        Some(1_000_000_000u64)
+                    } else {
+                        None
+                    };
+                    if let Some(mag) = magnitude
+                        && let Ok(n) = digits.parse::<u64>()
+                        && let Some(scaled) = n.checked_mul(mag)
+                    {
+                        candidates.push(scaled.to_string());
+                    }
+                    let any_match = candidates
+                        .iter()
+                        .any(|c| haystack_contains_number(&haystack, c));
+                    if !any_match {
+                        hits += 1;
+                        if samples.len() < 3 {
+                            let lo = start.saturating_sub(20);
+                            let hi = (j + 4).min(bytes.len());
+                            let mut a = lo;
+                            while !body.is_char_boundary(a) && a > 0 {
+                                a -= 1;
+                            }
+                            let mut b = hi;
+                            while !body.is_char_boundary(b) && b < body.len() {
+                                b += 1;
+                            }
+                            samples.push(body[a..b].chars().take(80).collect::<String>());
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+        i += 1;
+    }
+    if hits > 0 {
+        out.push(SignalHit {
+            name: "fabricated_numeric_claim".into(),
+            weight: 0.85,
+            evidence: format!(
+                "{hits} numeric claim(s) NOT traceable to input facts; samples: {samples:?}"
+            ),
+        });
+    }
+}
+
+/// Recursive walk of a JSON value into a single text haystack.
+/// Joins all leaf strings + numbers with a space delimiter so a
+/// digit-run search is just `str::contains` against the result.
+pub fn fact_haystack(v: &serde_json::Value) -> String {
+    let mut out = String::new();
+    fact_haystack_walk(v, &mut out);
+    out
+}
+
+fn fact_haystack_walk(v: &serde_json::Value, out: &mut String) {
+    match v {
+        serde_json::Value::String(s) => {
+            out.push(' ');
+            out.push_str(s);
+        }
+        serde_json::Value::Number(n) => {
+            out.push(' ');
+            out.push_str(&n.to_string());
+        }
+        serde_json::Value::Bool(b) => {
+            out.push(' ');
+            out.push_str(if *b { "true" } else { "false" });
+        }
+        serde_json::Value::Array(arr) => {
+            for x in arr {
+                fact_haystack_walk(x, out);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (k, x) in map {
+                out.push(' ');
+                out.push_str(k);
+                fact_haystack_walk(x, out);
+            }
+        }
+        serde_json::Value::Null => {}
+    }
+}
+
+/// Substring-search `digits` in `haystack` requiring non-digit
+/// boundaries on both sides — so "40" matches "$40K" but not "204"
+/// or "1407". Strips commas from haystack to handle "$40,000" → "40000".
+fn haystack_contains_number(haystack: &str, digits: &str) -> bool {
+    let normalized: String = haystack.chars().filter(|&c| c != ',').collect();
+    let bytes = normalized.as_bytes();
+    let needle = digits.as_bytes();
+    if needle.is_empty() || needle.len() > bytes.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i + needle.len() <= bytes.len() {
+        if &bytes[i..i + needle.len()] == needle {
+            let left_ok = i == 0 || !bytes[i - 1].is_ascii_digit();
+            let right_ok =
+                i + needle.len() == bytes.len() || !bytes[i + needle.len()].is_ascii_digit();
+            if left_ok && right_ok {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
 }
 
 /// Density of marketing-superlative words. One is fine; three+
@@ -530,5 +732,130 @@ mod tests {
         let reasons = r.reasons();
         assert!(!reasons.is_empty());
         assert!(reasons.iter().any(|s| s.contains("cliche_opener")));
+    }
+
+    // -----------------------------------------------------------------
+    // U44: fact-trace gate
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn anchored_numeric_claim_passes_fact_trace() {
+        // Body cites 60% — the input facts say the company posted a
+        // 60% YoY growth blog. Anchored, no hit.
+        let body = "Saw your 60% YoY growth post — the breakdown on \
+                    incident-response cost was the part I'd love to compare. \
+                    Reply STOP and I won't follow up.";
+        let facts = serde_json::json!({
+            "company": "Acme",
+            "recent_signals": ["posted 60% YoY growth blog"],
+        });
+        let r = score_with_facts(body, None, Some(&facts));
+        assert!(
+            !r.hits.iter().any(|h| h.name == "fabricated_numeric_claim"),
+            "got reasons={:?}",
+            r.reasons()
+        );
+    }
+
+    #[test]
+    fn fabricated_numeric_claim_fails_fact_trace() {
+        // Body cites 80% — facts mention NO 80. Hallucinated.
+        let body = "We helped a peer cut their breach-response cost by 80% \
+                    — would love to walk you through the same play. \
+                    Reply STOP and I won't follow up.";
+        let facts = serde_json::json!({
+            "company": "Acme",
+            "recent_signals": ["posted Q4 growth blog", "hired CISO"],
+        });
+        let r = score_with_facts(body, None, Some(&facts));
+        assert!(
+            r.hits.iter().any(|h| h.name == "fabricated_numeric_claim"),
+            "expected fabricated_numeric_claim hit; got {:?}",
+            r.reasons()
+        );
+        assert!(r.score >= 0.80, "expected hard fail; got {}", r.score);
+    }
+
+    #[test]
+    fn fact_trace_handles_dollar_suffix() {
+        // "$40K" in body, fact says "ARR: $40,000". Comma-stripping
+        // should let the digit run "40" anchor on "40000".
+        let body = "We saw your $40K ARR milestone — congrats. The play \
+                    we ran for a peer at $40K was to instrument retries \
+                    first. Reply STOP and I won't follow up.";
+        let facts = serde_json::json!({
+            "company": "Acme",
+            "metrics": { "arr_dollars": "$40,000" },
+        });
+        let r = score_with_facts(body, None, Some(&facts));
+        assert!(
+            !r.hits.iter().any(|h| h.name == "fabricated_numeric_claim"),
+            "got reasons={:?}",
+            r.reasons()
+        );
+    }
+
+    #[test]
+    fn fact_trace_rejects_substring_of_unrelated_number() {
+        // Body cites 40 — facts only mention 1407. Digit boundary
+        // check should reject the substring match.
+        let body = "Cut response time by 40% in our pilot, which mirrors \
+                    the breakdown your team posted. Cut by 40% again. \
+                    Reply STOP and I won't follow up.";
+        let facts = serde_json::json!({
+            "company": "Acme",
+            "incident_id": "INC-1407",
+        });
+        let r = score_with_facts(body, None, Some(&facts));
+        assert!(
+            r.hits.iter().any(|h| h.name == "fabricated_numeric_claim"),
+            "expected fabricated_numeric_claim hit; got {:?}",
+            r.reasons()
+        );
+    }
+
+    #[test]
+    fn fact_trace_no_facts_falls_back_to_soft_heuristic() {
+        // No facts → run the existing soft heuristic; multiple
+        // numeric claims surface as the soft signal, not the hard one.
+        let body = "Cut by 60%, saved $40K, improved 3x. \
+                    Reply STOP and I won't follow up.";
+        let r = score(body, None);
+        assert!(
+            r.hits.iter().any(|h| h.name == "unanchored_numeric_claim"),
+            "expected soft heuristic; got {:?}",
+            r.reasons()
+        );
+        assert!(
+            !r.hits.iter().any(|h| h.name == "fabricated_numeric_claim"),
+            "did not expect hard heuristic without facts",
+        );
+    }
+
+    #[test]
+    fn fact_haystack_walks_nested_objects() {
+        let v = serde_json::json!({
+            "outer": {
+                "inner": ["a", 42, true, { "leaf": "deep" }]
+            },
+            "n": 7
+        });
+        let h = fact_haystack(&v);
+        assert!(h.contains("a"), "missing array string: {h}");
+        assert!(h.contains("42"), "missing array number: {h}");
+        assert!(h.contains("deep"), "missing nested leaf: {h}");
+        assert!(h.contains("7"), "missing top-level number: {h}");
+    }
+
+    #[test]
+    fn haystack_contains_number_respects_boundaries() {
+        // "40" in "1407" must NOT match.
+        assert!(!haystack_contains_number("INC-1407 launched", "40"));
+        // "40" in "$40K" should match.
+        assert!(haystack_contains_number("$40K ARR", "40"));
+        // "40" in "40,000" with comma stripped should match.
+        assert!(haystack_contains_number("ARR $40,000", "40000"));
+        // Empty needle never matches.
+        assert!(!haystack_contains_number("anything", ""));
     }
 }

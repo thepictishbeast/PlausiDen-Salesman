@@ -1173,6 +1173,36 @@ impl State {
         }))
     }
 
+    /// Look up the prospect facts (company display, industry,
+    /// description, tech_signals) the drafter would have seen for a
+    /// given touch. Used by the fact-trace detector gate to verify
+    /// that numeric claims in the draft are anchored in real input
+    /// data, not hallucinated. Returns a JSON object suitable for
+    /// passing to `salesman_detector::score_with_facts`.
+    pub async fn touch_facts(&self, touch_id: TouchId) -> Result<Option<serde_json::Value>> {
+        let row = sqlx::query(
+            "SELECT c.display_name, c.industry, c.description, c.tech_signals
+             FROM touches t
+             JOIN prospects p ON p.id = t.prospect_id
+             JOIN companies c ON c.id = p.company_id
+             WHERE t.id = $1",
+        )
+        .bind(touch_id.0)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(row.map(|r| {
+            serde_json::json!({
+                "company": r.try_get::<String, _>("display_name").unwrap_or_default(),
+                "industry": r.try_get::<Option<String>, _>("industry").unwrap_or(None),
+                "description": r.try_get::<Option<String>, _>("description").unwrap_or(None),
+                "tech_signals": r
+                    .try_get::<serde_json::Value, _>("tech_signals")
+                    .unwrap_or(serde_json::Value::Null),
+            })
+        }))
+    }
+
     /// Look up the to-address for a touch via the prospect's primary
     /// contact (or fall back to None — caller decides what to do).
     pub async fn touch_to_address(&self, touch_id: TouchId) -> Result<Option<String>> {
