@@ -334,9 +334,17 @@ enum Cmd {
         every_seconds: Option<u64>,
     },
     /// Classify all unclassified replies + apply transitions.
+    /// When --competitors is supplied, every classified reply is
+    /// also scanned for competitor mentions; matches land in
+    /// replies.tags->competitors and surface in `salesman alerts`.
     ClassifyReplies {
         #[arg(long, default_value_t = 50)]
         batch: i64,
+        /// Optional competitor catalog TOML (e.g.
+        /// samples/competitors.toml). Mentions get tagged on the
+        /// reply for downstream pivot in the reply-drafter.
+        #[arg(long)]
+        competitors: Option<PathBuf>,
     },
     /// Auto-draft response touches for replies classified as
     /// engaged / question / objection. Each draft lands in the
@@ -1912,13 +1920,22 @@ async fn main() -> Result<()> {
             }
         }
 
-        Cmd::ClassifyReplies { batch } => {
+        Cmd::ClassifyReplies { batch, competitors } => {
             let state = require_state(cli.database_url.as_deref()).await?;
             if router.registered_kinds().is_empty() {
                 anyhow::bail!(
                     "no LLM backends registered (set ANTHROPIC_API_KEY and/or GEMINI_API_KEY)"
                 );
             }
+            let competitor_catalog = match competitors.as_ref() {
+                Some(path) => {
+                    let text = std::fs::read_to_string(path)
+                        .with_context(|| format!("reading competitors {}", path.display()))?;
+                    Some(salesman_content::load_competitors_toml(&text)
+                        .map_err(|e| anyhow::anyhow!(e))?)
+                }
+                None => None,
+            };
             let classifier = ReplyClassifyTool::new(router.clone());
             let unclassified = state.list_unclassified_replies(batch).await?;
             if unclassified.is_empty() {
@@ -1954,8 +1971,26 @@ async fn main() -> Result<()> {
                     .apply_reply_to_prospect(r.reply_id, r.prospect_id, &r.from_address, kind)
                     .await?;
                 *counts.entry(kind_str.clone()).or_default() += 1;
+
+                // Competitor-mention detection: tag the reply if any
+                // competitor name / alias appears in the body.
+                let competitor_note = if let Some(cat) = competitor_catalog.as_ref() {
+                    let hits = cat.detect(&r.body);
+                    if !hits.is_empty() {
+                        let v = serde_json::to_value(&hits).unwrap_or_default();
+                        if let Err(e) = state.set_reply_tag(r.reply_id, "competitors", &v).await {
+                            tracing::warn!(reply = %r.reply_id, "%e" = %e, "set_reply_tag failed");
+                        }
+                        format!(" [competitors: {}]", hits.join(", "))
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                };
+
                 println!(
-                    "[{}] {} → {}: {}",
+                    "[{}] {} → {}: {}{competitor_note}",
                     r.from_address, kind_str, r.reply_id, summary
                 );
             }
@@ -2202,6 +2237,10 @@ async fn main() -> Result<()> {
                 .iter()
                 .filter(|s| s.source == "bounce")
                 .collect();
+            let competitor_replies = state
+                .list_competitor_mention_replies(since_hours, 50)
+                .await
+                .unwrap_or_default();
 
             if cli.json {
                 let v = serde_json::json!({
@@ -2221,6 +2260,14 @@ async fn main() -> Result<()> {
                         "added_at": s.added_at.to_rfc3339(),
                         "target": s.target,
                         "reason": s.reason,
+                    })).collect::<Vec<_>>(),
+                    "competitor_mentions": competitor_replies.iter().map(|(reply, comps, pid)| serde_json::json!({
+                        "received_at": reply.received_at.to_rfc3339(),
+                        "from": reply.from_address,
+                        "kind": reply.kind,
+                        "subject": reply.subject,
+                        "competitors": comps,
+                        "prospect_id": pid.0.to_string(),
                     })).collect::<Vec<_>>(),
                 });
                 println!("{}", serde_json::to_string_pretty(&v)?);
@@ -2279,9 +2326,32 @@ async fn main() -> Result<()> {
                 }
             }
             println!();
+            println!(
+                "=== competitor mentions in replies ({}) ===",
+                competitor_replies.len()
+            );
+            if competitor_replies.is_empty() {
+                println!("  (none — no comparison shopping detected)");
+            } else {
+                for (reply, comps, _) in &competitor_replies {
+                    println!(
+                        "  {} | {} | {} | comparing to: {}",
+                        reply.received_at.format("%Y-%m-%d %H:%M:%SZ"),
+                        reply.from_address,
+                        reply.subject.as_deref().unwrap_or("(no subject)"),
+                        comps.join(", "),
+                    );
+                }
+            }
+            println!();
             // Summary banner — fast triage line for ops at a glance.
             let banner = if !positive.is_empty() {
                 format!("⤴ {} positive reply(ies) — review!", positive.len())
+            } else if !competitor_replies.is_empty() {
+                format!(
+                    "🥊 {} competitor-mention(s) — pivot to comparison",
+                    competitor_replies.len()
+                )
             } else if !optouts.is_empty() || bounces.len() > 3 {
                 format!(
                     "⚠ {} opt-out(s) + {} bounce(s) — investigate list quality",

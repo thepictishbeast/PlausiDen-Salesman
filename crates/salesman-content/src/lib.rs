@@ -13,6 +13,7 @@ pub mod angle_picker;
 pub mod case_study;
 pub mod classify_reply;
 pub mod comparison_page;
+pub mod competitor_detect;
 pub mod draft_email;
 pub mod draft_reply;
 pub mod seo_meta;
@@ -21,6 +22,7 @@ pub use angle_picker::{AnglePick, AnglePickerTool, ProductEntry, load_catalog_to
 pub use case_study::CaseStudyDraftTool;
 pub use classify_reply::{ClassifyReply, ReplyClassifyTool};
 pub use comparison_page::ComparisonPageTool;
+pub use competitor_detect::{CompetitorCatalog, CompetitorEntry, load_competitors_toml};
 pub use draft_email::{ColdEmailDraft, DraftColdEmailTool};
 pub use draft_reply::{DraftReplyTool, ReplyDraft};
 pub use seo_meta::{SeoMeta, SeoMetaTool};

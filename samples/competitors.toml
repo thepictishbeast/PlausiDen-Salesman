@@ -1,0 +1,98 @@
+# Competitor library — fed to the reply-tagger to detect when a
+# prospect mentions an alternative they're considering. The
+# detector is keyword-substring (case-insensitive); add aliases
+# for product variants ("outreach.io" vs "outreach").
+#
+# When a match fires, the reply gets tagged + the operator's
+# `salesman alerts` digest surfaces the prospect with the matched
+# competitors. The reply-drafter (objection library, key=
+# "already-have-X") can pick this up to pivot the response.
+
+[[competitors]]
+name = "Outreach"
+aliases = ["outreach.io", "outreach"]
+positioning = "Outbound at scale; SaaS, holds your data; opaque deliverability."
+where_we_win = [
+    "self-hosted — your data on your hardware",
+    "cryptographic receipt chain replayable for SOC 2",
+    "every send needs human approval (no auto-blast)",
+]
+where_they_win = [
+    "Salesforce-native integration depth",
+    "larger user community + more pre-built sequences",
+]
+
+[[competitors]]
+name = "Apollo"
+aliases = ["apollo.io", "apollo"]
+positioning = "Lead aggregator + outbound; data of dubious provenance."
+where_we_win = [
+    "we never aggregate or resell contact data",
+    "you bring your own list; we enrich from public OSINT only",
+    "self-hosted; your prospect data never leaves your hardware",
+]
+where_they_win = [
+    "comprehensive contact database (which is the problem)",
+    "more out-of-the-box automation",
+]
+
+[[competitors]]
+name = "Lemlist"
+aliases = ["lemlist"]
+positioning = "Personalized outbound, image-based personalization, opaque reputation system."
+where_we_win = [
+    "transparent AI-detector ensemble that you can audit",
+    "open source — read every line",
+    "RFC 8058 one-click unsubscribe wired by default",
+]
+where_they_win = [
+    "image-personalization features are slick",
+    "larger SMB user base",
+]
+
+[[competitors]]
+name = "Mailshake"
+aliases = ["mailshake"]
+positioning = "Cold-email tooling for SMB; SaaS hosting your campaigns."
+
+[[competitors]]
+name = "Salesforce"
+aliases = ["salesforce", "sfdc"]
+positioning = "CRM giant; outbound is bolted-on and expensive per seat."
+where_we_win = [
+    "no per-seat pricing",
+    "we play nice with whatever CRM you're already using (we project events out)",
+]
+where_they_win = [
+    "incumbent integration with everything",
+    "enterprise procurement is easier",
+]
+
+[[competitors]]
+name = "HubSpot"
+aliases = ["hubspot"]
+positioning = "Inbound-first marketing platform; outbound bolt-on."
+
+# --- Domain-specific incumbents we compete with via individual products ---
+
+# Sentinel competitors (log/SIEM)
+[[competitors]]
+name = "Splunk"
+aliases = ["splunk"]
+positioning = "Industry incumbent for SIEM; cost cliff at 10TB/day; opaque licensing."
+
+[[competitors]]
+name = "Datadog"
+aliases = ["datadog", "datadog logs"]
+positioning = "Observability suite; logs are an expensive add-on."
+
+[[competitors]]
+name = "Sumo Logic"
+aliases = ["sumo logic", "sumologic"]
+
+[[competitors]]
+name = "ELK"
+aliases = ["elasticsearch", "elastic stack", "kibana"]
+positioning = "DIY logging stack; you own the operational burden."
+
+# Add more as they come up. Keep aliases lower-case + short.

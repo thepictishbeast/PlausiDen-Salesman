@@ -1457,6 +1457,80 @@ impl State {
         Ok(())
     }
 
+    /// Merge a value into the `tags` JSONB on a reply. Existing keys
+    /// are preserved; the new key replaces (or adds). Used by the
+    /// competitor-mention detector + future intent / urgency
+    /// detectors.
+    pub async fn set_reply_tag(
+        &self,
+        reply_id: uuid::Uuid,
+        key: &str,
+        value: &serde_json::Value,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE replies \
+             SET tags = COALESCE(tags, '{}'::jsonb) || jsonb_build_object($2::text, $3::jsonb) \
+             WHERE id = $1",
+        )
+        .bind(reply_id)
+        .bind(key)
+        .bind(value)
+        .execute(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Recent replies that mention any competitor — used by
+    /// `salesman alerts` to surface "this prospect is comparing us
+    /// to X."
+    pub async fn list_competitor_mention_replies(
+        &self,
+        since_hours: i64,
+        limit: i64,
+    ) -> Result<Vec<(ReplyRow, Vec<String>, ProspectId)>> {
+        let rows = sqlx::query(
+            "SELECT r.id, r.prospect_id, r.from_address, r.subject, r.body, \
+                    r.kind, r.received_at, r.tags->'competitors' AS comps \
+             FROM replies r \
+             WHERE r.received_at > NOW() - ($1 || ' hours')::INTERVAL \
+               AND r.tags ? 'competitors' \
+               AND jsonb_array_length(r.tags->'competitors') > 0 \
+             ORDER BY r.received_at DESC \
+             LIMIT $2",
+        )
+        .bind(since_hours.to_string())
+        .bind(limit)
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                let prospect_id =
+                    ProspectId(r.try_get("prospect_id").unwrap_or_else(|_| uuid::Uuid::nil()));
+                let comps: Vec<String> = r
+                    .try_get::<Option<serde_json::Value>, _>("comps")
+                    .unwrap_or(None)
+                    .and_then(|v| serde_json::from_value(v).ok())
+                    .unwrap_or_default();
+                (
+                    ReplyRow {
+                        from_address: r.try_get("from_address").unwrap_or_default(),
+                        subject: r.try_get("subject").unwrap_or(None),
+                        body: r.try_get("body").unwrap_or_default(),
+                        kind: r.try_get("kind").unwrap_or_default(),
+                        received_at: r
+                            .try_get("received_at")
+                            .unwrap_or_else(|_| chrono::Utc::now()),
+                    },
+                    comps,
+                    prospect_id,
+                )
+            })
+            .collect())
+    }
+
     /// Prospects in `won` state whose state_changed_at is ≥
     /// `min_days_since_won` ago AND who don't yet have a touch with
     /// `template_key='referral_ask'`. The post-close referral pool.
