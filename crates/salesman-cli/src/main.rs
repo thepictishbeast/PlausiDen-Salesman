@@ -5407,32 +5407,56 @@ async fn main() -> Result<()> {
             let mut ok = 0u32;
             let mut err = 0u32;
             for d in &due {
-                // Pull prospect facts via existing list_prospects_with_facts_for_campaign,
-                // but we have only prospect_id. Use a per-prospect fetch via raw SQL.
-                let row = sqlx::query(
-                    "SELECT c.display_name, c.homepage, c.industry, c.description, c.tech_signals
-                     FROM prospects p JOIN companies c ON c.id = p.company_id
-                     WHERE p.id = $1",
-                )
-                .bind(d.prospect_id.0)
-                .fetch_optional(state.pool())
-                .await?;
-                let Some(row) = row else {
-                    tracing::warn!(prospect = %d.prospect_id, "no facts; skipping");
-                    err += 1;
-                    continue;
+                let p = match state.get_prospect_with_facts(d.prospect_id).await? {
+                    Some(p) => p,
+                    None => {
+                        tracing::warn!(prospect = %d.prospect_id, "no facts; skipping");
+                        err += 1;
+                        continue;
+                    }
                 };
-                let prospect_json = serde_json::json!({
-                    "display_name": row.try_get::<String, _>("display_name").unwrap_or_default(),
-                    "homepage":     row.try_get::<Option<String>, _>("homepage").unwrap_or(None),
-                    "industry":     row.try_get::<Option<String>, _>("industry").unwrap_or(None),
-                    "description":  row.try_get::<Option<String>, _>("description").unwrap_or(None),
-                    "tech_signals": row.try_get::<serde_json::Value, _>("tech_signals").unwrap_or(serde_json::Value::Array(vec![])),
-                });
+                let prospect_json = p.to_prompt_json();
+
+                // U56: build a follow-up-aware angle hint. If this
+                // prospect has prior outbound touches, summarize the
+                // most recent one inline so the LLM knows step N
+                // is a CONTINUATION, not a fresh intro. Without this
+                // every step reads "Hi, I'm Will from PlausiDen…"
+                // which is jarring on touch 3+.
+                let prior = state
+                    .list_thread_for_prospect(d.prospect_id, 6)
+                    .await
+                    .unwrap_or_default();
+                let prior_outbound: Vec<&salesman_state::ThreadTurn> =
+                    prior.iter().filter(|t| t.role == "outbound").collect();
+                let angle_hint = if let Some(last) = prior_outbound.last() {
+                    let prev_subject = last.subject.as_deref().unwrap_or("(no subject)");
+                    format!(
+                        "step {} of sequence (template: {}). THIS IS A \
+                         FOLLOW-UP. Earlier outbound subject was: \
+                         \"{}\" sent {}. Acknowledge briefly that you've \
+                         already been in touch — do NOT re-introduce \
+                         yourself or repeat the full value prop. \
+                         Reference one specific thing from the prior \
+                         outbound or the prospect facts and propose a \
+                         lower-friction next step than the first email \
+                         did.",
+                        d.current_step,
+                        d.template_key,
+                        prev_subject,
+                        last.at.format("%Y-%m-%d"),
+                    )
+                } else {
+                    format!(
+                        "step {} of sequence (template: {})",
+                        d.current_step, d.template_key,
+                    )
+                };
+
                 let tool_args = serde_json::json!({
                     "prospect": prospect_json,
                     "product":  product,
-                    "angle_hint": format!("step {} of sequence (template: {})", d.current_step, d.template_key),
+                    "angle_hint": angle_hint,
                 });
                 match salesman_tools::Tool::invoke(&draft_tool, salesman_core::ToolArgs(tool_args))
                     .await
