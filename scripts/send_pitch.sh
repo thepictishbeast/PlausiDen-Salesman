@@ -12,13 +12,13 @@
 set -e
 
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-BODY_FILE="${BODY_FILE:-$REPO_ROOT/drafts/email_to_william_v2.txt}"
+BODY_FILE="${BODY_FILE:-$REPO_ROOT/drafts/email_to_william_v3.txt}"
 SMTP_HOST="${SMTP_HOST:-mail.plausiden.com}"
 SMTP_PORT="${SMTP_PORT:-587}"
 SMTP_USER="${SMTP_USER:-william@plausiden.com}"
 FROM_ADDR="${FROM_ADDR:-William Armstrong <william@plausiden.com>}"
 TO_ADDR="${TO_ADDR:-william@plausiden.com}"
-SUBJECT="${SUBJECT:-We built the client-acquisition engine we couldnt buy}"
+SUBJECT="${SUBJECT:-Cold outreach where the reply-handling does itself}"
 
 if [[ ! -f "$BODY_FILE" ]]; then
   echo "FATAL: body file not found: $BODY_FILE" >&2

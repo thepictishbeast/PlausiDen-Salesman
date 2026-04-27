@@ -1,0 +1,31 @@
+From: William Armstrong <william@plausiden.com>
+To: William Armstrong <william@plausiden.com>
+Subject: Cold outreach where the reply-handling does itself
+
+Hi William,
+
+Most cold-email tools optimize for volume — send more, hope harder. The real problem isn't writing the first email; it's the inbox AFTER. You spend 30 minutes a day on thoughtful first-touch and three hours composing replies that say "yes, here's the pricing" or "good question, the answer is X."
+
+Salesman flips that. The reply-handling does itself.
+
+When a prospect responds, the system reads the whole thread, figures out what they actually want (pricing, a meeting, an objection answered), and drafts the response — not just classifies it. You click approve. Same gates as the cold side: a detector ensemble that catches generic copy, a human-approval requirement, a signed receipt. You get the inbox down to five minutes a day, and every reply gets answered fast and answered well. That's where deals close.
+
+The supporting features:
+
+- TRIGGER-EVENT SCANNER — every morning a fresh list of who to reach out to TODAY based on real signals: they hired a CISO, raised a Series A, launched a product, suffered a breach. Right person, right reason, right time.
+- DECISION-MAKER FINDER — given a company, the system surfaces the actual buyer's email + role with confidence + rationale. Pattern guessing plus public-page scraping. No more emailing the gatekeeper.
+- AUTO-ANGLE PICKER — given prospect facts and your product catalog, the LLM picks the best product to pitch and the best angle. Operator override always available.
+- COLD-DRAFT GENERATOR — personalized first-touch emails that fail the detector ensemble before reaching your queue if they read generic.
+- AI-SEARCH VISIBILITY — ask the major LLMs "who is the best [your category] in [your region]" and find out whether you ever come up. Concrete recommendations for what to publish to start showing up.
+- CRM ANALYTICS — where do your highest-converting deals actually come from? Which template, which segment, which time of day? Stop optimizing the wrong thing.
+- REPUTATION GUARDRAILS (always on) — RFC 8058 unsubscribe, auto-suppress on bounce or opt-out, sender-warmup ramp on fresh domains. The new Gmail and Yahoo bulk-sender rules met by default.
+
+Self-hosted on your own server. Your prospect data, your replies, your CRM — never on someone else's hardware. Open source. Read every line. Run it for free.
+
+We charge for the hosted version, premium support, and custom vertical packs — cybersecurity, AI, devtools, automation, networking, VPS by default; real estate, legal, IT, and more on request.
+
+Worth 20 minutes? Reply yes and I'll send install instructions or set up a walkthrough.
+
+— William
+PlausiDen
+william@plausiden.com
