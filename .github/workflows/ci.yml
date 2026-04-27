@@ -105,6 +105,8 @@ jobs:
           ./target/debug/salesman --help
           ./target/debug/salesman doctor --help
           ./target/debug/salesman dns-check --help
+          ./target/debug/salesman audit --help
+          ./target/debug/salesman audit-chain --help
           ./target/debug/salesman whoami --help
           ./target/debug/salesman preflight --help
           ./target/debug/salesman send-pending --help

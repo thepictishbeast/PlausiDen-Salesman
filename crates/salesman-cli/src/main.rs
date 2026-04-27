@@ -244,9 +244,23 @@ enum Cmd {
         #[arg(long)]
         test_send_to: Option<String>,
     },
-    /// Verify the receipt chain (audit).
+    /// Verify the most-recent N receipts as individual signed
+    /// records. Does NOT verify chain linkage — see `audit-chain`
+    /// for that.
     Audit {
         #[arg(long, default_value_t = 100)]
+        limit: i64,
+    },
+    /// Verify the FULL hash chain end-to-end. Pulls receipts
+    /// oldest-first and walks `prev_hash` against the previous
+    /// receipt's `hash`. Surfaces the first break point + summary.
+    /// Stronger guarantee than `audit` — proves nothing was inserted
+    /// or altered between any two events.
+    AuditChain {
+        /// Maximum number of receipts to walk. Increase if your audit
+        /// trail is longer than this. (Default 100000 covers years
+        /// of typical use.)
+        #[arg(long, default_value_t = 100_000)]
         limit: i64,
     },
     /// Poll the IMAP inbox once and persist new replies.
@@ -1176,6 +1190,74 @@ async fn main() -> Result<()> {
             }
             if bad > 0 {
                 println!("\n!! {bad} receipts FAILED verification — investigate immediately");
+            }
+        }
+
+        Cmd::AuditChain { limit } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let receipts = state.list_receipts_oldest_first(limit).await?;
+            println!("=== verifying chain over {} receipts ===", receipts.len());
+            if receipts.is_empty() {
+                println!("(no receipts to verify)");
+                return Ok(());
+            }
+            let signer = Signer::load_or_generate(&default_seed_path(), "salesman-default-1")?;
+            let vk = signer.verifying_key();
+            let genesis = vec![0u8; salesman_receipts::HASH_LEN];
+
+            // Walk the chain manually so we can pinpoint the first
+            // break + still get a per-receipt sig verdict instead of
+            // bailing on the whole call.
+            let mut expected_prev = genesis.clone();
+            let mut sig_failures = 0u32;
+            let mut chain_break_at: Option<usize> = None;
+            for (i, r) in receipts.iter().enumerate() {
+                let prev_ok = r.prev_hash == expected_prev;
+                if !prev_ok && chain_break_at.is_none() {
+                    chain_break_at = Some(i);
+                }
+                let sig_ok = salesman_receipts::verify_receipt(r, &vk).is_ok();
+                if !sig_ok {
+                    sig_failures += 1;
+                }
+                if !prev_ok || !sig_ok {
+                    println!(
+                        "[{i:>5}] {ts} | {kind:<24} | prev_hash {prev} | sig {sig}",
+                        ts = r.created_at.to_rfc3339(),
+                        kind = r.event_kind,
+                        prev = if prev_ok { "OK " } else { "BREAK" },
+                        sig = if sig_ok { "OK " } else { "BAD" },
+                    );
+                }
+                // Always advance expected_prev to this row's hash so
+                // we don't cascade-flag every subsequent row after a
+                // break — only report the FIRST break.
+                expected_prev = r.hash.clone();
+            }
+
+            println!();
+            println!("==========================================");
+            match (chain_break_at, sig_failures) {
+                (None, 0) => {
+                    println!(
+                        "VERDICT: GREEN — chain intact across {} receipts; no sig failures",
+                        receipts.len()
+                    );
+                }
+                (Some(idx), n) => {
+                    println!(
+                        "VERDICT: RED — first chain break at index {idx} \
+                         ({}); {n} signature failure(s) total",
+                        receipts[idx].created_at.to_rfc3339()
+                    );
+                    anyhow::bail!("audit-chain: chain broken");
+                }
+                (None, n) => {
+                    println!(
+                        "VERDICT: RED — chain links intact but {n} signature failure(s)"
+                    );
+                    anyhow::bail!("audit-chain: signature failures");
+                }
             }
         }
 

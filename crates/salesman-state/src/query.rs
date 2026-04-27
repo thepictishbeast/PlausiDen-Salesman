@@ -1469,6 +1469,40 @@ impl State {
             .unwrap_or_else(|| vec![0u8; 32]))
     }
 
+    /// All receipts oldest-first — required by `verify_chain` because
+    /// each prev_hash references the previous record's hash. Use a
+    /// large limit (default 100k in CLI) to walk the entire chain.
+    pub async fn list_receipts_oldest_first(&self, limit: i64) -> Result<Vec<Receipt>> {
+        let rows = sqlx::query(
+            "SELECT id, event_kind, event_payload, prev_hash, hash, signature, signing_key_id, created_at \
+             FROM receipts \
+             ORDER BY created_at ASC, id ASC \
+             LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            out.push(Receipt {
+                id: salesman_core::ReceiptId(r.try_get("id").unwrap_or_else(|_| uuid::Uuid::nil())),
+                event_kind: r.try_get("event_kind").unwrap_or_default(),
+                event_payload: r
+                    .try_get("event_payload")
+                    .unwrap_or(serde_json::Value::Null),
+                prev_hash: r.try_get("prev_hash").unwrap_or_default(),
+                hash: r.try_get("hash").unwrap_or_default(),
+                signature: r.try_get("signature").unwrap_or_default(),
+                signing_key_id: r.try_get("signing_key_id").unwrap_or_default(),
+                created_at: r
+                    .try_get("created_at")
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+            });
+        }
+        Ok(out)
+    }
+
     /// Pull recent receipts (audit view).
     pub async fn list_recent_receipts(&self, limit: i64) -> Result<Vec<Receipt>> {
         let rows = sqlx::query(
