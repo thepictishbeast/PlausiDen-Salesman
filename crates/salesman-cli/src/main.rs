@@ -150,6 +150,11 @@ enum Cmd {
         #[arg(long, default_value_t = 50)]
         limit: i64,
     },
+    /// Print a pipeline summary (counts + N-hour activity).
+    Summary {
+        #[arg(long, default_value_t = 24)]
+        since_hours: i64,
+    },
     /// Generate cold-email drafts for every prospect in a campaign.
     /// Drafts land in `awaiting_approval` — never auto-sent.
     Draft {
@@ -825,6 +830,12 @@ async fn main() -> Result<()> {
                     println!("  {snippet}...\n");
                 }
             }
+        }
+
+        Cmd::Summary { since_hours } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let s = state.pipeline_summary(since_hours).await?;
+            println!("{}", s.render_text());
         }
 
         Cmd::Halt { reason } => {

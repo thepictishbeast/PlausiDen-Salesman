@@ -26,6 +26,61 @@ pub struct ProspectWithFacts {
 }
 
 #[derive(Debug, Clone)]
+pub struct PipelineSummary {
+    pub companies: i64,
+    pub prospects: i64,
+    pub new_prospects: i64,
+    pub contacted: i64,
+    pub engaged: i64,
+    pub won: i64,
+    pub lost: i64,
+    pub suppressed_prospects: i64,
+    pub awaiting_approval: i64,
+    pub sent_recent: i64,
+    pub replies_recent: i64,
+    pub optout_recent: i64,
+    pub suppressions: i64,
+    pub receipts_recent: i64,
+    pub since_hours: i64,
+}
+
+impl PipelineSummary {
+    pub fn render_text(&self) -> String {
+        format!(
+            "PlausiDen-Salesman pipeline summary ({}h window)\n\
+             ============================================\n\
+             \n\
+             Companies discovered:  {:>6}\n\
+             Prospects (total):     {:>6}\n\
+             \n\
+             By funnel state:\n\
+               new                  {:>6}\n\
+               contacted            {:>6}\n\
+               engaged              {:>6}\n\
+               won                  {:>6}\n\
+               lost                 {:>6}\n\
+               suppressed           {:>6}\n\
+             \n\
+             Last {}h activity:\n\
+               sends                {:>6}\n\
+               replies              {:>6}   (opt-outs: {})\n\
+               receipts             {:>6}\n\
+             \n\
+             Drafts awaiting approval:  {}\n\
+             Suppression list size:     {}\n",
+            self.since_hours,
+            self.companies, self.prospects,
+            self.new_prospects, self.contacted, self.engaged,
+            self.won, self.lost, self.suppressed_prospects,
+            self.since_hours,
+            self.sent_recent, self.replies_recent, self.optout_recent,
+            self.receipts_recent,
+            self.awaiting_approval, self.suppressions
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ReplyRow {
     pub from_address: String,
     pub subject: Option<String>,
@@ -875,6 +930,49 @@ impl State {
         .await
         .map_err(|e| Error::Db(e.to_string()))?;
         Ok(row.try_get::<i64, _>("n").unwrap_or(0))
+    }
+
+    /// Pipeline summary counts for the daily/weekly digest.
+    pub async fn pipeline_summary(&self, since_hours: i64) -> Result<PipelineSummary> {
+        let row = sqlx::query(
+            "SELECT
+                (SELECT COUNT(*) FROM companies)                                                                       ::BIGINT AS companies,
+                (SELECT COUNT(*) FROM prospects)                                                                       ::BIGINT AS prospects,
+                (SELECT COUNT(*) FROM prospects WHERE state = 'new')                                                   ::BIGINT AS new_prospects,
+                (SELECT COUNT(*) FROM prospects WHERE state = 'contacted')                                             ::BIGINT AS contacted,
+                (SELECT COUNT(*) FROM prospects WHERE state = 'engaged')                                               ::BIGINT AS engaged,
+                (SELECT COUNT(*) FROM prospects WHERE state = 'won')                                                   ::BIGINT AS won,
+                (SELECT COUNT(*) FROM prospects WHERE state = 'lost')                                                  ::BIGINT AS lost,
+                (SELECT COUNT(*) FROM prospects WHERE state = 'suppressed')                                            ::BIGINT AS suppressed_prospects,
+                (SELECT COUNT(*) FROM touches WHERE outcome = 'awaiting_approval')                                     ::BIGINT AS awaiting_approval,
+                (SELECT COUNT(*) FROM touches WHERE outcome = 'sent' AND sent_at > NOW() - ($1 || ' hours')::INTERVAL) ::BIGINT AS sent_recent,
+                (SELECT COUNT(*) FROM replies WHERE received_at > NOW() - ($1 || ' hours')::INTERVAL)                  ::BIGINT AS replies_recent,
+                (SELECT COUNT(*) FROM replies WHERE kind = 'optout' AND received_at > NOW() - ($1 || ' hours')::INTERVAL) ::BIGINT AS optout_recent,
+                (SELECT COUNT(*) FROM suppressions)                                                                    ::BIGINT AS suppressions,
+                (SELECT COUNT(*) FROM receipts WHERE created_at > NOW() - ($1 || ' hours')::INTERVAL)                  ::BIGINT AS receipts_recent",
+        )
+        .bind(since_hours.to_string())
+        .fetch_one(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+
+        Ok(PipelineSummary {
+            companies: row.try_get("companies").unwrap_or(0),
+            prospects: row.try_get("prospects").unwrap_or(0),
+            new_prospects: row.try_get("new_prospects").unwrap_or(0),
+            contacted: row.try_get("contacted").unwrap_or(0),
+            engaged: row.try_get("engaged").unwrap_or(0),
+            won: row.try_get("won").unwrap_or(0),
+            lost: row.try_get("lost").unwrap_or(0),
+            suppressed_prospects: row.try_get("suppressed_prospects").unwrap_or(0),
+            awaiting_approval: row.try_get("awaiting_approval").unwrap_or(0),
+            sent_recent: row.try_get("sent_recent").unwrap_or(0),
+            replies_recent: row.try_get("replies_recent").unwrap_or(0),
+            optout_recent: row.try_get("optout_recent").unwrap_or(0),
+            suppressions: row.try_get("suppressions").unwrap_or(0),
+            receipts_recent: row.try_get("receipts_recent").unwrap_or(0),
+            since_hours,
+        })
     }
 
     /// Most recent replies for a campaign — for the inbox view.

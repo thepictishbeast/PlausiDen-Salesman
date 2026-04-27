@@ -120,7 +120,7 @@ pub struct Prospect {
     pub notes: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
 #[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum FunnelState {
@@ -133,6 +133,42 @@ pub enum FunnelState {
     Won,
     Lost,
     Suppressed,
+}
+
+impl FunnelState {
+    /// Is the transition `self → to` allowed?
+    ///
+    /// Forward progression is generally allowed up to Won. Lost +
+    /// Suppressed are terminal — once there, no transition (the
+    /// system does not "un-suppress" prospects automatically).
+    /// Backward transitions are generally disallowed except for
+    /// Engaged → Contacted (a re-touch can downgrade if re-classified).
+    pub fn can_transition_to(self, to: Self) -> bool {
+        use FunnelState::*;
+        if self == to {
+            return true;
+        }
+        // Terminals
+        if matches!(self, Won | Lost | Suppressed) {
+            return false;
+        }
+        // Suppressed is reachable from any non-terminal state (opt-out
+        // can land at any time).
+        if to == Suppressed {
+            return true;
+        }
+        // Lost is reachable from any non-terminal (bounce, owner mark).
+        if to == Lost {
+            return true;
+        }
+        // Forward chain.
+        let order = [New, Qualified, Contacted, Engaged, Meeting, Proposal, Won];
+        let pos = |s: Self| order.iter().position(|x| *x == s);
+        match (pos(self), pos(to)) {
+            (Some(i), Some(j)) => j >= i, // forward only on the chain
+            _ => false,
+        }
+    }
 }
 
 /// A single outbound action taken on a prospect.

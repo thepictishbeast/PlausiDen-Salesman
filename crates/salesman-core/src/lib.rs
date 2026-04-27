@@ -11,6 +11,9 @@ pub mod model;
 pub mod tool;
 
 pub use error::{Error, Result};
+
+#[cfg(test)]
+mod transition_props;
 pub use ids::{CampaignId, CompanyId, ContactId, ProspectId, ReceiptId, TouchId};
 pub use model::{
     Campaign, CampaignStatus, Company, Contact, ContactKind, FunnelState, Prospect, Reply,
