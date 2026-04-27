@@ -813,6 +813,17 @@ enum Cmd {
         #[arg(long)]
         interest: String,
     },
+    /// Dump the full conversation thread for one prospect — outbound
+    /// touches we sent + inbound replies they sent, oldest first.
+    /// Useful for "what have we said to this person?" right before
+    /// approving a reply.
+    Thread {
+        #[arg(long)]
+        prospect_id: String,
+        /// Cap on turns returned. Default 20 covers most sequences.
+        #[arg(long, default_value_t = 20)]
+        limit: i64,
+    },
     /// List the registered tools.
     Tools,
     /// List the registered LLM backends + models.
@@ -5689,6 +5700,46 @@ async fn main() -> Result<()> {
                 "tags now: {}",
                 serde_json::to_string_pretty(&tags).unwrap_or_default()
             );
+        }
+
+        Cmd::Thread { prospect_id, limit } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let pid = salesman_core::ProspectId(
+                uuid::Uuid::parse_str(&prospect_id)
+                    .map_err(|e| anyhow::anyhow!("invalid prospect-id: {e}"))?,
+            );
+            let turns = state.list_thread_for_prospect(pid, limit).await?;
+            if turns.is_empty() {
+                println!("(no thread history for {prospect_id})");
+            } else {
+                println!(
+                    "=== thread for prospect {prospect_id} — {} turn(s) ===\n",
+                    turns.len(),
+                );
+                for (i, t) in turns.iter().enumerate() {
+                    let kind_tag = t
+                        .reply_kind
+                        .as_deref()
+                        .map(|k| format!(" ({k})"))
+                        .unwrap_or_default();
+                    let subject = t.subject.as_deref().unwrap_or("(no subject)");
+                    println!(
+                        "[{:>2}] {} {}{kind_tag}\n     {} | {subject}\n",
+                        i + 1,
+                        t.at.format("%Y-%m-%d %H:%M UTC"),
+                        t.role.to_uppercase(),
+                        t.role,
+                    );
+                    for line in t.body.lines().take(20) {
+                        println!("     | {line}");
+                    }
+                    let extra_lines = t.body.lines().count().saturating_sub(20);
+                    if extra_lines > 0 {
+                        println!("     | … ({extra_lines} more line(s))");
+                    }
+                    println!();
+                }
+            }
         }
 
         Cmd::Tools => {
