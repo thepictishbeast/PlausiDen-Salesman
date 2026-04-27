@@ -431,6 +431,26 @@ enum Cmd {
         #[arg(long, default_value_t = false)]
         persist: bool,
     },
+    /// AI-search visibility check (Generative Engine Optimization).
+    /// Sends a "who is the best X in Y" query to a registered LLM,
+    /// detects whether the operator's brand appears, extracts
+    /// competitors mentioned, and (with --recommend) generates
+    /// concrete content + schema-markup actions to start showing up.
+    Geo {
+        /// The query a prospect would ask AI (e.g.
+        /// "who is the best realtor in southern Utah").
+        #[arg(long)]
+        query: String,
+        /// The brand to look for (e.g. "Jane Doe Realty").
+        #[arg(long)]
+        brand: String,
+        /// Comma-separated alternate spellings / shorthand.
+        #[arg(long)]
+        aliases: Option<String>,
+        /// Make a second LLM call to generate 5 concrete actions.
+        #[arg(long, default_value_t = false)]
+        recommend: bool,
+    },
     /// Auto-angle picker — for each prospect in a campaign, pick
     /// the best (product, angle) match from a catalog TOML file.
     /// Diagnostic / preview mode. Operator can run this before
@@ -3906,6 +3926,79 @@ async fn main() -> Result<()> {
                     "VERDICT: RED — {blockers} blocker(s) + {warnings} warning(s); fix before send"
                 );
                 anyhow::bail!("dns-check: {blockers} blocker(s)");
+            }
+        }
+
+        Cmd::Geo {
+            query,
+            brand,
+            aliases,
+            recommend,
+        } => {
+            if router.registered_kinds().is_empty() {
+                anyhow::bail!(
+                    "no LLM backends registered (set ANTHROPIC_API_KEY and/or GEMINI_API_KEY)"
+                );
+            }
+            let aliases_vec: Vec<String> = aliases
+                .as_deref()
+                .map(|s| {
+                    s.split(',')
+                        .map(|x| x.trim().to_string())
+                        .filter(|x| !x.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let tool = salesman_content::GeoTool::new(router.clone());
+            let args = serde_json::json!({
+                "query": query,
+                "brand": brand,
+                "aliases": aliases_vec,
+                "recommend": recommend,
+            });
+            let result = salesman_tools::Tool::invoke(&tool, salesman_core::ToolArgs(args)).await?;
+
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+                return Ok(());
+            }
+
+            let report: salesman_content::GeoReport = serde_json::from_value(result)?;
+            println!("=== AI-search visibility — `{}` ===\n", report.query);
+            println!("Backend: {} ({})", report.backend, report.model);
+            println!("Brand sought: {}", report.brand);
+            if report.brand_mentioned {
+                let pos = report
+                    .mention_position
+                    .map(|p| format!(" at position #{}", p + 1))
+                    .unwrap_or_default();
+                println!("✅ MENTIONED{pos}\n");
+            } else {
+                println!("❌ NOT MENTIONED\n");
+            }
+            if !report.competitors_mentioned.is_empty() {
+                println!("Competitors mentioned:");
+                for c in &report.competitors_mentioned {
+                    println!("  - {c}");
+                }
+                println!();
+            }
+            println!("--- raw LLM response ---");
+            for line in report.raw_response.lines().take(40) {
+                println!("  {line}");
+            }
+            if report.raw_response.lines().count() > 40 {
+                println!("  ... (truncated)");
+            }
+            if !report.recommendations.is_empty() {
+                println!("\n--- 5 concrete actions to improve visibility ---");
+                for (i, r) in report.recommendations.iter().enumerate() {
+                    println!("  {}. {r}", i + 1);
+                }
+            } else if !recommend {
+                println!(
+                    "\nRun again with --recommend to generate 5 concrete content + markup actions."
+                );
             }
         }
 
