@@ -110,6 +110,12 @@ enum Cmd {
         reason: String,
     },
     /// Send approved drafts. DEFAULT IS DRY-RUN. Pass --for-real to send.
+    /// Two extra reputation safeguards layered on top of suppression
+    /// + rate caps:
+    ///   --max-batch N         hard cap on touches sent in one invocation
+    ///   --ack-new-domains N   max number of NEW domains touched in
+    ///                         this batch (refuses send if exceeded;
+    ///                         operator must confirm by raising N)
     SendPending {
         #[arg(long)]
         campaign: String,
@@ -127,6 +133,18 @@ enum Cmd {
         /// Per-domain max touches in window.
         #[arg(long, default_value_t = 10)]
         per_domain_max: i64,
+        /// HARD cap on touches sent in this single invocation. A
+        /// reputation safeguard against accidental large batches.
+        #[arg(long, default_value_t = 25)]
+        max_batch: u32,
+        /// Max NEW domains (not previously touched in this campaign)
+        /// allowed in one batch. Reputation safeguard against
+        /// burning the IP on a fresh list. Operator raises explicitly.
+        #[arg(long, default_value_t = 10)]
+        ack_new_domains: u32,
+        /// Skip the 5-second pre-send pause. Use ONLY in CI / scripts.
+        #[arg(long, default_value_t = false)]
+        no_pause: bool,
     },
     /// Verify the receipt chain (audit).
     Audit {
@@ -735,12 +753,82 @@ async fn main() -> Result<()> {
             per_recipient_max,
             per_domain_window_hours,
             per_domain_max,
+            max_batch,
+            ack_new_domains,
+            no_pause,
         } => {
             let state = require_state(cli.database_url.as_deref()).await?;
             let campaign_id = state
                 .ensure_campaign(&campaign, "(send-only)", "(unspecified)")
                 .await?;
             let approved = state.list_approved_touches(campaign_id).await?;
+
+            // ----- reputation pre-flight (BEFORE any SMTP work) ---
+            // Pre-resolve every to-address so we can count distinct
+            // domains and compare against the previously-touched set.
+            let mut to_addresses: Vec<(salesman_core::TouchId, String)> =
+                Vec::with_capacity(approved.len());
+            for t in &approved {
+                if let Some(addr) = state.touch_to_address(t.touch_id).await? {
+                    to_addresses.push((t.touch_id, addr));
+                }
+            }
+            let distinct_domains: std::collections::BTreeSet<String> = to_addresses
+                .iter()
+                .filter_map(|(_, a)| a.rsplit_once('@').map(|(_, d)| d.to_lowercase()))
+                .collect();
+
+            // Count NEW domains — domains we've never sent to before
+            // in this campaign. Best-effort; failures don't block
+            // (we'd rather under-block than over-block; suppression +
+            // rate caps still apply).
+            let mut new_domain_count = 0u32;
+            for d in &distinct_domains {
+                let n = state
+                    .count_touches_to_domain_since(d, 24 * 365 * 10)
+                    .await
+                    .unwrap_or(0);
+                if n == 0 {
+                    new_domain_count += 1;
+                }
+            }
+
+            println!(
+                "\n=== send-pending pre-flight ===\n\
+                 campaign:           {campaign}\n\
+                 mode:               {}\n\
+                 approved touches:   {}\n\
+                 with to-address:    {}\n\
+                 distinct domains:   {}\n\
+                 NEW domains:        {} (limit --ack-new-domains={})\n\
+                 max-batch:          {}\n\
+                 per-recipient cap:  {} per {}h\n\
+                 per-domain cap:     {} per {}h\n",
+                if for_real { "REAL" } else { "DRY-RUN" },
+                approved.len(),
+                to_addresses.len(),
+                distinct_domains.len(),
+                new_domain_count,
+                ack_new_domains,
+                max_batch,
+                per_recipient_max, per_recipient_window_hours,
+                per_domain_max, per_domain_window_hours,
+            );
+
+            if new_domain_count > ack_new_domains {
+                anyhow::bail!(
+                    "REFUSED: {} new domains in this batch exceeds --ack-new-domains={}.\n\
+                     Reputation safeguard. Either approve fewer drafts to new \
+                     domains, or raise --ack-new-domains explicitly after \
+                     reviewing the list.",
+                    new_domain_count, ack_new_domains
+                );
+            }
+
+            if for_real && !no_pause {
+                println!("Starting REAL send in 5s — Ctrl-C to abort.\n");
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
 
             // Real-send mode requires SMTP env. Dry-run is fine without it.
             let sender = if for_real {
@@ -757,8 +845,15 @@ async fn main() -> Result<()> {
             let mut blocked_rate = 0u32;
             let mut blocked_no_to = 0u32;
             let mut errored = 0u32;
+            let mut attempted = 0u32;
+            let mut hit_max_batch = false;
 
             for t in &approved {
+                if attempted >= max_batch {
+                    hit_max_batch = true;
+                    break;
+                }
+                attempted += 1;
                 let to = match state.touch_to_address(t.touch_id).await? {
                     Some(addr) => addr,
                     None => {
@@ -835,11 +930,16 @@ async fn main() -> Result<()> {
             }
 
             println!(
-                "send-pending `{campaign}` ({}): approved={} sent={sent} \
+                "send-pending `{campaign}` ({}): approved={} attempted={attempted} sent={sent} \
                  blocked_supp={blocked_supp} blocked_rate={blocked_rate} \
-                 blocked_no_to={blocked_no_to} errored={errored}",
+                 blocked_no_to={blocked_no_to} errored={errored}{}",
                 if for_real { "REAL" } else { "DRY-RUN" },
-                approved.len()
+                approved.len(),
+                if hit_max_batch {
+                    format!(" (hit --max-batch={max_batch}; rerun to continue)")
+                } else {
+                    String::new()
+                }
             );
         }
 
