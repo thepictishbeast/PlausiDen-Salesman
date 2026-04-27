@@ -26,6 +26,25 @@ pub struct ProspectWithFacts {
 }
 
 #[derive(Debug, Clone)]
+pub struct ReplyRow {
+    pub from_address: String,
+    pub subject: Option<String>,
+    pub body: String,
+    pub kind: String,
+    pub received_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UnclassifiedReply {
+    pub reply_id: uuid::Uuid,
+    pub prospect_id: ProspectId,
+    pub campaign_id: CampaignId,
+    pub from_address: String,
+    pub subject: Option<String>,
+    pub body: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct TouchSummary {
     pub touch_id: salesman_core::TouchId,
     pub prospect_id: ProspectId,
@@ -541,6 +560,140 @@ impl State {
         Ok(Some(reply_id))
     }
 
+    /// List replies in `unclassified` state (queue for the classifier).
+    pub async fn list_unclassified_replies(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<UnclassifiedReply>> {
+        let rows = sqlx::query(
+            "SELECT r.id, r.prospect_id, r.from_address, r.subject, r.body, p.campaign_id
+             FROM replies r
+             JOIN prospects p ON p.id = r.prospect_id
+             WHERE r.kind = 'unclassified'
+             ORDER BY r.received_at
+             LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            out.push(UnclassifiedReply {
+                reply_id: r.try_get("id").unwrap_or_else(|_| uuid::Uuid::nil()),
+                prospect_id: ProspectId(r.try_get("prospect_id").unwrap_or_else(|_| uuid::Uuid::nil())),
+                campaign_id: CampaignId(r.try_get("campaign_id").unwrap_or_else(|_| uuid::Uuid::nil())),
+                from_address: r.try_get("from_address").unwrap_or_default(),
+                subject: r.try_get("subject").unwrap_or(None),
+                body: r.try_get("body").unwrap_or_default(),
+            });
+        }
+        Ok(out)
+    }
+
+    pub async fn update_reply_kind(
+        &self,
+        reply_id: uuid::Uuid,
+        kind: ReplyKind,
+    ) -> Result<()> {
+        sqlx::query("UPDATE replies SET kind = $2 WHERE id = $1")
+            .bind(reply_id)
+            .bind(kind.to_string())
+            .execute(self.pool())
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Apply a reply-kind decision to the prospect's funnel state and
+    /// (when applicable) auto-suppress + pause sequence. Returns a
+    /// human-readable summary of what changed.
+    pub async fn apply_reply_to_prospect(
+        &self,
+        reply_id: uuid::Uuid,
+        prospect_id: ProspectId,
+        from_address: &str,
+        kind: ReplyKind,
+    ) -> Result<String> {
+        let mut tx = self.pool().begin().await.map_err(|e| Error::Db(e.to_string()))?;
+        let mut summary = String::new();
+
+        // Always update reply.kind first.
+        sqlx::query("UPDATE replies SET kind = $2 WHERE id = $1")
+            .bind(reply_id)
+            .bind(kind.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
+
+        // Map ReplyKind → FunnelState transition.
+        let new_state: Option<&str> = match kind {
+            ReplyKind::Engaged | ReplyKind::Question => Some("engaged"),
+            ReplyKind::Optout => Some("suppressed"),
+            ReplyKind::Bounce => Some("lost"),
+            // Objection / OOO / Spam / Unclassified — leave funnel state.
+            _ => None,
+        };
+        if let Some(target) = new_state {
+            sqlx::query(
+                "UPDATE prospects SET state = $2, state_changed_at = NOW(), \
+                  state_reason = $3 WHERE id = $1",
+            )
+            .bind(prospect_id.0)
+            .bind(target)
+            .bind(format!("auto: reply classified {kind}"))
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
+            summary.push_str(&format!("prospect → {target}; "));
+        }
+
+        // Optout: also add to suppressions + reject any in-flight touches.
+        if matches!(kind, ReplyKind::Optout) {
+            sqlx::query(
+                "INSERT INTO suppressions (id, target, target_kind, reason, source) \
+                 VALUES ($1, $2, 'email', 'reply optout', 'reply_optout') \
+                 ON CONFLICT (target) DO NOTHING",
+            )
+            .bind(uuid::Uuid::now_v7())
+            .bind(from_address)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
+            summary.push_str("added to suppressions; ");
+
+            sqlx::query(
+                "UPDATE touches SET outcome = 'suppressed' \
+                 WHERE prospect_id = $1 AND outcome IN ('awaiting_approval', 'approved')",
+            )
+            .bind(prospect_id.0)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
+            summary.push_str("in-flight touches suppressed; ");
+        }
+
+        // Bounce: mark contact email as not verified.
+        if matches!(kind, ReplyKind::Bounce) {
+            sqlx::query(
+                "UPDATE contacts SET email_verified = FALSE \
+                 FROM prospects p \
+                 WHERE contacts.id = p.primary_contact_id AND p.id = $1",
+            )
+            .bind(prospect_id.0)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
+            summary.push_str("contact marked unverified; ");
+        }
+
+        tx.commit().await.map_err(|e| Error::Db(e.to_string()))?;
+        if summary.is_empty() {
+            summary.push_str("no transition (kind doesn't drive a state change)");
+        }
+        Ok(summary)
+    }
+
     // -----------------------------------------------------------------
     // suppressions
     // -----------------------------------------------------------------
@@ -722,6 +875,37 @@ impl State {
         .await
         .map_err(|e| Error::Db(e.to_string()))?;
         Ok(row.try_get::<i64, _>("n").unwrap_or(0))
+    }
+
+    /// Most recent replies for a campaign — for the inbox view.
+    pub async fn list_recent_replies_for_campaign(
+        &self,
+        campaign_id: CampaignId,
+        limit: i64,
+    ) -> Result<Vec<ReplyRow>> {
+        let rows = sqlx::query(
+            "SELECT r.from_address, r.subject, r.body, r.kind, r.received_at
+             FROM replies r
+             JOIN prospects p ON p.id = r.prospect_id
+             WHERE p.campaign_id = $1
+             ORDER BY r.received_at DESC
+             LIMIT $2",
+        )
+        .bind(campaign_id.0)
+        .bind(limit)
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| ReplyRow {
+                from_address: r.try_get("from_address").unwrap_or_default(),
+                subject: r.try_get("subject").unwrap_or(None),
+                body: r.try_get("body").unwrap_or_default(),
+                kind: r.try_get("kind").unwrap_or_default(),
+                received_at: r.try_get("received_at").unwrap_or_else(|_| chrono::Utc::now()),
+            })
+            .collect())
     }
 
     /// List companies linked to a campaign via `prospects`.

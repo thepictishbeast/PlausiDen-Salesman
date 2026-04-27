@@ -11,7 +11,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use salesman_content::DraftColdEmailTool;
+use salesman_content::{DraftColdEmailTool, ReplyClassifyTool};
 use salesman_discovery::{CsvSeed, CsvSeedTool, HomepageFetchTool, HomepageFetcher};
 use salesman_outreach::{SmtpConfig, SmtpSender};
 use salesman_reply::{ImapConfig, ImapPoller};
@@ -135,6 +135,18 @@ enum Cmd {
         #[arg(long)]
         every_seconds: Option<u64>,
     },
+    /// Classify all unclassified replies + apply transitions.
+    ClassifyReplies {
+        #[arg(long, default_value_t = 50)]
+        batch: i64,
+    },
+    /// Show recent classified replies for a campaign.
+    Inbox {
+        #[arg(long)]
+        campaign: String,
+        #[arg(long, default_value_t = 50)]
+        limit: i64,
+    },
     /// Generate cold-email drafts for every prospect in a campaign.
     /// Drafts land in `awaiting_approval` — never auto-sent.
     Draft {
@@ -208,6 +220,8 @@ fn parse_hint(s: &str) -> RouteHint {
         _ => RouteHint::Reasoning,
     }
 }
+
+use std::str::FromStr;
 
 fn parse_touch_id(s: &str) -> Result<salesman_core::TouchId> {
     let u: uuid::Uuid = s
@@ -740,6 +754,67 @@ async fn main() -> Result<()> {
                 );
                 let Some(secs) = every_seconds else { break };
                 tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+            }
+        }
+
+        Cmd::ClassifyReplies { batch } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            if router.registered_kinds().is_empty() {
+                anyhow::bail!("no LLM backends registered (set ANTHROPIC_API_KEY and/or GEMINI_API_KEY)");
+            }
+            let classifier = ReplyClassifyTool::new(router.clone());
+            let unclassified = state.list_unclassified_replies(batch).await?;
+            if unclassified.is_empty() {
+                println!("no unclassified replies");
+            }
+            let mut counts: std::collections::BTreeMap<String, u32> = Default::default();
+            for r in &unclassified {
+                let args = serde_json::json!({
+                    "subject": r.subject,
+                    "body": r.body,
+                });
+                let result = salesman_tools::Tool::invoke(
+                    &classifier,
+                    salesman_core::ToolArgs(args),
+                ).await;
+                let kind_str = match result {
+                    Ok(v) => v.get("kind").and_then(|x| x.as_str()).unwrap_or("unclassified").to_string(),
+                    Err(e) => {
+                        tracing::warn!(reply = %r.reply_id, "%e" = %e, "classify failed");
+                        continue;
+                    }
+                };
+                let kind = match salesman_core::model::ReplyKind::from_str(&kind_str) {
+                    Ok(k) => k,
+                    Err(_) => {
+                        tracing::warn!(reply = %r.reply_id, %kind_str, "unknown kind");
+                        continue;
+                    }
+                };
+                let summary = state
+                    .apply_reply_to_prospect(r.reply_id, r.prospect_id, &r.from_address, kind)
+                    .await?;
+                *counts.entry(kind_str.clone()).or_default() += 1;
+                println!("[{}] {} → {}: {}", r.from_address, kind_str, r.reply_id, summary);
+            }
+            println!("\nclassified {} replies. counts: {:?}", unclassified.len(), counts);
+        }
+
+        Cmd::Inbox { campaign, limit } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let campaign_id = state
+                .ensure_campaign(&campaign, "(inbox-only)", "(unspecified)")
+                .await?;
+            let rows = state.list_recent_replies_for_campaign(campaign_id, limit).await?;
+            if rows.is_empty() {
+                println!("no replies for `{campaign}`");
+            } else {
+                println!("=== {} replies for `{campaign}` ===\n", rows.len());
+                for r in rows {
+                    println!("[{}] {} | {} | {}", r.received_at.to_rfc3339(), r.kind, r.from_address, r.subject.as_deref().unwrap_or(""));
+                    let snippet: String = r.body.chars().take(160).collect();
+                    println!("  {snippet}...\n");
+                }
             }
         }
 

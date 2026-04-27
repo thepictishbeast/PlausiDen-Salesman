@@ -9,5 +9,7 @@
 //! operator approve. Anything that bypasses owner-review is a bug.
 #![forbid(unsafe_code)]
 
+pub mod classify_reply;
 pub mod draft_email;
+pub use classify_reply::{ClassifyReply, ReplyClassifyTool};
 pub use draft_email::{ColdEmailDraft, DraftColdEmailTool};
