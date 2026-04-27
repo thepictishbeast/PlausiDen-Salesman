@@ -160,13 +160,39 @@ Sends approved drafts via SMTP. **DEFAULT IS DRY-RUN.**
 # Dry-run: see what would happen
 salesman send-pending --campaign cyber-smb
 
-# Real send (requires SMTP env)
+# Real send — recommended invocation for first send / new domains
+salesman send-pending --campaign cyber-smb --for-real --confirm-typed \
+  --max-batch 10 \
+  --ack-new-domains 5
+
+# Production send (after warmup, established domains)
 salesman send-pending --campaign cyber-smb --for-real \
   --per-recipient-window-hours 720 \
   --per-recipient-max 5 \
   --per-domain-window-hours 1 \
-  --per-domain-max 10
+  --per-domain-max 10 \
+  --max-batch 25 \
+  --ack-new-domains 10
 ```
+
+**Reputation safeguards (layered, all active by default):**
+
+| Flag | Default | What it does |
+|---|---|---|
+| (no `--for-real`) | dry-run | Logs what WOULD happen; no SMTP |
+| `--max-batch N` | 25 | HARD ceiling on touches sent in one invocation |
+| `--ack-new-domains N` | 10 | Refuses send if more than N domains never previously touched |
+| `--per-recipient-max N` | 5 | Per-recipient touch cap |
+| `--per-recipient-window-hours N` | 720 (30d) | Window for per-recipient cap |
+| `--per-domain-max N` | 10 | Per-domain touch cap |
+| `--per-domain-window-hours N` | 1 | Window for per-domain cap |
+| `--confirm-typed` | off | Operator must TYPE campaign name to proceed |
+| `--no-pause` | off | Skip 5s pre-send pause (CI/scripts only) |
+
+A pre-flight summary prints BEFORE any SMTP work — review it
+carefully. After 5 seconds (or after typed confirmation if
+`--confirm-typed`), sending begins. The full reputation gate
+spec is in [`HUMAN_IN_THE_LOOP.md`](../HUMAN_IN_THE_LOOP.md).
 
 For each touch:
 1. Resolve to-address from primary contact
