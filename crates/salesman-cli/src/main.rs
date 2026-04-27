@@ -156,6 +156,9 @@ enum Cmd {
         #[arg(long, default_value_t = 24)]
         since_hours: i64,
     },
+    /// Health probe — JSON output. Exit 1 if any required component
+    /// is missing.
+    Status,
     /// Define a multi-touch sequence from a TOML file.
     DefineSequence {
         #[arg(long)]
@@ -882,6 +885,68 @@ async fn main() -> Result<()> {
             let state = require_state(cli.database_url.as_deref()).await?;
             let s = state.pipeline_summary(since_hours).await?;
             println!("{}", s.render_text());
+        }
+
+        Cmd::Status => {
+            // Probe each subsystem; emit JSON; exit 1 if anything required is down.
+            let mut report = serde_json::Map::new();
+            let mut required_ok = true;
+
+            // db
+            let db_status = match require_state(cli.database_url.as_deref()).await {
+                Ok(s) => match s.count_companies().await {
+                    Ok(n) => {
+                        report.insert("companies".into(), serde_json::Value::from(n));
+                        serde_json::json!({"ok": true})
+                    }
+                    Err(e) => {
+                        required_ok = false;
+                        serde_json::json!({"ok": false, "err": e.to_string()})
+                    }
+                },
+                Err(e) => {
+                    required_ok = false;
+                    serde_json::json!({"ok": false, "err": e.to_string()})
+                }
+            };
+            report.insert("db".into(), db_status);
+
+            // llm backends
+            let kinds = router.registered_kinds();
+            report.insert(
+                "llm_backends".into(),
+                serde_json::json!({
+                    "registered": kinds.iter().map(|k| k.to_string()).collect::<Vec<_>>(),
+                    "ok": !kinds.is_empty()
+                }),
+            );
+            if kinds.is_empty() {
+                required_ok = false;
+            }
+
+            // signing key
+            let signing_present = std::path::Path::new("/opt/salesman/config/signing.seed").exists();
+            report.insert(
+                "signing_key".into(),
+                serde_json::json!({
+                    "path": "/opt/salesman/config/signing.seed",
+                    "ok": signing_present,
+                }),
+            );
+
+            // smtp + imap env presence
+            report.insert("smtp_env_set".into(), serde_json::Value::from(
+                std::env::var("SALESMAN_SMTP_HOST").is_ok()
+            ));
+            report.insert("imap_env_set".into(), serde_json::Value::from(
+                std::env::var("SALESMAN_IMAP_HOST").is_ok()
+            ));
+
+            report.insert("required_ok".into(), serde_json::Value::from(required_ok));
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            if !required_ok {
+                anyhow::bail!("status: required components missing");
+            }
         }
 
         Cmd::DefineSequence {
