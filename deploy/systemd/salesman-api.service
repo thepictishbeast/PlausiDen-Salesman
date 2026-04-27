@@ -1,0 +1,33 @@
+[Unit]
+Description=PlausiDen-Salesman HTTP API (operator dashboard + RFC 8058 unsubscribe)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=salesman
+Group=salesman
+EnvironmentFile=/etc/salesman.env
+ExecStart=/usr/local/bin/salesman-api
+Restart=on-failure
+RestartSec=10s
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+ReadWritePaths=/opt/salesman/data /opt/salesman/logs
+
+[Install]
+WantedBy=multi-user.target

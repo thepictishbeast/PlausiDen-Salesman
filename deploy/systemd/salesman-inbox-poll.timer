@@ -1,0 +1,15 @@
+[Unit]
+Description=Run salesman inbox-poll every minute
+Requires=salesman-inbox-poll.service
+
+[Timer]
+# Fire 1 minute after boot, then every 60 seconds.
+OnBootSec=1min
+OnUnitActiveSec=60s
+# Drift correction; keep the schedule even after long pauses.
+AccuracySec=10s
+Persistent=true
+Unit=salesman-inbox-poll.service
+
+[Install]
+WantedBy=timers.target

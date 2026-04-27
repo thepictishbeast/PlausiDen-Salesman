@@ -1,0 +1,13 @@
+[Unit]
+Description=Run salesman audit-chain daily at 03:30 UTC
+Requires=salesman-audit-chain.service
+
+[Timer]
+# 03:30 UTC daily — quiet hours for most outbound mail providers.
+OnCalendar=*-*-* 03:30:00 UTC
+RandomizedDelaySec=10min
+Persistent=true
+Unit=salesman-audit-chain.service
+
+[Install]
+WantedBy=timers.target

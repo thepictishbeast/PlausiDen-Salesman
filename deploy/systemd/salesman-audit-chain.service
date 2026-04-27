@@ -1,0 +1,28 @@
+[Unit]
+Description=PlausiDen-Salesman daily receipt-chain integrity check (run by .timer)
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=salesman
+Group=salesman
+EnvironmentFile=/etc/salesman.env
+# Walk the entire chain. On break/sig-failure, exit non-zero — systemd
+# logs it, and the failing journal entry is the audit signal.
+ExecStart=/usr/local/bin/salesman audit-chain
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+ReadWritePaths=/opt/salesman/data /opt/salesman/logs

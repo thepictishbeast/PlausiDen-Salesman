@@ -1,0 +1,13 @@
+[Unit]
+Description=Run salesman classify-replies every 5 minutes
+Requires=salesman-classify.service
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+Unit=salesman-classify.service
+
+[Install]
+WantedBy=timers.target
