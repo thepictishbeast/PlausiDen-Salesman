@@ -707,6 +707,46 @@ impl State {
         Ok(out)
     }
 
+    /// Single-prospect facts lookup. Used by the trigger-anchored
+    /// draft path (one trigger event → one drafted touch) so we
+    /// don't have to fetch the whole campaign.
+    pub async fn get_prospect_with_facts(
+        &self,
+        prospect_id: ProspectId,
+    ) -> Result<Option<ProspectWithFacts>> {
+        let row = sqlx::query(
+            "SELECT p.id AS prospect_id, c.id AS company_id,
+                    c.display_name, c.homepage, c.industry,
+                    c.description, c.tech_signals
+             FROM prospects p
+             JOIN companies c ON c.id = p.company_id
+             WHERE p.id = $1",
+        )
+        .bind(prospect_id.0)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(row.map(|r| ProspectWithFacts {
+            prospect_id: ProspectId(
+                r.try_get("prospect_id")
+                    .unwrap_or_else(|_| uuid::Uuid::nil()),
+            ),
+            company_id: CompanyId(
+                r.try_get("company_id")
+                    .unwrap_or_else(|_| uuid::Uuid::nil()),
+            ),
+            display_name: r.try_get("display_name").unwrap_or_default(),
+            homepage: r.try_get::<Option<String>, _>("homepage").unwrap_or(None),
+            industry: r.try_get::<Option<String>, _>("industry").unwrap_or(None),
+            description: r
+                .try_get::<Option<String>, _>("description")
+                .unwrap_or(None),
+            tech_signals: r
+                .try_get::<serde_json::Value, _>("tech_signals")
+                .unwrap_or(serde_json::Value::Array(vec![])),
+        }))
+    }
+
     /// Insert a draft Touch in `awaiting_approval` outcome. The
     /// caller chose the channel + content; we just persist. Optional
     /// template_key threads through for the L4 stats query.

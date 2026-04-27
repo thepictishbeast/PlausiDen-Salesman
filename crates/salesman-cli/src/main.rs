@@ -69,6 +69,27 @@ enum TriggerCmd {
         #[arg(long, default_value_t = true)]
         unused_only: bool,
     },
+    /// Auto-draft cold touches anchored on the top-N unused trigger
+    /// events. Closes the loop between trigger detection and
+    /// outreach: instead of leaving the operator with a list and
+    /// asking them to draft each one, this pre-anchors the drafts in
+    /// the awaiting-approval queue with the trigger headline as the
+    /// angle_hint. Operator opens `salesman review` and walks
+    /// pre-personalized copy.
+    Draft {
+        #[arg(long)]
+        campaign: String,
+        /// Product to pitch (Sentinel, Tidy, Atrium, AppGuard, …).
+        #[arg(long)]
+        product: String,
+        /// How fresh the trigger must be (hours).
+        #[arg(long, default_value_t = 168)]
+        since_hours: i64,
+        /// Max drafts to generate. Bounded so a noisy news day
+        /// doesn't drain the LLM budget.
+        #[arg(long, default_value_t = 10)]
+        top: i64,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -4926,6 +4947,131 @@ async fn main() -> Result<()> {
                                 println!("     {u}");
                             }
                         }
+                    }
+                }
+                TriggerCmd::Draft {
+                    campaign,
+                    product,
+                    since_hours,
+                    top,
+                } => {
+                    if router.registered_kinds().is_empty() {
+                        anyhow::bail!(
+                            "no LLM backends registered (set ANTHROPIC_API_KEY and/or GEMINI_API_KEY)"
+                        );
+                    }
+                    let campaign_id = state
+                        .ensure_campaign(&campaign, "(triggers-draft)", "(unspecified)")
+                        .await?;
+                    let triggers = state
+                        .list_trigger_events(Some(campaign_id), since_hours, true, top)
+                        .await?;
+                    if triggers.is_empty() {
+                        println!(
+                            "(no unused trigger events match — run `triggers scan` first or widen --since-hours)"
+                        );
+                    } else {
+                        let draft_tool = DraftColdEmailTool::new(
+                            router.clone(),
+                            "the PlausiDen team",
+                            "PlausiDen",
+                            "Plausible deniability + sovereign data tools for SMB security teams.",
+                        );
+                        let mut ok = 0u32;
+                        let mut err = 0u32;
+                        let mut skipped_no_facts = 0u32;
+                        for t in &triggers {
+                            let p = match state.get_prospect_with_facts(t.prospect_id).await? {
+                                Some(p) => p,
+                                None => {
+                                    skipped_no_facts += 1;
+                                    tracing::warn!(
+                                        prospect = %t.prospect_id.0,
+                                        "trigger references unknown prospect — skipping",
+                                    );
+                                    continue;
+                                }
+                            };
+                            let prospect_json = serde_json::json!({
+                                "display_name": p.display_name,
+                                "homepage": p.homepage,
+                                "industry": p.industry,
+                                "description": p.description,
+                                "tech_signals": p.tech_signals,
+                            });
+                            let angle_hint = format!(
+                                "anchor on this trigger event ({}): {}",
+                                t.source, t.headline,
+                            );
+                            let tool_args = serde_json::json!({
+                                "prospect": prospect_json,
+                                "product":  product,
+                                "angle_hint": angle_hint,
+                            });
+                            match salesman_tools::Tool::invoke(
+                                &draft_tool,
+                                salesman_core::ToolArgs(tool_args),
+                            )
+                            .await
+                            {
+                                Ok(v) => {
+                                    let subject = v
+                                        .get("subject")
+                                        .and_then(|x| x.as_str())
+                                        .unwrap_or("(no subject)");
+                                    let body = v.get("body").and_then(|x| x.as_str()).unwrap_or("");
+                                    let produced_by = v.get("produced_by").cloned();
+                                    match state
+                                        .insert_touch_draft_full(
+                                            t.prospect_id,
+                                            salesman_core::TouchChannel::Email,
+                                            Some(subject),
+                                            body,
+                                            None,
+                                            produced_by,
+                                        )
+                                        .await
+                                    {
+                                        Ok(touch_id) => {
+                                            // Tag the trigger as used so the next
+                                            // run doesn't re-draft the same anchor.
+                                            let _ = state.mark_trigger_used(t.id, touch_id).await;
+                                            ok += 1;
+                                            println!(
+                                                "drafted touch={touch_id} \
+                                                 company={} trigger={} \
+                                                 (anchored on: {})",
+                                                p.display_name,
+                                                t.source,
+                                                t.headline.chars().take(60).collect::<String>(),
+                                            );
+                                        }
+                                        Err(e) => {
+                                            err += 1;
+                                            tracing::warn!(
+                                                prospect = %t.prospect_id.0,
+                                                "%e" = %e,
+                                                "draft persist failed",
+                                            );
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    err += 1;
+                                    tracing::warn!(
+                                        prospect = %t.prospect_id.0,
+                                        "%e" = %e,
+                                        "draft generation failed",
+                                    );
+                                }
+                            }
+                        }
+                        println!(
+                            "\ntriggers draft complete: {ok} draft(s) queued, \
+                             {err} error(s), {skipped_no_facts} skipped (no \
+                             prospect record). Review with `salesman review` \
+                             or `salesman fact-check`.",
+                        );
                     }
                 }
             }
