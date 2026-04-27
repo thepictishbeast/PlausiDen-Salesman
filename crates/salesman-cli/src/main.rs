@@ -19,6 +19,20 @@ enum CostsBy {
 }
 
 #[derive(Subcommand, Debug)]
+enum CadenceCmd {
+    /// List currently-paused prospect-sequences with their reason.
+    List {
+        #[arg(long, default_value_t = 50)]
+        limit: i64,
+    },
+    /// Resume a paused prospect-sequence. Idempotent.
+    Resume {
+        #[arg(long)]
+        prospect_id: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 enum TriggerCmd {
     /// Poll the OSINT sources for each prospect in the campaign and
     /// persist any new trigger events. Idempotent — re-running won't
@@ -359,6 +373,16 @@ enum Cmd {
     Triggers {
         #[command(subcommand)]
         action: TriggerCmd,
+    },
+    /// Adaptive-cadence controls — list paused prospects (auto-paused
+    /// on reply or operator-paused) and resume them. By design any
+    /// reply (engaged/question/objection/OOO/optout/bounce) pauses
+    /// the static sequence; the reply-drafter handles that thread.
+    /// Operator resumes manually after deciding the prospect needs
+    /// to keep getting the canned cadence.
+    Cadence {
+        #[command(subcommand)]
+        action: CadenceCmd,
     },
     /// Decision-maker finder — for each company in a campaign,
     /// scrape its public team / about / leadership pages and
@@ -3601,6 +3625,69 @@ async fn main() -> Result<()> {
                 "\nfind-buyers complete: {hit_count} hit(s), {miss_count} miss(es), {persisted} persisted. \
                  Email addresses are GUESSES — verify before sending."
             );
+        }
+
+        Cmd::Cadence { action } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            match action {
+                CadenceCmd::List { limit } => {
+                    let rows = state.list_paused_prospects(limit).await?;
+                    if cli.json {
+                        let v = serde_json::json!({
+                            "count": rows.len(),
+                            "paused": rows.iter().map(|(pid, company, reason, last)| serde_json::json!({
+                                "prospect_id": pid.0.to_string(),
+                                "company": company,
+                                "reason": reason,
+                                "last_advanced_at": last.to_rfc3339(),
+                            })).collect::<Vec<_>>(),
+                        });
+                        println!("{}", serde_json::to_string_pretty(&v)?);
+                        return Ok(());
+                    }
+                    if rows.is_empty() {
+                        println!("(no paused prospects — every sequence is active)");
+                    } else {
+                        println!("=== {} paused prospect(s) ===\n", rows.len());
+                        println!(
+                            "{:<38} {:<28} {:<22} reason",
+                            "prospect_id", "company", "last_advanced_at"
+                        );
+                        println!("{}", "-".repeat(120));
+                        for (pid, company, reason, last) in &rows {
+                            let comp = if company.chars().count() > 26 {
+                                format!("{}…", company.chars().take(25).collect::<String>())
+                            } else {
+                                company.clone()
+                            };
+                            println!(
+                                "{:<38} {:<28} {:<22} {}",
+                                pid.0,
+                                comp,
+                                last.format("%Y-%m-%d %H:%M:%SZ"),
+                                reason,
+                            );
+                        }
+                        println!();
+                        println!(
+                            "Resume one with: salesman cadence resume --prospect-id <UUID>"
+                        );
+                    }
+                }
+                CadenceCmd::Resume { prospect_id } => {
+                    let pid: uuid::Uuid = prospect_id
+                        .parse()
+                        .with_context(|| format!("invalid prospect-id `{prospect_id}`"))?;
+                    let n = state
+                        .resume_prospect_sequence(salesman_core::ProspectId(pid))
+                        .await?;
+                    if n == 0 {
+                        println!("no paused prospect-sequence with id {pid} (already active or unknown)");
+                    } else {
+                        println!("resumed: {pid}");
+                    }
+                }
+            }
         }
 
         Cmd::Triggers { action } => {

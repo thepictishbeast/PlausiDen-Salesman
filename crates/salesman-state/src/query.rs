@@ -1274,6 +1274,37 @@ impl State {
             summary.push_str("contact marked unverified; ");
         }
 
+        // Adaptive cadence (U32): when a prospect REPLIES — engaged,
+        // question, objection, OOO — pause their static sequence so
+        // we don't fire a tone-deaf follow-up while the reply-drafter
+        // is composing the actual response. The operator resumes the
+        // sequence manually with `salesman cadence resume` if they
+        // decide the prospect needs to keep getting the canned cadence.
+        // Optout / Bounce / Spam are already terminal upstream;
+        // pausing the sequence is cheap insurance.
+        let pause_reason: Option<&str> = match kind {
+            ReplyKind::Engaged => Some("auto: reply classified engaged"),
+            ReplyKind::Question => Some("auto: reply classified question"),
+            ReplyKind::Objection => Some("auto: reply classified objection"),
+            ReplyKind::OutOfOffice => Some("auto: reply classified out_of_office"),
+            ReplyKind::Optout => Some("auto: reply classified optout"),
+            ReplyKind::Bounce => Some("auto: reply classified bounce"),
+            _ => None,
+        };
+        if let Some(reason) = pause_reason {
+            sqlx::query(
+                "UPDATE prospect_sequence_state \
+                 SET paused = TRUE, paused_reason = $2 \
+                 WHERE prospect_id = $1 AND NOT paused",
+            )
+            .bind(prospect_id.0)
+            .bind(reason)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
+            summary.push_str("sequence paused; ");
+        }
+
         tx.commit().await.map_err(|e| Error::Db(e.to_string()))?;
         if summary.is_empty() {
             summary.push_str("no transition (kind doesn't drive a state change)");
@@ -1424,6 +1455,61 @@ impl State {
         .await
         .map_err(|e| Error::Db(e.to_string()))?;
         Ok(())
+    }
+
+    /// Resume a paused prospect-sequence. Idempotent — running on
+    /// an already-active prospect is a no-op via the WHERE filter.
+    /// Returns rows affected (0 = wasn't paused).
+    pub async fn resume_prospect_sequence(&self, prospect_id: ProspectId) -> Result<u64> {
+        let r = sqlx::query(
+            "UPDATE prospect_sequence_state \
+             SET paused = FALSE, paused_reason = NULL \
+             WHERE prospect_id = $1 AND paused",
+        )
+        .bind(prospect_id.0)
+        .execute(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(r.rows_affected())
+    }
+
+    /// List paused prospect-sequence-states with the company name +
+    /// reason. Operator-facing: "who's stalled in their cadence and
+    /// why?"
+    pub async fn list_paused_prospects(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<(ProspectId, String, String, chrono::DateTime<chrono::Utc>)>> {
+        let rows = sqlx::query(
+            "SELECT pss.prospect_id, c.display_name AS company, \
+                    COALESCE(pss.paused_reason, '(no reason)') AS reason, \
+                    pss.last_advanced_at \
+             FROM prospect_sequence_state pss \
+             JOIN prospects p ON p.id = pss.prospect_id \
+             JOIN companies c ON c.id = p.company_id \
+             WHERE pss.paused \
+             ORDER BY pss.last_advanced_at DESC \
+             LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    ProspectId(
+                        r.try_get("prospect_id")
+                            .unwrap_or_else(|_| uuid::Uuid::nil()),
+                    ),
+                    r.try_get("company").unwrap_or_default(),
+                    r.try_get("reason").unwrap_or_default(),
+                    r.try_get("last_advanced_at")
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                )
+            })
+            .collect())
     }
 
     /// List prospect-sequence-states whose next_due_at has passed and
