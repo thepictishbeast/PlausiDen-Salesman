@@ -1237,6 +1237,51 @@ async fn main() -> Result<()> {
                     .poll_once(|reply| {
                         let state = state.clone();
                         async move {
+                            // DSN short-circuit: if this is a Mailer-Daemon
+                            // bounce report, classify the embedded status
+                            // code and (on hard bounce) auto-suppress the
+                            // failed recipient. We DO NOT insert the DSN
+                            // into `replies` — it would just clutter the
+                            // classifier's queue. We log it so the operator
+                            // can audit.
+                            if let Some(dsn) = reply.detect_dsn() {
+                                let synth = match dsn.status.as_deref() {
+                                    Some(s) => format!("{s} {}", dsn.summary),
+                                    None => dsn.summary.clone(),
+                                };
+                                let failure =
+                                    salesman_outreach::classify_smtp_failure(&synth);
+                                if failure.should_auto_suppress() {
+                                    if let Err(e) = state
+                                        .add_suppression(
+                                            &dsn.recipient,
+                                            "email",
+                                            &format!("DSN bounce: {failure}"),
+                                            failure.suppression_source(),
+                                        )
+                                        .await
+                                    {
+                                        tracing::error!(
+                                            recipient = %dsn.recipient,
+                                            "%e" = %e,
+                                            "could not record DSN auto-suppression",
+                                        );
+                                    } else {
+                                        tracing::warn!(
+                                            recipient = %dsn.recipient,
+                                            failure = %failure,
+                                            "DSN hard-bounce → auto-suppressed",
+                                        );
+                                    }
+                                } else {
+                                    tracing::info!(
+                                        recipient = %dsn.recipient,
+                                        failure = %failure,
+                                        "DSN observed but not auto-suppressing",
+                                    );
+                                }
+                                return Ok(());
+                            }
                             let raw = serde_json::to_value(&reply.raw_headers)?;
                             match state
                                 .insert_reply_threaded(
