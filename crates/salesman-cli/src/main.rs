@@ -728,6 +728,23 @@ enum Cmd {
         #[arg(long, default_value_t = false)]
         verbose: bool,
     },
+    /// "Today's 10" — a daily prioritized to-do list combining
+    /// (a) replies needing response, (b) trigger events fired in the
+    /// last N hours, (c) paused/stalled prospects, (d) referral-ask
+    /// candidates. Goal: focus the operator on the highest-conversion
+    /// targets instead of chewing through the prospect list linearly.
+    NextBestActions {
+        /// How far back to scan for trigger events.
+        #[arg(long, default_value_t = 24)]
+        trigger_window_hours: i64,
+        /// Cap on rows returned per category.
+        #[arg(long, default_value_t = 5)]
+        per_category: i64,
+        /// Optional campaign filter — restricts trigger events; the
+        /// other categories are global (replies span campaigns).
+        #[arg(long)]
+        campaign: Option<String>,
+    },
     /// Kill switch — pauses every active campaign.
     Halt {
         #[arg(long, default_value = "operator-issued")]
@@ -1405,6 +1422,129 @@ async fn main() -> Result<()> {
                 if bad > 0 {
                     anyhow::bail!("{bad} draft(s) failed the fact-trace gate");
                 }
+            }
+        }
+
+        Cmd::NextBestActions {
+            trigger_window_hours,
+            per_category,
+            campaign,
+        } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+
+            // (a) replies waiting for a response — highest priority.
+            // Fast responses close deals; slow responses lose them.
+            let replies = state
+                .list_replies_needing_response(per_category)
+                .await
+                .unwrap_or_default();
+
+            // (b) recent trigger events. Optional campaign scope.
+            let trigger_campaign = if let Some(c) = campaign.as_ref() {
+                Some(
+                    state
+                        .ensure_campaign(c, "(nba-only)", "(unspecified)")
+                        .await?,
+                )
+            } else {
+                None
+            };
+            let triggers = state
+                .list_trigger_events(trigger_campaign, trigger_window_hours, true, per_category)
+                .await
+                .unwrap_or_default();
+
+            // (c) paused / stalled prospects in their cadence — these
+            // need a manual nudge or a `cadence resume`.
+            let paused = state
+                .list_paused_prospects(per_category)
+                .await
+                .unwrap_or_default();
+
+            // (d) referral-ask candidates: won prospects 30+ days old
+            // we haven't yet asked for a referral.
+            let referrals = state
+                .list_won_prospects_for_referral_ask(30, per_category)
+                .await
+                .unwrap_or_default();
+
+            println!(
+                "\n=== next-best-actions ({}) ===\n",
+                chrono::Utc::now().format("%Y-%m-%d %H:%M UTC"),
+            );
+
+            let mut total = 0usize;
+            let mut idx = 1usize;
+
+            if !replies.is_empty() {
+                println!("[1] reply needing response — RESPOND TODAY");
+                for r in &replies {
+                    println!(
+                        "  {idx:>2}. {company} ({kind})  →  salesman draft-replies (then `review`)",
+                        company = r.company_name,
+                        kind = r.inbound_kind,
+                    );
+                    idx += 1;
+                    total += 1;
+                }
+                println!();
+            }
+
+            if !triggers.is_empty() {
+                println!(
+                    "[2] trigger event in last {trigger_window_hours}h — REACH OUT WHILE FRESH"
+                );
+                for t in &triggers {
+                    println!(
+                        "  {idx:>2}. {company}: {headline}  →  salesman draft --campaign <c> (cite the trigger)",
+                        company = t.company,
+                        headline = t.headline.chars().take(70).collect::<String>(),
+                    );
+                    idx += 1;
+                    total += 1;
+                }
+                println!();
+            }
+
+            if !paused.is_empty() {
+                println!("[3] cadence paused / stalled — DECIDE: revive or close");
+                for (pid, company, reason, last) in &paused {
+                    println!(
+                        "  {idx:>2}. {company}: paused since {last} ({reason})  →  salesman cadence resume --prospect-id {pid}",
+                        last = last.format("%Y-%m-%d"),
+                    );
+                    idx += 1;
+                    total += 1;
+                }
+                println!();
+            }
+
+            if !referrals.is_empty() {
+                println!("[4] won prospects past 30d — ASK FOR REFERRAL");
+                for r in &referrals {
+                    println!(
+                        "  {idx:>2}. {company}  →  salesman referral-ask --prospect-id {pid}",
+                        company = r.display_name,
+                        pid = r.prospect_id.0,
+                    );
+                    idx += 1;
+                    total += 1;
+                }
+                println!();
+            }
+
+            if total == 0 {
+                println!(
+                    "no actions queued. either you're caught up, or no \
+                     pipeline data is in yet. run `salesman triggers scan`, \
+                     `salesman inbox-poll`, and `salesman classify-replies` \
+                     to populate the categories."
+                );
+            } else {
+                println!(
+                    "{total} action(s) ranked by closing-deals leverage. \
+                     replies > triggers > stalled > referrals.",
+                );
             }
         }
 
