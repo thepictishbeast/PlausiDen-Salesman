@@ -150,6 +150,15 @@ enum Cmd {
         /// safeguard. Recommended for first real send / new domains.
         #[arg(long, default_value_t = false)]
         confirm_typed: bool,
+        /// Reputation-safe smoke test: send EXACTLY ONE message —
+        /// the first approved touch — but redirect it to this address
+        /// instead of the prospect's. Body + subject + headers are
+        /// the real ones (so you see what the prospect would see),
+        /// but the actual prospect is NOT contacted. Touch is NOT
+        /// marked as sent (it stays `approved` for the real run).
+        /// No receipt is logged.
+        #[arg(long)]
+        test_send_to: Option<String>,
     },
     /// Verify the receipt chain (audit).
     Audit {
@@ -816,6 +825,7 @@ async fn main() -> Result<()> {
             ack_new_domains,
             no_pause,
             confirm_typed,
+            test_send_to,
         } => {
             let state = require_state(cli.database_url.as_deref()).await?;
             let campaign_id = state
@@ -883,6 +893,40 @@ async fn main() -> Result<()> {
                      reviewing the list.",
                     new_domain_count, ack_new_domains
                 );
+            }
+
+            // --- test-send-to: ONE message to the test inbox, then exit
+            if let Some(test_addr) = test_send_to.as_ref() {
+                if !for_real {
+                    anyhow::bail!("--test-send-to requires --for-real (it actually sends one message)");
+                }
+                let Some(first) = approved.first() else {
+                    anyhow::bail!("no approved touches to test-send");
+                };
+                let cfg = SmtpConfig::from_env()?;
+                let sender = SmtpSender::new(cfg)?;
+                let subject = format!(
+                    "[salesman test-send to {test_addr}] {}",
+                    first.subject.as_deref().unwrap_or("(no subject)")
+                );
+                let mut body = format!(
+                    "TEST-SEND PROOF\n\
+                     ---------------\n\
+                     This is a redirected copy of touch {} from campaign `{campaign}`.\n\
+                     Real recipient would be: {}\n\
+                     Touch is NOT marked sent. No receipt logged.\n\
+                     The body that would land in the real recipient's inbox follows below.\n\
+                     ===========================================\n\n",
+                    first.touch_id,
+                    state.touch_to_address(first.touch_id).await?.unwrap_or_else(|| "(no contact)".into())
+                );
+                body.push_str(&first.body);
+                let outcome = sender.send_email(test_addr, &subject, &body).await?;
+                println!(
+                    "test-send OK: to={test_addr} touch={} smtp_response={}",
+                    first.touch_id, outcome.smtp_response_code
+                );
+                return Ok(());
             }
 
             // Strongest gate: typed confirmation (requires TTY).
