@@ -17,6 +17,60 @@ enum CostsBy {
     Model,
     Purpose,
 }
+
+#[derive(Subcommand, Debug)]
+enum SuppCmd {
+    /// List recent suppressions (newest first). --source filters to
+    /// just one origin tag (manual / bounce / reply_optout / one_click /
+    /// compliance).
+    List {
+        #[arg(long)]
+        source: Option<String>,
+        #[arg(long, default_value_t = 100)]
+        limit: i64,
+    },
+    /// Add a manual suppression. Reason is required so the audit log
+    /// can answer "who decided to block this and why" later.
+    Add {
+        #[arg(long)]
+        target: String,
+        #[arg(long, default_value = "email")]
+        kind: String,
+        #[arg(long)]
+        reason: String,
+        #[arg(long, default_value = "manual")]
+        source: String,
+    },
+    /// Remove a suppression. Idempotent; prints how many rows were
+    /// affected. Requires --confirm-typed for safety because the
+    /// recipient WILL receive future sends after removal.
+    Remove {
+        #[arg(long)]
+        target: String,
+        #[arg(long, default_value_t = false)]
+        confirm_typed: bool,
+    },
+    /// Dump the entire suppression list as CSV. Headers: target,
+    /// kind, reason, source, added_at.
+    Export {
+        /// Output file path. `-` (default) writes to stdout.
+        #[arg(long, default_value = "-")]
+        out: String,
+    },
+    /// Bulk import from CSV. The file may be a previous --export
+    /// dump or a one-column list of email addresses (in which case
+    /// each row gets reason="bulk import" + source="manual").
+    /// Duplicates are silently skipped (ON CONFLICT DO NOTHING).
+    Import {
+        #[arg(long)]
+        from_csv: PathBuf,
+        /// Override the source tag for every imported row.
+        #[arg(long)]
+        source: Option<String>,
+    },
+    /// Print one row per source with its count. Quick health metric.
+    Count,
+}
 use salesman_content::{DraftColdEmailTool, ReplyClassifyTool};
 use salesman_discovery::{
     BraveSearch, BraveSearchTool, CsvSeed, CsvSeedTool, EmailPatternTool, HomepageFetchTool,
@@ -32,6 +86,7 @@ use salesman_llm::{LlmBackend, LlmRouter, Message, Role, RouteHint};
 use salesman_orchestrator::Orchestrator;
 use salesman_state::{State, TouchSummary};
 use salesman_tools::{EchoTool, ToolRegistry};
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use url::Url;
@@ -300,6 +355,13 @@ enum Cmd {
         #[arg(long, default_value_t = 3)]
         sample_drafts: usize,
     },
+    /// Manage the global do-not-contact list. Subcommands: list,
+    /// add, remove, export, import, count. Required for GDPR
+    /// right-to-be-forgotten + audit + backup.
+    Suppressions {
+        #[command(subcommand)]
+        action: SuppCmd,
+    },
     /// Render a directory of markdown to a static HTML site.
     RenderSite {
         #[arg(long)]
@@ -474,6 +536,47 @@ async fn sqlx_lookup_sequence(
 
 fn pct(n: usize, total: usize) -> f32 {
     if total == 0 { 0.0 } else { (n as f32) / (total as f32) * 100.0 }
+}
+
+/// Quote a CSV field per RFC 4180: wrap in `"` if the value contains
+/// a comma, double-quote, CR, or LF; double-up internal `"`. Always
+/// quote, regardless — a permanent quote is cheap and bullet-proofs
+/// downstream re-import even when fields are empty.
+fn csv_quote(s: &str) -> String {
+    let escaped = s.replace('"', "\"\"");
+    format!("\"{escaped}\"")
+}
+
+/// Parse one CSV row tolerantly. Handles RFC 4180 quoted fields with
+/// embedded commas and doubled quotes; falls back to plain comma-split
+/// when nothing is quoted (common for one-column email lists).
+fn parse_csv_row(line: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut field = String::new();
+    let mut in_quotes = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if in_quotes {
+            if c == '"' {
+                if chars.peek() == Some(&'"') {
+                    field.push('"');
+                    chars.next();
+                } else {
+                    in_quotes = false;
+                }
+            } else {
+                field.push(c);
+            }
+        } else if c == '"' && field.is_empty() {
+            in_quotes = true;
+        } else if c == ',' {
+            out.push(std::mem::take(&mut field));
+        } else {
+            field.push(c);
+        }
+    }
+    out.push(field);
+    out
 }
 
 fn parse_touch_id(s: &str) -> Result<salesman_core::TouchId> {
@@ -2206,6 +2309,170 @@ async fn main() -> Result<()> {
             println!("assigned sequence `{sequence}` to {n} new prospects (idempotent)");
         }
 
+        Cmd::Suppressions { action } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            match action {
+                SuppCmd::List { source, limit } => {
+                    let rows = state.list_suppressions(source.as_deref(), limit).await?;
+                    if rows.is_empty() {
+                        println!("(no suppressions match the filter)");
+                    } else {
+                        println!(
+                            "{:<32} {:<8} {:<14} {:<22} reason",
+                            "target", "kind", "source", "added_at"
+                        );
+                        println!("{}", "-".repeat(110));
+                        for r in &rows {
+                            let target = if r.target.chars().count() > 30 {
+                                format!("{}…", r.target.chars().take(29).collect::<String>())
+                            } else {
+                                r.target.clone()
+                            };
+                            let reason = if r.reason.chars().count() > 60 {
+                                format!("{}…", r.reason.chars().take(59).collect::<String>())
+                            } else {
+                                r.reason.clone()
+                            };
+                            println!(
+                                "{:<32} {:<8} {:<14} {:<22} {}",
+                                target,
+                                r.target_kind,
+                                r.source,
+                                r.added_at.format("%Y-%m-%d %H:%M:%SZ"),
+                                reason
+                            );
+                        }
+                        println!("{}", "-".repeat(110));
+                        println!("{} row(s)", rows.len());
+                    }
+                }
+                SuppCmd::Add {
+                    target,
+                    kind,
+                    reason,
+                    source,
+                } => {
+                    if reason.trim().is_empty() {
+                        anyhow::bail!("--reason cannot be empty (audit trail requires it)");
+                    }
+                    state
+                        .add_suppression(&target, &kind, &reason, &source)
+                        .await?;
+                    println!("added: {target} (kind={kind} source={source})");
+                }
+                SuppCmd::Remove {
+                    target,
+                    confirm_typed,
+                } => {
+                    if !confirm_typed {
+                        anyhow::bail!(
+                            "remove requires --confirm-typed (the recipient will receive future sends after removal)"
+                        );
+                    }
+                    {
+                        use dialoguer::Input;
+                        let typed: String = Input::new()
+                            .with_prompt(format!("Type the target ({target}) to confirm removal"))
+                            .interact_text()
+                            .map_err(|e| anyhow::anyhow!("dialoguer: {e}"))?;
+                        if typed.trim() != target {
+                            anyhow::bail!("typed target did not match — aborting");
+                        }
+                    }
+                    let n = state.remove_suppression(&target).await?;
+                    if n == 0 {
+                        println!("no suppression found for `{target}` (already absent)");
+                    } else {
+                        println!("removed: {target} ({n} row)");
+                    }
+                }
+                SuppCmd::Export { out } => {
+                    // Pull the whole table — by design suppression
+                    // count is bounded (~k of rows even at scale).
+                    let rows = state.list_suppressions(None, i64::MAX).await?;
+                    let mut sink: Box<dyn std::io::Write> = if out == "-" {
+                        Box::new(std::io::stdout().lock())
+                    } else {
+                        Box::new(std::fs::File::create(&out)?)
+                    };
+                    writeln!(sink, "target,kind,reason,source,added_at")?;
+                    for r in &rows {
+                        writeln!(
+                            sink,
+                            "{},{},{},{},{}",
+                            csv_quote(&r.target),
+                            csv_quote(&r.target_kind),
+                            csv_quote(&r.reason),
+                            csv_quote(&r.source),
+                            r.added_at.to_rfc3339()
+                        )?;
+                    }
+                    if out != "-" {
+                        eprintln!("exported {} row(s) to {out}", rows.len());
+                    }
+                }
+                SuppCmd::Import { from_csv, source } => {
+                    let text = std::fs::read_to_string(&from_csv)?;
+                    let mut imported = 0u32;
+                    let mut skipped = 0u32;
+                    let lines: Vec<&str> = text.lines().collect();
+                    let has_header = lines
+                        .first()
+                        .map(|l| l.starts_with("target,") || l.starts_with("\"target\","))
+                        .unwrap_or(false);
+                    let body = if has_header { &lines[1..] } else { &lines[..] };
+                    for line in body {
+                        let line = line.trim();
+                        if line.is_empty() {
+                            continue;
+                        }
+                        let cols: Vec<String> = parse_csv_row(line);
+                        let target = match cols.first() {
+                            Some(t) if !t.is_empty() => t.clone(),
+                            _ => {
+                                skipped += 1;
+                                continue;
+                            }
+                        };
+                        let kind = cols.get(1).cloned().unwrap_or_else(|| {
+                            // Single-column file: assume email.
+                            "email".to_string()
+                        });
+                        let kind = if kind.is_empty() { "email".to_string() } else { kind };
+                        let reason = cols
+                            .get(2)
+                            .cloned()
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or_else(|| "bulk import".to_string());
+                        let row_source = source
+                            .clone()
+                            .or_else(|| cols.get(3).cloned().filter(|s| !s.is_empty()))
+                            .unwrap_or_else(|| "manual".to_string());
+                        state
+                            .add_suppression(&target, &kind, &reason, &row_source)
+                            .await?;
+                        imported += 1;
+                    }
+                    println!("import: {imported} added, {skipped} skipped (duplicates ignored at DB level)");
+                }
+                SuppCmd::Count => {
+                    let rows = state.count_suppressions_by_source().await?;
+                    if rows.is_empty() {
+                        println!("(suppression list empty)");
+                    } else {
+                        let total: i64 = rows.iter().map(|(_, n)| n).sum();
+                        println!("{:<20} {:>10}", "source", "count");
+                        println!("{}", "-".repeat(32));
+                        for (s, n) in &rows {
+                            println!("{:<20} {:>10}", s, n);
+                        }
+                        println!("{}", "-".repeat(32));
+                        println!("{:<20} {:>10}", "TOTAL", total);
+                    }
+                }
+            }
+        }
+
         Cmd::RenderSite {
             src,
             dst,
@@ -2316,4 +2583,46 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn csv_quote_wraps_and_escapes() {
+        assert_eq!(csv_quote("hi"), r#""hi""#);
+        assert_eq!(csv_quote(r#"a "quote""#), r#""a ""quote""""#);
+        assert_eq!(csv_quote("with,comma"), r#""with,comma""#);
+        assert_eq!(csv_quote(""), r#""""#);
+        assert_eq!(csv_quote("line1\nline2"), "\"line1\nline2\"");
+    }
+
+    #[test]
+    fn parse_csv_row_handles_quoted_and_plain() {
+        assert_eq!(parse_csv_row("a,b,c"), vec!["a", "b", "c"]);
+        assert_eq!(parse_csv_row(""), vec![""]);
+        assert_eq!(
+            parse_csv_row(r#""a,b","c","d""e""#),
+            vec!["a,b", "c", r#"d"e"#]
+        );
+        assert_eq!(parse_csv_row("alice@example.com"), vec!["alice@example.com"]);
+        assert_eq!(parse_csv_row("a,,c"), vec!["a", "", "c"]);
+    }
+
+    #[test]
+    fn csv_quote_round_trips_through_parse() {
+        let original = vec![
+            "alice@example.com".to_string(),
+            r#"reason with "quotes" and , comma"#.to_string(),
+            "manual".to_string(),
+        ];
+        let line = original
+            .iter()
+            .map(|s| csv_quote(s))
+            .collect::<Vec<_>>()
+            .join(",");
+        let parsed = parse_csv_row(&line);
+        assert_eq!(parsed, original);
+    }
 }

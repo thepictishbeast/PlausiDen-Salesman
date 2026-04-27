@@ -158,6 +158,16 @@ pub struct PurposeCostRow {
 }
 
 #[derive(Debug, Clone)]
+pub struct SuppressionRow {
+    pub id: uuid::Uuid,
+    pub target: String,
+    pub target_kind: String,
+    pub reason: String,
+    pub source: String,
+    pub added_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone)]
 pub struct PipelineSummary {
     pub companies: i64,
     pub prospects: i64,
@@ -1221,6 +1231,88 @@ impl State {
             .await
             .map_err(|e| Error::Db(e.to_string()))?;
         Ok(row.try_get::<i64, _>("n").map_err(|e| Error::Db(e.to_string()))?)
+    }
+
+    /// Page through the suppression list. `source_filter` (when Some)
+    /// restricts to that source tag. Newest-first ordering — the
+    /// operator typically cares most about what just got added.
+    pub async fn list_suppressions(
+        &self,
+        source_filter: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<SuppressionRow>> {
+        let rows = match source_filter {
+            Some(s) => {
+                sqlx::query(
+                    "SELECT id, target, target_kind, reason, source, added_at \
+                     FROM suppressions \
+                     WHERE source = $1 \
+                     ORDER BY added_at DESC \
+                     LIMIT $2",
+                )
+                .bind(s)
+                .bind(limit)
+                .fetch_all(self.pool())
+                .await
+            }
+            None => {
+                sqlx::query(
+                    "SELECT id, target, target_kind, reason, source, added_at \
+                     FROM suppressions \
+                     ORDER BY added_at DESC \
+                     LIMIT $1",
+                )
+                .bind(limit)
+                .fetch_all(self.pool())
+                .await
+            }
+        }
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| SuppressionRow {
+                id: r.try_get("id").unwrap_or_else(|_| uuid::Uuid::nil()),
+                target: r.try_get("target").unwrap_or_default(),
+                target_kind: r.try_get("target_kind").unwrap_or_default(),
+                reason: r.try_get("reason").unwrap_or_default(),
+                source: r.try_get("source").unwrap_or_default(),
+                added_at: r.try_get("added_at").unwrap_or_else(|_| chrono::Utc::now()),
+            })
+            .collect())
+    }
+
+    /// Counts suppressions grouped by `source`. Returns rows of
+    /// (source, n) pairs.
+    pub async fn count_suppressions_by_source(&self) -> Result<Vec<(String, i64)>> {
+        let rows = sqlx::query(
+            "SELECT source, COUNT(*)::BIGINT AS n \
+             FROM suppressions \
+             GROUP BY source \
+             ORDER BY n DESC",
+        )
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.try_get::<String, _>("source").unwrap_or_default(),
+                    r.try_get::<i64, _>("n").unwrap_or(0),
+                )
+            })
+            .collect())
+    }
+
+    /// Remove a suppression by target. Idempotent — returns the
+    /// number of rows actually deleted (0 or 1).
+    pub async fn remove_suppression(&self, target: &str) -> Result<u64> {
+        let r = sqlx::query("DELETE FROM suppressions WHERE target = $1")
+            .bind(target)
+            .execute(self.pool())
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(r.rows_affected())
     }
 
     // -----------------------------------------------------------------
