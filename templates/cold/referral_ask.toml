@@ -1,0 +1,48 @@
+# Post-close — ask a happy customer for two intros.
+#
+# Fired by `salesman referral-ask` against prospects in `won` state
+# whose state_changed_at is ≥ --min-days ago and who don't yet have
+# a touch with template_key="referral_ask".
+#
+# The draft tool reads body_seed for tone + structure; it does NOT
+# paste it verbatim. The operator reviews the result like any other
+# draft.
+
+key         = "referral_ask"
+description = "Post-close referral request. Ask for two specific-shape intros."
+segment     = "any"
+delay_days  = 30
+
+subject_seed = "Quick favor — two intros"
+
+body_seed = """
+{{customer_first_name}},
+
+It's been a few weeks since we got you live on {{our_product}}.
+{{specific_outcome_or_observation_from_their_use}}.
+
+I'm a small operation and most of our growth comes from intros
+from people who've actually used the tool. If you know two folks
+running into the {{specific_problem_they_had}} problem — same
+shape of company, same pain — I'd love a warm intro. No pressure
+at all if nothing comes to mind.
+
+Either way, thanks for trusting us with this early on.
+
+— {{sender_name}}
+"""
+
+mandatory_phrases = ["Reply STOP and I won't follow up."]
+
+forbidden_phrases = [
+  "I hope this email finds you well",
+  "Hope you're doing well",
+  "Just wanted to reach out",
+  "circle back",
+  "synergize",
+  "leverage",
+  "best-in-class",
+  "industry-leading",
+  "thrilled",
+  "honored",
+]

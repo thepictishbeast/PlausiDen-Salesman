@@ -384,6 +384,20 @@ enum Cmd {
         #[command(subcommand)]
         action: CadenceCmd,
     },
+    /// Post-close pipeline expansion: draft a referral-ask touch for
+    /// each `won` prospect whose deal closed at least --min-days ago
+    /// and who hasn't yet been asked. Drafts land in the awaiting-
+    /// approval queue with template_key=`referral_ask` so re-runs
+    /// idempotently skip already-asked prospects.
+    ReferralAsk {
+        #[arg(long, default_value_t = 30)]
+        min_days: i64,
+        #[arg(long, default_value_t = 10)]
+        batch: i64,
+        /// What product to reference as the one they bought.
+        #[arg(long, default_value = "Sentinel")]
+        product: String,
+    },
     /// Decision-maker finder — for each company in a campaign,
     /// scrape its public team / about / leadership pages and
     /// surface ranked buyer candidates with email guesses + role
@@ -3624,6 +3638,101 @@ async fn main() -> Result<()> {
             println!(
                 "\nfind-buyers complete: {hit_count} hit(s), {miss_count} miss(es), {persisted} persisted. \
                  Email addresses are GUESSES — verify before sending."
+            );
+        }
+
+        Cmd::ReferralAsk {
+            min_days,
+            batch,
+            product,
+        } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            if router.registered_kinds().is_empty() {
+                anyhow::bail!(
+                    "no LLM backends registered (set ANTHROPIC_API_KEY and/or GEMINI_API_KEY)"
+                );
+            }
+            let pool = state
+                .list_won_prospects_for_referral_ask(min_days, batch)
+                .await?;
+            if pool.is_empty() {
+                println!(
+                    "no won prospects eligible for referral-ask (min-days={min_days})."
+                );
+                return Ok(());
+            }
+            println!(
+                "drafting referral-ask for {} won prospect(s) (min-days={min_days}, product={product})\n",
+                pool.len()
+            );
+            let drafter = salesman_content::DraftColdEmailTool::new(
+                router.clone(),
+                "the PlausiDen team",
+                "PlausiDen",
+                "Plausible deniability + sovereign data tools for SMB security teams.",
+            );
+            // Force the referral_ask template via env so the existing
+            // template-loading path in DraftColdEmailTool picks it up.
+            // (The tool reads SALESMAN_TEMPLATES_DIR + a `template_key`
+            // arg — we pass referral_ask explicitly.)
+            let mut ok = 0u32;
+            let mut err = 0u32;
+            for p in &pool {
+                let prospect_json = serde_json::json!({
+                    "display_name": p.display_name,
+                    "industry":     p.industry,
+                    "description":  p.description,
+                    "tech_signals": p.tech_signals,
+                });
+                let args = serde_json::json!({
+                    "prospect": prospect_json,
+                    "product":  product,
+                    "template_key": "referral_ask",
+                    "angle_hint": "ask for two specific-shape intros to similar-pain companies; warm + grateful; no hard sell",
+                });
+                match salesman_tools::Tool::invoke(
+                    &drafter,
+                    salesman_core::ToolArgs(args),
+                )
+                .await
+                {
+                    Ok(v) => {
+                        let subject = v.get("subject").and_then(|x| x.as_str()).unwrap_or("");
+                        let body = v.get("body").and_then(|x| x.as_str()).unwrap_or("");
+                        let produced_by = v.get("produced_by").cloned();
+                        match state
+                            .insert_touch_draft_full(
+                                p.prospect_id,
+                                salesman_core::TouchChannel::Email,
+                                Some(subject),
+                                body,
+                                Some("referral_ask"),
+                                produced_by,
+                            )
+                            .await
+                        {
+                            Ok(touch_id) => {
+                                ok += 1;
+                                println!(
+                                    "  [drafted] {} → touch {touch_id}",
+                                    p.display_name
+                                );
+                            }
+                            Err(e) => {
+                                err += 1;
+                                tracing::warn!(prospect = %p.display_name, "%e" = %e, "persist failed");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        err += 1;
+                        tracing::warn!(prospect = %p.display_name, "%e" = %e, "draft failed");
+                    }
+                }
+            }
+            println!(
+                "\nreferral-ask complete: {ok} drafted, {err} error(s). \
+                 Review with `salesman review`, then send like any other batch."
             );
         }
 

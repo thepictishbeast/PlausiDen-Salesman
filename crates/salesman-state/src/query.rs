@@ -1457,6 +1457,54 @@ impl State {
         Ok(())
     }
 
+    /// Prospects in `won` state whose state_changed_at is ≥
+    /// `min_days_since_won` ago AND who don't yet have a touch with
+    /// `template_key='referral_ask'`. The post-close referral pool.
+    /// Returns enough fields to drive the drafter without a second
+    /// round-trip.
+    pub async fn list_won_prospects_for_referral_ask(
+        &self,
+        min_days_since_won: i64,
+        limit: i64,
+    ) -> Result<Vec<ProspectWithFacts>> {
+        let rows = sqlx::query(
+            "SELECT p.id AS prospect_id, c.id AS company_id, \
+                    c.display_name, c.homepage, c.industry, \
+                    c.description, c.tech_signals \
+             FROM prospects p \
+             JOIN companies c ON c.id = p.company_id \
+             WHERE p.state = 'won' \
+               AND p.state_changed_at < NOW() - ($1 || ' days')::INTERVAL \
+               AND NOT EXISTS ( \
+                 SELECT 1 FROM touches t \
+                 WHERE t.prospect_id = p.id AND t.template_key = 'referral_ask' \
+               ) \
+             ORDER BY p.state_changed_at \
+             LIMIT $2",
+        )
+        .bind(min_days_since_won.to_string())
+        .bind(limit)
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| ProspectWithFacts {
+                prospect_id: ProspectId(r.try_get("prospect_id").unwrap_or_else(|_| uuid::Uuid::nil())),
+                company_id: CompanyId(r.try_get("company_id").unwrap_or_else(|_| uuid::Uuid::nil())),
+                display_name: r.try_get("display_name").unwrap_or_default(),
+                homepage: r.try_get::<Option<String>, _>("homepage").unwrap_or(None),
+                industry: r.try_get::<Option<String>, _>("industry").unwrap_or(None),
+                description: r.try_get::<Option<String>, _>("description").unwrap_or(None),
+                tech_signals: r
+                    .try_get::<Option<serde_json::Value>, _>("tech_signals")
+                    .unwrap_or(None)
+                    .and_then(|v| serde_json::from_value(v).ok())
+                    .unwrap_or_default(),
+            })
+            .collect())
+    }
+
     /// Resume a paused prospect-sequence. Idempotent — running on
     /// an already-active prospect is a no-op via the WHERE filter.
     /// Returns rows affected (0 = wasn't paused).
