@@ -1,0 +1,12 @@
+subject: Sentinel for Acme — log-volume cost question
+---
+Hi {first_name},
+
+Saw your blog post last week about the SOC analyst burnout problem at Acme. We hear that a lot from teams running Splunk at scale — the licensing cliff at 10TB/day is brutal.
+
+Sentinel is what we built when we hit the same wall. Self-hosted, on YOUR S3, no per-GB tax. Two of our early customers cut their security tooling spend by 60% in the first quarter.
+
+Worth 20 minutes? I can demo the hot-path query latency on a 50TB/day fixture if you want to push it.
+
+— William
+PlausiDen

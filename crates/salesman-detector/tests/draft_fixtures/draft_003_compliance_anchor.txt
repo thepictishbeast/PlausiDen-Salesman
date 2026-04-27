@@ -1,0 +1,11 @@
+subject: GDPR + patient-data analytics — Epsilon's setup?
+---
+Hi {first_name},
+
+Read your case study with the Helsinki university hospital — really impressive work on the consent-revocation workflow.
+
+We're working on the patient-data side too at PlausiDen, but from the storage angle: a patient-keyed encrypted store where the data subject holds the master key and revocation is one DELETE away. GDPR Article 17 by construction.
+
+Curious how Epsilon handles the same thing. If you're open to comparing notes, happy to share what we've learned the hard way.
+
+— William, PlausiDen

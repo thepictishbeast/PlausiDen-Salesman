@@ -1,0 +1,11 @@
+subject: closing the loop
+---
+Hi {first_name},
+
+Three messages in, no reply — totally fair, you're busy and I'd rather you say no than feel pestered.
+
+Closing this thread. If priorities shift around log volume costs in the next quarter, the door's open: william@plausiden.com.
+
+Best of luck with the Acme rollout.
+
+— William

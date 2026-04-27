@@ -1,0 +1,13 @@
+subject: re: your reply on the Sentinel deck
+---
+Hi {first_name},
+
+Thanks for the note last week — fair point on the cold-start latency, that's a real concern with most of these.
+
+Tested the same workload on a fresh deploy this morning: 4.1s on first query (warming the bloom index), 280ms steady-state. Numbers attached in the public benchmark repo:
+
+  github.com/plausiden/sentinel-bench/runs/2026-04-26
+
+Want to try the same query against your data? Happy to set up a sandbox account; you'd need 2GB of representative logs to play with.
+
+— William

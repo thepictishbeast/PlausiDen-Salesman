@@ -1,0 +1,11 @@
+subject: Beta's monorepo CI — feedback loop too slow?
+---
+Hi {first_name},
+
+Quick one — your README mentions you're on Bazel + GitHub Actions. We hit the same combo at PlausiDen and the cold-start time on remote-cache fetches was the killer.
+
+We built a small thing called CacheCutter (open source) that pre-warms the action cache from the most-recent green build of the relevant target. Cut our P50 CI time from 11min to 3min.
+
+Worth a look? Repo's at github.com/plausiden/cachecutter. No sales pitch — just thought it might save you the same week we lost.
+
+— William
