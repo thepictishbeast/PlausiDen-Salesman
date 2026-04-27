@@ -7,20 +7,6 @@ work session.
 
 ## Active
 
-### B1 — Sieve classification on web-01  *(deployed by web-01 Claude — pending verification)*
-Owner explicitly does NOT want Gmail forwarding. The fix is
-server-side: web-01 has a typed Sieve `internal_source` rule
-(score 100) that pins From: @vultr.guest, @plausiden.com,
-@plausiden.internal, @web-01.plausiden.internal directly into
-INBOX, beating other classifiers.
-Verifies: I send a fresh test from openclaw with one of the covered
-From-domains; web-01 confirms it lands in INBOX.
-Test in flight: queue ID 8407E4DF598 from salesman@vultr.guest
-(2026-04-27 04:26 UTC).
-Pre-fix emails (the 14+) are in Promotions/new and Updates folders —
-not lost; owner reclassifies manually with `doveadm move`.
-Unblocks: every other communication channel.
-
 ### B2 — Sender domain decision
 Pick the actual sending domain (recommendation:
 `outreach.plausiden.com` subdomain to keep reputation isolated
@@ -95,7 +81,14 @@ TOS acceptance for browser-automation paths.
 
 ## Resolved
 
-(none yet — items move here once owner confirms done)
+### B1 — Sieve classification on web-01  *(resolved 2026-04-27)*
+Web-01 deployed a typed Sieve `internal_source` rule (score 100)
+pinning From: @vultr.guest, @plausiden.com, @plausiden.internal,
+@web-01.plausiden.internal → INBOX. Verification ping from openclaw
+(queue 8407E4DF598, salesman@vultr.guest) landed in INBOX as
+expected. Daily summary timer + failure alerts will reach owner
+going forward. Pre-fix emails sit in Promotions/Updates folders;
+owner reclassifies manually with `doveadm move` as needed.
 
 ---
 
