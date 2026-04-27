@@ -235,6 +235,10 @@ fn build_tools(router: Arc<LlmRouter>) -> ToolRegistry {
         tools.register(Arc::new(BraveSearchTool::new(Arc::new(brave))));
         tracing::info!("registered Brave Search tool");
     }
+    // OSINT — all free / no-key tools always registered
+    tools.register(Arc::new(salesman_osint::GdeltTool::default()));
+    tools.register(Arc::new(salesman_osint::GithubOrgTool::default()));
+    tools.register(Arc::new(salesman_osint::HnTool::default()));
     tools.register(Arc::new(DraftColdEmailTool::new(
         router.clone(),
         "the PlausiDen team",

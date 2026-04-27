@@ -2463,6 +2463,7 @@ dependencies = [
  "salesman-discovery",
  "salesman-llm",
  "salesman-orchestrator",
+ "salesman-osint",
  "salesman-outreach",
  "salesman-receipts",
  "salesman-reply",
@@ -2572,6 +2573,18 @@ dependencies = [
 [[package]]
 name = "salesman-osint"
 version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "reqwest",
+ "salesman-core",
+ "salesman-tools",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
+]
 
 [[package]]
 name = "salesman-outreach"

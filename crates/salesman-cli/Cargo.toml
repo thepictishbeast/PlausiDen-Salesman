@@ -22,6 +22,7 @@ salesman-outreach = { path = "../salesman-outreach" }
 salesman-receipts = { path = "../salesman-receipts" }
 salesman-detector = { path = "../salesman-detector" }
 salesman-reply = { path = "../salesman-reply" }
+salesman-osint = { path = "../salesman-osint" }
 clap = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

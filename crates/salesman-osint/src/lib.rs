@@ -1,13 +1,23 @@
-//! salesman-osint — placeholder.
+//! salesman-osint — per-prospect intelligence sources beyond the
+//! basic homepage scrape.
 //!
-//! BUG ASSUMPTION: this crate is empty scaffold; nothing here is
-//! production-correct yet. See PLAN.md for the phased delivery order.
+//! Each adapter wraps a free-or-cheap public API:
+//! - GDELT  — recent news articles mentioning a query (no auth)
+//! - GitHub — org / repo discovery (REST API; works unauthenticated
+//!            with strict rate limits, or with a PAT)
+//! - HackerNews — Algolia-backed search of stories + comments
+//!
+//! All three are wrapped as `Tool`s so the agent loop can drive them.
+//!
+//! BUG ASSUMPTION: every API has rate limits. We don't enforce a
+//! global throttle here — caller (orchestrator) is expected to
+//! schedule calls sensibly. Per-call timeouts are 20s.
 #![forbid(unsafe_code)]
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn placeholder() {
-        assert!(true);
-    }
-}
+pub mod gdelt;
+pub mod github_org;
+pub mod hn;
+
+pub use gdelt::{GdeltClient, GdeltTool};
+pub use github_org::{GithubOrgClient, GithubOrgTool};
+pub use hn::{HnClient, HnTool};

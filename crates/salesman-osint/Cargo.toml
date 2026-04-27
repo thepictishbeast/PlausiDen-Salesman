@@ -7,3 +7,13 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+salesman-core = { path = "../salesman-core" }
+salesman-tools = { path = "../salesman-tools" }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+chrono = { workspace = true }
