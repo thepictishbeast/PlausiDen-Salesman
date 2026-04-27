@@ -292,4 +292,77 @@ mod tests {
         let f = classify("550 5.1.1 user unknown");
         assert_eq!(f.suppression_source(), "bounce");
     }
+
+    // ------------------------------------------------------------------
+    // proptest — fuzz classify() against arbitrary input.
+    // Properties:
+    //   1. classify() NEVER panics.
+    //   2. The Display impl NEVER panics.
+    //   3. should_auto_suppress() iff the variant is HardBounce.
+    //   4. The classifier is order-independent for trivial perturbations
+    //      that don't change the SMTP-code substring.
+    // ------------------------------------------------------------------
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(2048))]
+
+        #[test]
+        fn never_panics_on_arbitrary_text(s in ".{0,512}") {
+            let f = classify(&s);
+            // Display must also be safe.
+            let _ = format!("{f}");
+            // suppression_source is currently constant, but exercise it.
+            let _ = f.suppression_source();
+        }
+
+        #[test]
+        fn auto_suppress_iff_hard_bounce(s in ".{0,256}") {
+            let f = classify(&s);
+            // matches! with `{ .. }` confuses proptest's macro
+            // format-string parser, so destructure into a bool first.
+            let is_hard = is_hard_bounce(&f);
+            prop_assert_eq!(f.should_auto_suppress(), is_hard);
+        }
+
+        #[test]
+        fn whitespace_padding_preserves_classification(
+            pad_left in "[ \\t\\r\\n]{0,8}",
+            pad_right in "[ \\t\\r\\n]{0,8}",
+            tmpl in prop::sample::select(vec![
+                "550 5.1.1 user unknown",
+                "550 5.7.1 policy reject",
+                "421 4.7.0 transient",
+                "554 service unavailable",
+                "connection reset",
+            ])
+        ) {
+            let s = format!("{pad_left}{tmpl}{pad_right}");
+            let a = classify(tmpl);
+            let b = classify(&s);
+            prop_assert_eq!(
+                std::mem::discriminant(&a),
+                std::mem::discriminant(&b),
+            );
+        }
+
+        #[test]
+        fn no_3_digit_substring_false_match(
+            s in "[a-zA-Z !@#$%^&*(),.?:;'\"]{1,200}"
+        ) {
+            let f = classify(&s);
+            let is_unstructured = is_unstructured(&f);
+            prop_assert!(is_unstructured);
+        }
+    }
+
+    // Small helpers because `matches!(_, Variant { .. })` inside
+    // proptest's `prop_assert!` macro trips the format-string parser
+    // (it sees `{ ..` as the start of a format placeholder).
+    fn is_hard_bounce(f: &SmtpFailure) -> bool {
+        matches!(f, SmtpFailure::HardBounce { .. })
+    }
+    fn is_unstructured(f: &SmtpFailure) -> bool {
+        matches!(f, SmtpFailure::Unstructured { .. })
+    }
 }
