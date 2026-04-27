@@ -1,0 +1,59 @@
+# PlausiDen product catalog — fed to the auto-angle picker.
+#
+# Each entry is one product. The picker matches the prospect's facts
+# against ideal_customer; if a key_angle resonates, it picks that
+# verbatim. Otherwise it generates a fresh angle grounded in the
+# prospect's signals.
+#
+# Operator override always available: pass --product X explicitly to
+# bypass the picker.
+
+[[products]]
+name = "Sentinel"
+one_liner = "Self-hosted log + threat aggregator with signed audit trail"
+ideal_customer = "5-50 person security teams hitting the Splunk / Datadog cost cliff; SOC 2 / ISO 27001 / GDPR-bound shops that need to defend their tooling in audits."
+key_angles = [
+    "log volume cost cliff vs. self-hosted Sentinel",
+    "audit trail you can replay for SOC 2",
+    "no per-GB tax",
+    "data sovereignty — your logs on your hardware",
+]
+
+[[products]]
+name = "Tidy"
+one_liner = "PII-aware desktop cleaner — GDPR right-to-be-forgotten by default"
+ideal_customer = "Privacy-conscious individuals + GDPR-bound orgs that need to prove they can find and delete user data on request."
+key_angles = [
+    "GDPR Article 17 right-to-be-forgotten by construction",
+    "data-leak prevention before the laptop leaves the building",
+    "auditable deletion certificate",
+]
+
+[[products]]
+name = "Atrium"
+one_liner = "Continuous compliance posture dashboard for self-hosted infra"
+ideal_customer = "Teams running on their own VPS / bare-metal that need to track SOC 2 / ISO / HIPAA controls without a managed-SaaS dependency."
+key_angles = [
+    "compliance posture without Vanta",
+    "drift detection between evidence and reality",
+    "auditor-friendly export",
+]
+
+[[products]]
+name = "Salesman"
+one_liner = "AI client-acquisition engine you can audit, self-host, and that requires human approval per send"
+ideal_customer = "5-50 person B2B SaaS / security / devtools / data teams that care about brand reputation in outbound, are SOC 2-aware, and prefer open-source self-host over extractive SaaS."
+key_angles = [
+    "outbound where the reply-handling does itself",
+    "trigger-event scanner — find people to email TODAY",
+    "audit-grade signed receipts for every send",
+    "vertical packs (cyber / AI / devtools / real estate / IT)",
+]
+
+# Add more entries below as products ship. Format:
+#
+# [[products]]
+# name = "ProductName"
+# one_liner = "What it does in one sentence"
+# ideal_customer = "Who would buy and why"
+# key_angles = ["angle 1", "angle 2"]

@@ -360,6 +360,20 @@ enum Cmd {
         #[arg(long, default_value_t = false)]
         persist: bool,
     },
+    /// Auto-angle picker — for each prospect in a campaign, pick
+    /// the best (product, angle) match from a catalog TOML file.
+    /// Diagnostic / preview mode. Operator can run this before
+    /// `salesman draft --product auto` to see what the system
+    /// would pick.
+    PickAngle {
+        #[arg(long)]
+        campaign: String,
+        #[arg(long, default_value = "samples/products.toml")]
+        catalog: PathBuf,
+        /// Cap how many prospects to score (the rest are skipped).
+        #[arg(long, default_value_t = 10)]
+        max: usize,
+    },
     /// Show recent classified replies for a campaign.
     Inbox {
         #[arg(long)]
@@ -3345,6 +3359,87 @@ async fn main() -> Result<()> {
                     "VERDICT: RED — {blockers} blocker(s) + {warnings} warning(s); fix before send"
                 );
                 anyhow::bail!("dns-check: {blockers} blocker(s)");
+            }
+        }
+
+        Cmd::PickAngle {
+            campaign,
+            catalog,
+            max,
+        } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            if router.registered_kinds().is_empty() {
+                anyhow::bail!(
+                    "no LLM backends registered (set ANTHROPIC_API_KEY and/or GEMINI_API_KEY)"
+                );
+            }
+            let catalog_text = std::fs::read_to_string(&catalog)
+                .with_context(|| format!("reading catalog {}", catalog.display()))?;
+            let products = salesman_content::load_catalog_toml(&catalog_text)?;
+            let products_value = serde_json::to_value(&products)?;
+            let campaign_id = state
+                .ensure_campaign(&campaign, "(pick-angle)", "(unspecified)")
+                .await?;
+            let mut prospects = state
+                .list_prospects_with_facts_for_campaign(campaign_id)
+                .await?;
+            prospects.truncate(max);
+            if prospects.is_empty() {
+                println!("(no prospects in `{campaign}` to score)");
+                return Ok(());
+            }
+            let picker = salesman_content::AnglePickerTool::new(router.clone(), "PlausiDen");
+            println!(
+                "pick-angle `{campaign}`: matching {} prospect(s) against {} product(s)\n",
+                prospects.len(), products.len()
+            );
+            let mut by_product: std::collections::BTreeMap<String, u32> =
+                std::collections::BTreeMap::new();
+            let mut total_conf: f32 = 0.0;
+            let mut count: u32 = 0;
+            for p in &prospects {
+                let prospect_json = serde_json::json!({
+                    "display_name": p.display_name,
+                    "industry":     p.industry,
+                    "description":  p.description,
+                    "tech_signals": p.tech_signals,
+                });
+                let args = serde_json::json!({
+                    "prospect": prospect_json,
+                    "catalog":  products_value,
+                });
+                match salesman_tools::Tool::invoke(&picker, salesman_core::ToolArgs(args)).await {
+                    Ok(v) => {
+                        let product = v.get("picked_product").and_then(|x| x.as_str()).unwrap_or("?");
+                        let angle = v.get("picked_angle").and_then(|x| x.as_str()).unwrap_or("?");
+                        let rationale = v.get("rationale").and_then(|x| x.as_str()).unwrap_or("");
+                        let conf = v.get("confidence").and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
+                        let valid = v.get("valid_pick").and_then(|x| x.as_bool()).unwrap_or(true);
+                        *by_product.entry(product.to_string()).or_default() += 1;
+                        total_conf += conf;
+                        count += 1;
+                        println!(
+                            "[{:.2}] {} → {} ({}){}\n         {}",
+                            conf,
+                            p.display_name,
+                            product,
+                            angle,
+                            if valid { "" } else { " ⚠ FALLBACK" },
+                            rationale.chars().take(180).collect::<String>(),
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(prospect = %p.display_name, "%e" = %e, "pick failed");
+                    }
+                }
+            }
+            if count > 0 {
+                println!(
+                    "\npick-angle complete: scored {count}, mean confidence {:.2}. \
+                     Distribution: {:?}",
+                    total_conf / count as f32,
+                    by_product
+                );
             }
         }
 

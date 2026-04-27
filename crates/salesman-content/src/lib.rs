@@ -9,6 +9,7 @@
 //! operator approve. Anything that bypasses owner-review is a bug.
 #![forbid(unsafe_code)]
 
+pub mod angle_picker;
 pub mod case_study;
 pub mod classify_reply;
 pub mod comparison_page;
@@ -16,6 +17,7 @@ pub mod draft_email;
 pub mod draft_reply;
 pub mod seo_meta;
 pub mod site;
+pub use angle_picker::{AnglePick, AnglePickerTool, ProductEntry, load_catalog_toml};
 pub use case_study::CaseStudyDraftTool;
 pub use classify_reply::{ClassifyReply, ReplyClassifyTool};
 pub use comparison_page::ComparisonPageTool;
