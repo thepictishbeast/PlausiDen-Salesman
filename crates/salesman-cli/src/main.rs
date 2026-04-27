@@ -728,6 +728,23 @@ enum Cmd {
         #[arg(long, default_value_t = false)]
         verbose: bool,
     },
+    /// Bulk-approve every awaiting-approval draft that passes the
+    /// detector ensemble (U44 fact-trace + U46 personalization +
+    /// existing AI-tells signals). Failures stay in the queue with
+    /// reasons surfaced; operator manually reviews / rejects /
+    /// force-overrides those. `--dry-run` previews without state
+    /// changes.
+    ApproveAll {
+        #[arg(long)]
+        campaign: String,
+        /// Detector threshold — drafts at or above this score stay
+        /// in the queue. Matches the standard approve-gate default.
+        #[arg(long, default_value_t = 0.50)]
+        threshold: f32,
+        /// Print what would be approved without changing state.
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+    },
     /// "Today's 10" — a daily prioritized to-do list combining
     /// (a) replies needing response, (b) trigger events fired in the
     /// last N hours, (c) paused/stalled prospects, (d) referral-ask
@@ -1422,6 +1439,85 @@ async fn main() -> Result<()> {
                 if bad > 0 {
                     anyhow::bail!("{bad} draft(s) failed the fact-trace gate");
                 }
+            }
+        }
+
+        Cmd::ApproveAll {
+            campaign,
+            threshold,
+            dry_run,
+        } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let campaign_id = state
+                .ensure_campaign(&campaign, "(approve-all)", "(unspecified)")
+                .await?;
+            let drafts = state.list_drafts_awaiting_approval(campaign_id).await?;
+            if drafts.is_empty() {
+                println!("no drafts awaiting approval in `{campaign}`");
+            } else {
+                let mut approved = 0u32;
+                let mut held = 0u32;
+                println!(
+                    "evaluating {} draft(s) in `{campaign}` (threshold {:.2}{}) …\n",
+                    drafts.len(),
+                    threshold,
+                    if dry_run { ", DRY-RUN" } else { "" },
+                );
+                for t in &drafts {
+                    let facts = state.touch_facts(t.touch_id).await.unwrap_or(None);
+                    let risk = salesman_detector::score_with_facts(
+                        &t.body,
+                        t.subject.as_deref(),
+                        facts.as_ref(),
+                    );
+                    if risk.passes(threshold) {
+                        if dry_run {
+                            println!(
+                                "[DRY-RUN] would approve  touch={} company={:?} score={:.2}",
+                                t.touch_id, t.company, risk.score
+                            );
+                            approved += 1;
+                        } else {
+                            match state.approve_touch(t.touch_id).await {
+                                Ok(n) if n > 0 => {
+                                    approved += 1;
+                                    println!(
+                                        "approved  touch={} company={:?} score={:.2}",
+                                        t.touch_id, t.company, risk.score
+                                    );
+                                }
+                                Ok(_) => {
+                                    held += 1;
+                                    tracing::warn!(
+                                        touch=%t.touch_id,
+                                        "approve_touch affected 0 rows — state changed under us",
+                                    );
+                                }
+                                Err(e) => {
+                                    held += 1;
+                                    tracing::warn!(
+                                        touch=%t.touch_id, "%e" = %e,
+                                        "approve_touch failed — leaving in queue",
+                                    );
+                                }
+                            }
+                        }
+                    } else {
+                        held += 1;
+                        println!(
+                            "HELD      touch={} company={:?} score={:.2}",
+                            t.touch_id, t.company, risk.score
+                        );
+                        for r in risk.reasons() {
+                            println!("            {r}");
+                        }
+                    }
+                }
+                println!(
+                    "\napprove-all complete: {approved} approved, {held} held \
+                     for manual review.{}",
+                    if dry_run { " (no state changes)" } else { "" },
+                );
             }
         }
 
