@@ -159,6 +159,17 @@ enum Cmd {
     /// Health probe — JSON output. Exit 1 if any required component
     /// is missing.
     Status,
+    /// Render a directory of markdown to a static HTML site.
+    RenderSite {
+        #[arg(long)]
+        src: PathBuf,
+        #[arg(long)]
+        dst: PathBuf,
+        #[arg(long, default_value = "https://plausiden.com")]
+        origin: String,
+        #[arg(long, default_value = "PlausiDen")]
+        site_name: String,
+    },
     /// Define a multi-touch sequence from a TOML file.
     DefineSequence {
         #[arg(long)]
@@ -995,6 +1006,20 @@ async fn main() -> Result<()> {
                 .assign_sequence_to_campaign(campaign_id, sid)
                 .await?;
             println!("assigned sequence `{sequence}` to {n} new prospects (idempotent)");
+        }
+
+        Cmd::RenderSite {
+            src,
+            dst,
+            origin,
+            site_name,
+        } => {
+            let cfg = salesman_content::SiteConfig::new(&origin, &site_name);
+            let pages = salesman_content::render_site(&src, &dst, &cfg)?;
+            println!("rendered {} pages to {}", pages.len(), dst.display());
+            for p in &pages {
+                println!("  {} → {}", p.slug, p.output_path.display());
+            }
         }
 
         Cmd::Halt { reason } => {
