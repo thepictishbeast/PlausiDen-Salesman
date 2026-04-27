@@ -518,6 +518,9 @@ fn build_router(
         router = router.with_sink(sink);
         tracing::info!("LLM cost ledger sink attached");
     }
+    // Operator brief: optional file path in SALESMAN_OPERATOR_BRIEF.
+    // No-op if unset; logs at INFO when loaded.
+    router = router.with_operator_brief_from_env();
     router
 }
 
@@ -2271,6 +2274,20 @@ async fn main() -> Result<()> {
             report.insert(
                 "unsubscribe_minter_ready".into(),
                 serde_json::Value::Bool(unsub_ready),
+            );
+            // Operator brief presence — quality signal for the prompt
+            // freshness contract (MODEL_RESILIENCE.md §5).
+            let brief_path = std::env::var("SALESMAN_OPERATOR_BRIEF")
+                .ok()
+                .filter(|p| !p.is_empty());
+            let brief_loaded = router.operator_brief().is_some();
+            report.insert(
+                "SALESMAN_OPERATOR_BRIEF".into(),
+                serde_json::Value::String(brief_path.unwrap_or_else(|| "(unset)".into())),
+            );
+            report.insert(
+                "operator_brief_loaded".into(),
+                serde_json::Value::Bool(brief_loaded),
             );
             report.insert("missing_required".into(), serde_json::json!(missing));
             println!("{}", serde_json::to_string_pretty(&report)?);
