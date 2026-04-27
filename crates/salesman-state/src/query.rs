@@ -59,6 +59,30 @@ pub struct ProspectWithFacts {
     pub industry: Option<String>,
     pub description: Option<String>,
     pub tech_signals: serde_json::Value,
+    /// Per-prospect tags JSONB (interests, notes, do-not-pitch
+    /// list). `{}` for new prospects; accumulates via
+    /// `add_prospect_interest` + future LLM extraction (U52).
+    /// Drafter prompts pass this through verbatim so personalized
+    /// copy can reference it.
+    pub tags: serde_json::Value,
+}
+
+impl ProspectWithFacts {
+    /// Canonical JSON shape passed to drafter tools as the
+    /// `prospect` field. Centralized so every draft path (cold,
+    /// trigger-anchored, sequence-step, account-fanout) emits the
+    /// SAME shape — operator changes and new fact fields land in
+    /// one place.
+    pub fn to_prompt_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "display_name": self.display_name,
+            "homepage": self.homepage,
+            "industry": self.industry,
+            "description": self.description,
+            "tech_signals": self.tech_signals,
+            "tags": self.tags,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -664,7 +688,7 @@ impl State {
         campaign_id: CampaignId,
     ) -> Result<Vec<ProspectWithFacts>> {
         let rows = sqlx::query(
-            "SELECT p.id AS prospect_id, c.id AS company_id,
+            "SELECT p.id AS prospect_id, p.tags AS tags, c.id AS company_id,
                     c.display_name, c.homepage, c.industry,
                     c.description, c.tech_signals
              FROM prospects p
@@ -694,6 +718,9 @@ impl State {
             let tech_signals: serde_json::Value = r
                 .try_get("tech_signals")
                 .unwrap_or(serde_json::Value::Array(vec![]));
+            let tags: serde_json::Value = r
+                .try_get("tags")
+                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
             out.push(ProspectWithFacts {
                 prospect_id,
                 company_id,
@@ -702,9 +729,72 @@ impl State {
                 industry,
                 description,
                 tech_signals,
+                tags,
             });
         }
         Ok(out)
+    }
+
+    /// Append `interest` to `prospects.tags['interests']` (deduped,
+    /// case-insensitive on the trimmed value). Used by the operator
+    /// `salesman tag` command today; will also be the merge target
+    /// for U52's LLM interest extractor. Returns true when a row
+    /// was actually updated (i.e. the interest wasn't already there).
+    pub async fn add_prospect_interest(
+        &self,
+        prospect_id: ProspectId,
+        interest: &str,
+    ) -> Result<bool> {
+        let cleaned = interest.trim();
+        if cleaned.is_empty() {
+            return Ok(false);
+        }
+        let row = sqlx::query(
+            "UPDATE prospects \
+             SET tags = jsonb_set( \
+                 COALESCE(tags, '{}'::jsonb), \
+                 '{interests}', \
+                 ( \
+                   SELECT to_jsonb(array_agg(DISTINCT i)) \
+                   FROM unnest( \
+                     COALESCE( \
+                       ARRAY( \
+                         SELECT jsonb_array_elements_text( \
+                           COALESCE(tags->'interests', '[]'::jsonb) \
+                         ) \
+                       ), \
+                       ARRAY[]::TEXT[] \
+                     ) || ARRAY[$2::TEXT] \
+                   ) AS i \
+                 ), \
+                 true \
+             ) \
+             WHERE id = $1 \
+               AND ( \
+                 NOT (tags ? 'interests') \
+                 OR NOT (tags->'interests' @> to_jsonb($2::TEXT)) \
+               ) \
+             RETURNING id",
+        )
+        .bind(prospect_id.0)
+        .bind(cleaned)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(row.is_some())
+    }
+
+    /// Read the per-prospect tags JSONB. Returns `{}` when the
+    /// prospect doesn't exist or has no tags set yet.
+    pub async fn get_prospect_tags(&self, prospect_id: ProspectId) -> Result<serde_json::Value> {
+        let row = sqlx::query("SELECT tags FROM prospects WHERE id = $1")
+            .bind(prospect_id.0)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(row
+            .and_then(|r| r.try_get::<serde_json::Value, _>("tags").ok())
+            .unwrap_or(serde_json::Value::Object(serde_json::Map::new())))
     }
 
     /// Single-prospect facts lookup. Used by the trigger-anchored
@@ -715,7 +805,7 @@ impl State {
         prospect_id: ProspectId,
     ) -> Result<Option<ProspectWithFacts>> {
         let row = sqlx::query(
-            "SELECT p.id AS prospect_id, c.id AS company_id,
+            "SELECT p.id AS prospect_id, p.tags AS tags, c.id AS company_id,
                     c.display_name, c.homepage, c.industry,
                     c.description, c.tech_signals
              FROM prospects p
@@ -744,6 +834,9 @@ impl State {
             tech_signals: r
                 .try_get::<serde_json::Value, _>("tech_signals")
                 .unwrap_or(serde_json::Value::Array(vec![])),
+            tags: r
+                .try_get::<serde_json::Value, _>("tags")
+                .unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
         }))
     }
 
@@ -1802,7 +1895,7 @@ impl State {
         limit: i64,
     ) -> Result<Vec<ProspectWithFacts>> {
         let rows = sqlx::query(
-            "SELECT p.id AS prospect_id, c.id AS company_id, \
+            "SELECT p.id AS prospect_id, p.tags AS tags, c.id AS company_id, \
                     c.display_name, c.homepage, c.industry, \
                     c.description, c.tech_signals \
              FROM prospects p \
@@ -1843,6 +1936,9 @@ impl State {
                     .unwrap_or(None)
                     .and_then(|v| serde_json::from_value(v).ok())
                     .unwrap_or_default(),
+                tags: r
+                    .try_get::<serde_json::Value, _>("tags")
+                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
             })
             .collect())
     }

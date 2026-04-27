@@ -802,6 +802,17 @@ enum Cmd {
         #[arg(long, default_value_t = false)]
         dry_run: bool,
     },
+    /// Tag a prospect with an interest the drafter should remember.
+    /// Appended to prospects.tags['interests'] (deduped). Drafter
+    /// prompts pick this up automatically via ProspectWithFacts —
+    /// the next touch can cite the interest directly. Operator-driven
+    /// today; LLM extraction lands as U52.
+    Tag {
+        #[arg(long)]
+        prospect_id: String,
+        #[arg(long)]
+        interest: String,
+    },
     /// List the registered tools.
     Tools,
     /// List the registered LLM backends + models.
@@ -1323,13 +1334,7 @@ async fn main() -> Result<()> {
                     skipped += 1;
                     continue;
                 }
-                let prospect_json = serde_json::json!({
-                    "display_name": p.display_name,
-                    "homepage": p.homepage,
-                    "industry": p.industry,
-                    "description": p.description,
-                    "tech_signals": p.tech_signals,
-                });
+                let prospect_json = p.to_prompt_json();
                 let mut tool_args = serde_json::json!({
                     "prospect": prospect_json,
                     "product": product,
@@ -4462,12 +4467,7 @@ async fn main() -> Result<()> {
             let mut total_conf: f32 = 0.0;
             let mut count: u32 = 0;
             for p in &prospects {
-                let prospect_json = serde_json::json!({
-                    "display_name": p.display_name,
-                    "industry":     p.industry,
-                    "description":  p.description,
-                    "tech_signals": p.tech_signals,
-                });
+                let prospect_json = p.to_prompt_json();
                 let args = serde_json::json!({
                     "prospect": prospect_json,
                     "catalog":  products_value,
@@ -4633,12 +4633,7 @@ async fn main() -> Result<()> {
             let mut ok = 0u32;
             let mut err = 0u32;
             for p in &pool {
-                let prospect_json = serde_json::json!({
-                    "display_name": p.display_name,
-                    "industry":     p.industry,
-                    "description":  p.description,
-                    "tech_signals": p.tech_signals,
-                });
+                let prospect_json = p.to_prompt_json();
                 let args = serde_json::json!({
                     "prospect": prospect_json,
                     "product":  product,
@@ -5006,13 +5001,7 @@ async fn main() -> Result<()> {
                                     continue;
                                 }
                             };
-                            let prospect_json = serde_json::json!({
-                                "display_name": p.display_name,
-                                "homepage": p.homepage,
-                                "industry": p.industry,
-                                "description": p.description,
-                                "tech_signals": p.tech_signals,
-                            });
+                            let prospect_json = p.to_prompt_json();
                             let angle_hint = format!(
                                 "anchor on this trigger event ({}): {}",
                                 t.source, t.headline,
@@ -5537,6 +5526,31 @@ async fn main() -> Result<()> {
                      (idempotent — re-runs skip existing pairs).",
                 );
             }
+        }
+
+        Cmd::Tag {
+            prospect_id,
+            interest,
+        } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let pid = salesman_core::ProspectId(
+                uuid::Uuid::parse_str(&prospect_id)
+                    .map_err(|e| anyhow::anyhow!("invalid prospect-id: {e}"))?,
+            );
+            let added = state.add_prospect_interest(pid, &interest).await?;
+            if added {
+                println!("tagged prospect {prospect_id}: interest=\"{interest}\"");
+            } else {
+                println!(
+                    "no change — prospect {prospect_id} already had interest=\"{interest}\" \
+                     (or the trimmed value was empty)"
+                );
+            }
+            let tags = state.get_prospect_tags(pid).await?;
+            println!(
+                "tags now: {}",
+                serde_json::to_string_pretty(&tags).unwrap_or_default()
+            );
         }
 
         Cmd::Tools => {
