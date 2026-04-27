@@ -252,6 +252,24 @@ enum Cmd {
         #[arg(long, default_value_t = false)]
         probe_imap: bool,
     },
+    /// Print the current sender identity (resolved from env). Exits 1
+    /// if any required field is missing.
+    Whoami,
+    /// Pre-flight check on a CSV before `discover`. Reports parsable
+    /// rows + which would be skipped + why. No DB writes.
+    ValidateCsv {
+        #[arg(long)]
+        from_csv: PathBuf,
+    },
+    /// Bulk-reject every awaiting-approval draft in a campaign.
+    /// Useful when starting fresh after a failed draft batch.
+    /// Requires --confirm-typed.
+    QueueClear {
+        #[arg(long)]
+        campaign: String,
+        #[arg(long, default_value_t = false)]
+        confirm_typed: bool,
+    },
     /// Render a directory of markdown to a static HTML site.
     RenderSite {
         #[arg(long)]
@@ -422,6 +440,10 @@ async fn sqlx_lookup_sequence(
     let row = row.ok_or_else(|| anyhow::anyhow!("sequence `{name}` not found in campaign"))?;
     let id: uuid::Uuid = row.try_get("id")?;
     Ok(id)
+}
+
+fn pct(n: usize, total: usize) -> f32 {
+    if total == 0 { 0.0 } else { (n as f32) / (total as f32) * 100.0 }
 }
 
 fn parse_touch_id(s: &str) -> Result<salesman_core::TouchId> {
@@ -1429,6 +1451,112 @@ async fn main() -> Result<()> {
                     rows.len()
                 );
             }
+        }
+
+        Cmd::Whoami => {
+            let mut report = serde_json::Map::new();
+            let mut missing = Vec::new();
+            for k in [
+                "SALESMAN_FROM_NAME",
+                "SALESMAN_FROM_EMAIL",
+                "SALESMAN_REPLY_TO",
+                "SALESMAN_LIST_UNSUBSCRIBE",
+                "SALESMAN_COMPLIANCE_FOOTER",
+                "SALESMAN_SMTP_HOST",
+                "SALESMAN_SMTP_PORT",
+                "SALESMAN_SMTP_USERNAME",
+            ] {
+                match std::env::var(k) {
+                    Ok(v) if !v.is_empty() => {
+                        report.insert(k.into(), serde_json::Value::String(v));
+                    }
+                    _ => missing.push(k),
+                }
+            }
+            // Don't echo passwords.
+            let pwd_set = std::env::var("SALESMAN_SMTP_PASSWORD")
+                .map(|v| !v.is_empty())
+                .unwrap_or(false);
+            report.insert("SALESMAN_SMTP_PASSWORD".into(), serde_json::Value::Bool(pwd_set));
+            report.insert("missing_required".into(), serde_json::json!(missing));
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            if !missing.is_empty() {
+                anyhow::bail!("sender identity incomplete; {} required fields missing", missing.len());
+            }
+        }
+
+        Cmd::ValidateCsv { from_csv } => {
+            let seed = CsvSeed::new();
+            let companies = seed.read_path(&from_csv)?;
+            let mut have_homepage = 0usize;
+            let mut have_industry = 0usize;
+            let mut have_description = 0usize;
+            for c in &companies {
+                if c.homepage.is_some() { have_homepage += 1; }
+                if c.industry.is_some() { have_industry += 1; }
+                if c.description.is_some() { have_description += 1; }
+            }
+            println!(
+                "validate-csv {}\n\
+                 ---------------------------\n\
+                 parsable rows:        {}\n\
+                 with homepage:        {} ({:.0}%)\n\
+                 with industry:        {} ({:.0}%)\n\
+                 with description:     {} ({:.0}%)\n",
+                from_csv.display(),
+                companies.len(),
+                have_homepage,
+                pct(have_homepage, companies.len()),
+                have_industry,
+                pct(have_industry, companies.len()),
+                have_description,
+                pct(have_description, companies.len()),
+            );
+            if companies.is_empty() {
+                anyhow::bail!("no parsable rows in CSV");
+            }
+            // Sample preview
+            println!("Sample (first 3):");
+            for c in companies.iter().take(3) {
+                println!(
+                    "  - {} | homepage={:?} | industry={:?}",
+                    c.display_name, c.homepage.as_ref().map(|u| u.as_str()), c.industry
+                );
+            }
+        }
+
+        Cmd::QueueClear { campaign, confirm_typed } => {
+            if !confirm_typed {
+                anyhow::bail!(
+                    "queue-clear requires --confirm-typed (type the campaign name to proceed)"
+                );
+            }
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let cid = state
+                .ensure_campaign(&campaign, "(queue-clear)", "(unspecified)")
+                .await?;
+            let pending = state.list_drafts_awaiting_approval(cid).await?;
+            println!(
+                "queue-clear `{campaign}`: {} awaiting-approval touches will be REJECTED",
+                pending.len()
+            );
+            {
+                use dialoguer::Input;
+                let typed: String = Input::new()
+                    .with_prompt(format!("Type the campaign name (`{campaign}`) to confirm"))
+                    .interact_text()
+                    .map_err(|e| anyhow::anyhow!("dialoguer: {e}"))?;
+                if typed.trim() != campaign {
+                    anyhow::bail!("typed campaign name did not match — aborting");
+                }
+            }
+            let mut rejected = 0u32;
+            for t in &pending {
+                if state.reject_touch(t.touch_id).await? == 1 {
+                    rejected += 1;
+                }
+            }
+            println!("queue-clear: rejected {rejected} touches");
         }
 
         Cmd::Doctor { probe_smtp, probe_imap } => {
