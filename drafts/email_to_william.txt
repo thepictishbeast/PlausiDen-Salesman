@@ -1,0 +1,35 @@
+From: William Armstrong <william@plausiden.com>
+To: William Armstrong <william@plausiden.com>
+Subject: The cold-email tool we couldn't find for sale, so we built it
+
+Hi William,
+
+Three things kept being true at every B2B company I worked at:
+
+1. Outbound sales worked when each email was specific and personal. It hurt the brand when it wasn't.
+2. Every tool we tried (Outreach, Apollo, Lemlist) optimized for volume — not reputation.
+3. None of them let us prove what we sent if a regulator or auditor asked.
+
+So I built Salesman.
+
+It's a self-hosted system that runs on your own server. Your prospect list, your drafts, your replies — everything stays on your hardware. We never see any of it.
+
+What it does:
+
+- Ingests a prospect CSV and enriches each row with public OSINT — recent news, GitHub activity, prior press coverage, the tech stack their site uses.
+- Drafts personalized first-touch emails using your choice of LLM (Claude, Gemini, or a local model), and rejects anything that reads generic before you ever see it. An ensemble of detectors catches AI clichés, marketing-speak, and fake hedging.
+- Requires you to type your approval before each batch goes out. No auto-blast, no exceptions, ever.
+- Signs every email into a cryptographic receipt chain. You can answer "what did we send and when" for any audit, ever.
+- Auto-suppresses anyone who bounces, opts out, or replies with STOP. The unsubscribe link meets the new Gmail/Yahoo bulk-sender rules.
+- Wraps fresh sender domains in a warmup ramp so you don't get blacklisted on day one.
+- Comes with operator commands you actually need: doctor, dns-check, preflight, audit-chain, suppressions list/add/remove/export/import.
+
+The whole thing is open source. Read every line. Run it for free.
+
+We charge for the hosted version, premium support, and integration help. The core is and always will be free.
+
+Worth 20 minutes? Reply yes and I'll send install instructions or set up a walkthrough.
+
+— William
+PlausiDen
+william@plausiden.com
