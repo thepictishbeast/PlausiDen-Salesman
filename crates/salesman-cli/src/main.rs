@@ -712,6 +712,22 @@ enum Cmd {
         #[arg(long)]
         campaign: String,
     },
+    /// Bulk fact-check every awaiting-approval draft in a campaign.
+    /// Runs the U44 fact-trace gate (numeric claims must trace back
+    /// to prospect facts JSONB) across the whole queue and reports
+    /// only the drafts with fabricated claims. Prints touch ids so
+    /// the operator can pipe straight into `salesman reject`.
+    FactCheck {
+        #[arg(long)]
+        campaign: String,
+        /// Detector threshold above which a draft is flagged.
+        /// Default 0.50 matches the standard approve-gate threshold.
+        #[arg(long, default_value_t = 0.50)]
+        threshold: f32,
+        /// Print every draft's score, not only the ones that fail.
+        #[arg(long, default_value_t = false)]
+        verbose: bool,
+    },
     /// Kill switch — pauses every active campaign.
     Halt {
         #[arg(long, default_value = "operator-issued")]
@@ -1325,6 +1341,69 @@ async fn main() -> Result<()> {
                     println!();
                     println!("{}", t.body);
                     println!();
+                }
+            }
+        }
+
+        Cmd::FactCheck {
+            campaign,
+            threshold,
+            verbose,
+        } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let campaign_id = state
+                .ensure_campaign(&campaign, "(fact-check-only)", "(unspecified)")
+                .await?;
+            let drafts = state.list_drafts_awaiting_approval(campaign_id).await?;
+            if drafts.is_empty() {
+                println!("no drafts awaiting approval in `{campaign}`");
+            } else {
+                let mut bad = 0u32;
+                let mut clean = 0u32;
+                let mut no_facts = 0u32;
+                println!(
+                    "scanning {} draft(s) in `{campaign}` (threshold {:.2}) …\n",
+                    drafts.len(),
+                    threshold
+                );
+                for t in &drafts {
+                    let facts = state.touch_facts(t.touch_id).await.unwrap_or(None);
+                    if facts.is_none() {
+                        no_facts += 1;
+                    }
+                    let risk = salesman_detector::score_with_facts(
+                        &t.body,
+                        t.subject.as_deref(),
+                        facts.as_ref(),
+                    );
+                    let fails = !risk.passes(threshold);
+                    if fails {
+                        bad += 1;
+                        println!(
+                            "FAIL  touch={} company={:?} score={:.2}",
+                            t.touch_id, t.company, risk.score
+                        );
+                        for r in risk.reasons() {
+                            println!("        {r}");
+                        }
+                        println!("        reject: salesman reject --touch {}", t.touch_id);
+                    } else {
+                        clean += 1;
+                        if verbose {
+                            println!(
+                                "ok    touch={} company={:?} score={:.2}",
+                                t.touch_id, t.company, risk.score
+                            );
+                        }
+                    }
+                }
+                println!(
+                    "\nfact-check complete: {clean} clean, {bad} flagged, \
+                     {no_facts} draft(s) had no facts available (gate downgraded \
+                     to soft heuristic for those)"
+                );
+                if bad > 0 {
+                    anyhow::bail!("{bad} draft(s) failed the fact-trace gate");
                 }
             }
         }
