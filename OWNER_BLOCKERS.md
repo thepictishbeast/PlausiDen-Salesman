@@ -79,6 +79,16 @@ Default OFF (per `CLAUDE.md` hard rules). Lift only if you opt in.
 Lifting requires: (a) per-account credential storage plan, (b)
 TOS acceptance for browser-automation paths.
 
+## Heads-up (info-only, no action needed)
+
+- **PlausiDen-CRM repo created** on GitHub (private):
+  https://github.com/thepictishbeast/PlausiDen-CRM
+  Scaffolded with 5 crates + initial CRM schema. Subscribes to
+  Salesman events via Postgres LISTEN/NOTIFY (no coupling).
+- **Salesman now fires NOTIFY** on touch.sent / reply.received /
+  reply.classified — CRM ingest will get sub-second updates when
+  it lands. CRM downtime never breaks Salesman.
+
 ## Resolved
 
 (none yet — items move here once owner confirms done)
