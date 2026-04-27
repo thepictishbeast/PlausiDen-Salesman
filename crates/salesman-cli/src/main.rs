@@ -491,6 +491,21 @@ enum Cmd {
         #[arg(long, default_value = "template")]
         by: TemplateStatsBy,
     },
+    /// Send-time analytics — reply rate broken down by
+    /// day-of-week + hour-of-day in the operator's local timezone.
+    /// Answers "when should I time the next batch?"
+    SendTimes {
+        /// Operator's timezone offset from UTC, in minutes
+        /// (NY=-300, LA=-480, UTC=0, Berlin=60 or 120).
+        #[arg(long, default_value_t = 0)]
+        tz_offset_minutes: i32,
+        /// Minimum sends per bucket before it's reported.
+        #[arg(long, default_value_t = 5)]
+        min_sent: i64,
+        /// Top-N windows to highlight as recommendations.
+        #[arg(long, default_value_t = 5)]
+        top: usize,
+    },
     /// Score a body of text through the AI detector.
     Score {
         #[arg(long)]
@@ -2494,6 +2509,83 @@ async fn main() -> Result<()> {
                         pct_str,
                     );
                 }
+            }
+        }
+
+        Cmd::SendTimes {
+            tz_offset_minutes,
+            min_sent,
+            top,
+        } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let rows = state
+                .reply_rate_by_send_window(tz_offset_minutes, min_sent)
+                .await?;
+            if rows.is_empty() {
+                println!(
+                    "no send-time data with sent ≥ {min_sent} in any (day, hour) bucket. \
+                     Lower --min-sent or send more before this is useful."
+                );
+                return Ok(());
+            }
+            const DOW: &[&str] = &["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+            if cli.json {
+                let v = serde_json::json!({
+                    "tz_offset_minutes": tz_offset_minutes,
+                    "min_sent": min_sent,
+                    "rows": rows.iter().map(|(dow, hour, sent, replied, engaged)| {
+                        let rate = if *sent == 0 { 0.0 } else { *replied as f32 / *sent as f32 };
+                        let eng = if *sent == 0 { 0.0 } else { *engaged as f32 / *sent as f32 };
+                        serde_json::json!({
+                            "dow":   dow,
+                            "dow_name": DOW.get(*dow as usize).copied().unwrap_or("?"),
+                            "hour":  hour,
+                            "sent":  sent,
+                            "replied": replied,
+                            "engaged": engaged,
+                            "reply_rate":   rate,
+                            "engaged_rate": eng,
+                        })
+                    }).collect::<Vec<_>>(),
+                });
+                println!("{}", serde_json::to_string_pretty(&v)?);
+                return Ok(());
+            }
+            println!(
+                "send-time analytics — tz_offset={tz_offset_minutes}min, min-sent={min_sent}\n"
+            );
+            println!(
+                "{:<5} {:<6} {:>6} {:>8} {:>8} {:>8} {:>9}",
+                "day", "hour", "sent", "replied", "engaged", "reply%", "engaged%"
+            );
+            println!("{}", "-".repeat(70));
+            for (i, (dow, hour, sent, replied, engaged)) in rows.iter().enumerate() {
+                let dow_name = DOW.get(*dow as usize).copied().unwrap_or("?");
+                let reply_rate = if *sent == 0 {
+                    0.0
+                } else {
+                    *replied as f32 / *sent as f32
+                };
+                let engaged_rate = if *sent == 0 {
+                    0.0
+                } else {
+                    *engaged as f32 / *sent as f32
+                };
+                let marker = if i < top { " ★" } else { "" };
+                println!(
+                    "{:<5} {:>4}  {:>6} {:>8} {:>8} {:>7.1}% {:>8.1}%{marker}",
+                    dow_name,
+                    format!("{hour:02}:00"),
+                    sent,
+                    replied,
+                    engaged,
+                    reply_rate * 100.0,
+                    engaged_rate * 100.0,
+                );
+            }
+            if !rows.is_empty() {
+                println!();
+                println!("★ = top {top} window(s) by engaged_rate. Time your next batch with --no-pause for one of these.");
             }
         }
 

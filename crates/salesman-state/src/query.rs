@@ -787,6 +787,54 @@ impl State {
     /// Per-template performance: drafted, sent, replied (any kind),
     /// engaged-replied. The bandit reads this to weight template
     /// selection.
+
+    /// Reply-rate broken down by (day-of-week, hour-of-day) of SEND
+    /// time, in the operator's chosen timezone offset (minutes).
+    /// Filters to buckets with `sent >= min_sent` so noise is
+    /// suppressed. Returns rows sorted by engaged_rate desc.
+    pub async fn reply_rate_by_send_window(
+        &self,
+        tz_offset_minutes: i32,
+        min_sent: i64,
+    ) -> Result<Vec<(i32, i32, i64, i64, i64)>> {
+        // Returns (dow 0=Sunday, hour 0-23, sent, replied, engaged).
+        let rows = sqlx::query(
+            "SELECT \
+               EXTRACT(DOW FROM (t.sent_at + ($1 || ' minutes')::INTERVAL))::INT AS dow, \
+               EXTRACT(HOUR FROM (t.sent_at + ($1 || ' minutes')::INTERVAL))::INT AS hour, \
+               COUNT(*)::BIGINT AS sent, \
+               COUNT(DISTINCT r.id) FILTER (WHERE r.id IS NOT NULL)::BIGINT AS replied, \
+               COUNT(DISTINCT r.id) FILTER (WHERE r.kind = 'engaged')::BIGINT AS engaged \
+             FROM touches t \
+             LEFT JOIN replies r ON r.touch_id = t.id \
+             WHERE t.sent_at IS NOT NULL \
+               AND t.outcome = 'sent' \
+             GROUP BY dow, hour \
+             HAVING COUNT(*) >= $2 \
+             ORDER BY \
+               (COUNT(DISTINCT r.id) FILTER (WHERE r.kind = 'engaged')::FLOAT \
+                  / NULLIF(COUNT(*)::FLOAT, 0)) DESC NULLS LAST, \
+               COUNT(*) DESC",
+        )
+        .bind(tz_offset_minutes.to_string())
+        .bind(min_sent)
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.try_get::<i32, _>("dow").unwrap_or(0),
+                    r.try_get::<i32, _>("hour").unwrap_or(0),
+                    r.try_get::<i64, _>("sent").unwrap_or(0),
+                    r.try_get::<i64, _>("replied").unwrap_or(0),
+                    r.try_get::<i64, _>("engaged").unwrap_or(0),
+                )
+            })
+            .collect())
+    }
+
     /// Same shape as template_stats, but joined with companies so
     /// each row is (template_key, segment) where `segment` is the
     /// company's industry. Lets the operator answer "which template
