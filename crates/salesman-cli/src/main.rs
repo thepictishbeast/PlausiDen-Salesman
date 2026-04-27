@@ -98,6 +98,24 @@ enum Cmd {
         #[arg(long)]
         touch: String,
     },
+    /// Bulk-approve up to N awaiting-approval drafts in a campaign.
+    /// Detector gate runs per-draft (skipped if it fails; --force-override
+    /// applies to the whole batch). Operator must --confirm-typed.
+    ApproveBatch {
+        #[arg(long)]
+        campaign: String,
+        #[arg(long, default_value_t = 25)]
+        max: u32,
+        #[arg(long, default_value_t = 0.6_f32)]
+        detector_threshold: f32,
+        /// Apply this override-reason to every draft that fails the
+        /// detector. Use sparingly — undermines the per-draft review.
+        #[arg(long)]
+        force_override: Option<String>,
+        /// REQUIRED: type the campaign name to proceed (dialoguer).
+        #[arg(long, default_value_t = false)]
+        confirm_typed: bool,
+    },
     /// Add an email or domain to the suppression list (idempotent).
     Suppress {
         /// Either an email or a bare domain.
@@ -343,6 +361,8 @@ fn build_tools(router: Arc<LlmRouter>) -> ToolRegistry {
     tools.register(Arc::new(salesman_osint::GithubOrgTool::default()));
     tools.register(Arc::new(salesman_osint::HnTool::default()));
     tools.register(Arc::new(salesman_osint::WikipediaTool::default()));
+    tools.register(Arc::new(salesman_osint::WaybackTool::default()));
+    tools.register(Arc::new(salesman_osint::DnsInfoTool::default()));
     tools.register(Arc::new(DraftColdEmailTool::new(
         router.clone(),
         "the PlausiDen team",
@@ -779,6 +799,88 @@ async fn main() -> Result<()> {
                 anyhow::bail!("touch {touch} not found OR not in awaiting_approval state");
             }
             println!("rejected touch {touch}");
+        }
+
+        Cmd::ApproveBatch {
+            campaign,
+            max,
+            detector_threshold,
+            force_override,
+            confirm_typed,
+        } => {
+            if !confirm_typed {
+                anyhow::bail!(
+                    "approve-batch requires --confirm-typed (type the campaign name to proceed)"
+                );
+            }
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let campaign_id = state
+                .ensure_campaign(&campaign, "(approve-batch)", "(unspecified)")
+                .await?;
+            let pending = state.list_drafts_awaiting_approval(campaign_id).await?;
+            let target_n = (max as usize).min(pending.len());
+            println!(
+                "approve-batch `{campaign}`: {} pending, will attempt up to {target_n}",
+                pending.len()
+            );
+
+            // Typed confirmation
+            {
+                use dialoguer::Input;
+                let typed: String = Input::new()
+                    .with_prompt(format!(
+                        "Type the campaign name (`{campaign}`) to confirm bulk approve of up to {target_n} touches"
+                    ))
+                    .interact_text()
+                    .map_err(|e| anyhow::anyhow!("dialoguer: {e}"))?;
+                if typed.trim() != campaign {
+                    anyhow::bail!("typed campaign name did not match — aborting");
+                }
+            }
+
+            let mut approved = 0u32;
+            let mut blocked_detector = 0u32;
+            let mut overrode = 0u32;
+            let mut errored = 0u32;
+            for t in pending.into_iter().take(target_n) {
+                let risk = salesman_detector::score(&t.body, t.subject.as_deref());
+                if !risk.passes(detector_threshold) {
+                    if let Some(reason) = force_override.as_deref() {
+                        tracing::warn!(
+                            touch=%t.touch_id,
+                            score=risk.score,
+                            threshold=detector_threshold,
+                            %reason,
+                            "OPERATOR OVERRIDE — bulk-approving despite detector failure"
+                        );
+                        overrode += 1;
+                    } else {
+                        blocked_detector += 1;
+                        tracing::warn!(
+                            touch=%t.touch_id,
+                            score=risk.score,
+                            "blocked by detector; pass --force-override to apply to whole batch"
+                        );
+                        continue;
+                    }
+                }
+                match state.approve_touch(t.touch_id).await {
+                    Ok(1) => approved += 1,
+                    Ok(_) => {
+                        // already changed under us (race) — count as errored for visibility
+                        errored += 1;
+                        tracing::warn!(touch=%t.touch_id, "approve returned 0 rows (race)");
+                    }
+                    Err(e) => {
+                        errored += 1;
+                        tracing::warn!(touch=%t.touch_id, "%e" = %e, "approve failed");
+                    }
+                }
+            }
+            println!(
+                "approve-batch result: approved={approved} blocked_detector={blocked_detector} \
+                 overridden={overrode} errored={errored}"
+            );
         }
 
         Cmd::Suppress { target, kind, reason } => {

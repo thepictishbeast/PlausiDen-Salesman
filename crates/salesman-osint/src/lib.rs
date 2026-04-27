@@ -14,12 +14,16 @@
 //! schedule calls sensibly. Per-call timeouts are 20s.
 #![forbid(unsafe_code)]
 
+pub mod dns_info;
 pub mod gdelt;
 pub mod github_org;
 pub mod hn;
+pub mod wayback;
 pub mod wikipedia;
 
+pub use dns_info::{DnsInfoClient, DnsInfoTool};
 pub use gdelt::{GdeltClient, GdeltTool};
 pub use github_org::{GithubOrgClient, GithubOrgTool};
 pub use hn::{HnClient, HnTool};
+pub use wayback::{WaybackClient, WaybackTool};
 pub use wikipedia::{WikipediaClient, WikipediaTool};

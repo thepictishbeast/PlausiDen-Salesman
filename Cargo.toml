@@ -27,7 +27,7 @@ repository = "https://github.com/thepictishbeast/PlausiDen-Salesman"
 
 [workspace.dependencies]
 # async runtime
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "signal", "net", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "signal", "net", "io-util", "process"] }
 async-trait = "0.1"
 futures = "0.3"
 
