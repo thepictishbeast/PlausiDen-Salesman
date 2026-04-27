@@ -1,0 +1,54 @@
+# Phase 1 — first-touch introduction, B variant.
+#
+# Convention for A/B subject-line testing in Salesman:
+#   - Pair templates with the SAME body/structure but different
+#     subject_seed.
+#   - Use the same naming scheme: `<base>` + `<base>_b` (and
+#     optionally `_c`, `_d` for >2 variants).
+#   - At sequence-assign time, pass BOTH keys as candidates to
+#     `pick_template_via_bandit`. The bandit auto-promotes the
+#     winner based on engaged_rate.
+#   - `salesman template-stats` rolls up per-key stats so the
+#     operator can see the spread.
+#   - When one variant clearly wins (engaged_rate ≥ 2x the loser
+#     after ≥ 50 sends each), retire the loser by removing its
+#     key from the candidate list.
+#
+# This file is the B-variant of `introduction.toml`. Keep the body
+# identical or near-identical; only the subject changes.
+
+key         = "introduction_b"
+description = "First-touch outreach. B variant: subject leads with the prospect's specific signal, not a generic question."
+segment     = "any"
+delay_days  = 0
+
+# A: "Quick question on {{prospect_industry}} workflow"
+# B: "{{prospect_specific_observation_short}}" — leads with the
+#    detail; no question framing.
+subject_seed = "{{prospect_specific_observation_short}}"
+
+body_seed = """
+{{prospect_specific_observation_one_sentence}}
+
+We build {{our_product}} for teams in your space — concretely:
+{{single_concrete_benefit_tied_to_prospect}}.
+
+Worth a 15-min call next week, or want me to send a one-page
+overview?
+
+— {{sender_name}}
+"""
+
+mandatory_phrases = ["Reply STOP and I won't follow up."]
+
+forbidden_phrases = [
+  "I hope this email finds you well",
+  "I noticed",
+  "I came across",
+  "Just wanted to reach out",
+  "Quick question",
+  "synergize",
+  "leverage",
+  "best-in-class",
+  "industry-leading",
+]
