@@ -52,6 +52,9 @@ impl Default for GithubOrgClient {
 impl GithubOrgClient {
     pub fn new(token: Option<String>) -> Self {
         Self {
+            // SAFETY: rustls-tls + single timeout setter; reqwest's
+            // Client::build() can only fail on TLS-backend mis-config,
+            // not present in this configuration.
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(20))
                 .build()

@@ -42,6 +42,8 @@ impl GeminiBackend {
         Self {
             model: model.into(),
             api_key: Zeroizing::new(api_key.into()),
+            // SAFETY: same rationale as the Claude client — rustls
+            // backend + a single timeout setter; build() cannot fail.
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(180))
                 .build()

@@ -45,6 +45,7 @@ impl BraveSearch {
     pub fn new(api_key: impl Into<String>) -> Self {
         Self {
             api_key: Zeroizing::new(api_key.into()),
+            // SAFETY: rustls + single timeout — build() cannot fail.
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(20))
                 .build()

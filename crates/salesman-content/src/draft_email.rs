@@ -253,6 +253,10 @@ impl Tool for DraftColdEmailTool {
             feedback = Some(score.reasons().join("\n  "));
         }
 
+        // SAFETY: the for-loop above runs `0..=max_retries`, so
+        // it executes at least once (max_retries: u32). Either the
+        // loop returned early on success — in which case we don't
+        // get here — or both Options were assigned at least once.
         let draft = last_draft.expect("loop runs at least once");
         let resp = last_resp.expect("loop runs at least once");
 

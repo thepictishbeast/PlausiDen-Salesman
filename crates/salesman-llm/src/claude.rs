@@ -44,6 +44,10 @@ impl ClaudeBackend {
         Self {
             model: model.into(),
             api_key: Zeroizing::new(api_key.into()),
+            // SAFETY: rustls-tls + single timeout setter; the
+            // configured combination cannot drive Client::build()
+            // to fail in practice. If the rustls feature is ever
+            // changed, this expect needs revisiting.
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(180))
                 .build()

@@ -36,6 +36,8 @@ impl Default for WikipediaClient {
 impl WikipediaClient {
     pub fn new() -> Self {
         Self {
+            // SAFETY: rustls-tls + UA + timeout — known-good combo;
+            // reqwest::Client::build() cannot fail on these inputs.
             http: reqwest::Client::builder()
                 .user_agent(UA)
                 .timeout(Duration::from_secs(15))

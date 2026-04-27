@@ -77,6 +77,9 @@ impl Signer {
                     bytes.len()
                 )));
             }
+            // SAFETY: the surrounding `if bytes.len() != 32` check
+            // already returned on mismatch — so the slice is exactly
+            // 32 bytes here and try_from cannot fail.
             let seed = Zeroizing::new(<[u8; 32]>::try_from(bytes.as_slice()).expect("len==32"));
             let signing_key = SigningKey::from_bytes(&seed);
             return Ok(Self {

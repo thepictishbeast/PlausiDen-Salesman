@@ -35,6 +35,12 @@ impl Default for WaybackClient {
 impl WaybackClient {
     pub fn new() -> Self {
         Self {
+            // SAFETY: reqwest::Client::builder().build() only fails on
+            // TLS backend mis-configuration or unsupported feature
+            // combos. We use the workspace's rustls-tls backend with
+            // default options that are known-good — the only inputs
+            // are user_agent + timeout, neither of which can drive a
+            // build failure.
             http: reqwest::Client::builder()
                 .user_agent(UA)
                 .timeout(Duration::from_secs(15))

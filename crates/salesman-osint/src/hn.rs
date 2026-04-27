@@ -37,6 +37,9 @@ impl Default for HnClient {
 impl HnClient {
     pub fn new() -> Self {
         Self {
+            // SAFETY: rustls-tls backend with default options + a
+            // single timeout setter — none of these can drive
+            // Client::build() to fail.
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(20))
                 .build()

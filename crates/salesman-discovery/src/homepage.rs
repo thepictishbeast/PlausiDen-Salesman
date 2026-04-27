@@ -34,6 +34,9 @@ impl Default for HomepageFetcher {
 
 impl HomepageFetcher {
     pub fn new() -> Self {
+        // SAFETY: rustls-tls + UA + timeout + a known-good redirect
+        // policy — none of these inputs can drive Client::build()
+        // to fail in practice.
         let http = reqwest::Client::builder()
             .user_agent(UA)
             .timeout(Duration::from_secs(TIMEOUT_S))
