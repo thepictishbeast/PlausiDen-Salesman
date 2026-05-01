@@ -2724,20 +2724,33 @@ impl State {
 
     /// Count touches (any outcome) sent to `to_email` in the last
     /// `window_hours` — used to enforce per-recipient rate caps.
+    ///
+    /// SECURITY: matches against ANY canonical form of the input
+    /// (verbatim / lowercased / +-stripped / Gmail-dot-stripped)
+    /// via `salesman_core::email_match_candidates`. Prevents the
+    /// rate cap from being bypassed by sending to the same logical
+    /// mailbox under multiple aliases (e.g. an attacker — or just a
+    /// real prospect — using `john@gmail.com` and
+    /// `j.o.h.n+work@gmail.com` interchangeably). Same rule the
+    /// suppression matcher uses, kept in sync deliberately.
     pub async fn count_touches_to_email_since(
         &self,
         to_email: &str,
         window_hours: i64,
     ) -> Result<i64> {
+        let candidates = salesman_core::email_match_candidates(to_email);
+        if candidates.is_empty() {
+            return Ok(0);
+        }
         let row = sqlx::query(
             "SELECT COUNT(*)::BIGINT AS n
              FROM touches t
              JOIN prospects p ON p.id = t.prospect_id
              LEFT JOIN contacts ct ON ct.id = p.primary_contact_id
-             WHERE ct.email = $1 AND t.sent_at IS NOT NULL
+             WHERE ct.email = ANY($1) AND t.sent_at IS NOT NULL
                AND t.sent_at > NOW() - ($2 || ' hours')::INTERVAL",
         )
-        .bind(to_email)
+        .bind(&candidates)
         .bind(window_hours.to_string())
         .fetch_one(self.pool())
         .await
