@@ -4694,6 +4694,50 @@ async fn main() -> Result<()> {
                 serde_json::Value::from(std::env::var("SALESMAN_IMAP_HOST").is_ok()),
             );
 
+            // unsubscribe minter (Gmail / Yahoo bulk-sender requirement)
+            // Not strictly REQUIRED for the binary to run, but
+            // required-by-policy for any --for-real send. Mirrored
+            // from doctor's [ unsub minter ] check.
+            let unsub_set = std::env::var("SALESMAN_UNSUBSCRIBE_BASE_URL").is_ok()
+                && std::env::var("SALESMAN_UNSUBSCRIBE_HMAC_SECRET").is_ok();
+            report.insert(
+                "unsubscribe_minter_env_set".into(),
+                serde_json::Value::from(unsub_set),
+            );
+
+            // anti-spoof gate — without this, classify-replies fails
+            // open. Surfaced as a warning, not a required failure,
+            // because the gate is opt-in by design (see B5.5).
+            let auth_gate = std::env::var("SALESMAN_TRUSTED_AUTHSERV_ID")
+                .ok()
+                .filter(|v| !v.trim().is_empty());
+            report.insert(
+                "auth_gate".into(),
+                serde_json::json!({
+                    "trusted_authserv_id": auth_gate,
+                    "engaged": auth_gate.is_some(),
+                }),
+            );
+
+            // sender identity — humans see these in From:; absence
+            // means send-pending --for-real will fail at the SMTP
+            // sender stage.
+            report.insert(
+                "sender_identity".into(),
+                serde_json::json!({
+                    "from_name_set":  std::env::var("SALESMAN_FROM_NAME").is_ok(),
+                    "from_email_set": std::env::var("SALESMAN_FROM_EMAIL").is_ok(),
+                    "reply_to_set":   std::env::var("SALESMAN_REPLY_TO").is_ok(),
+                }),
+            );
+
+            // llm transport — useful for monitoring to know whether
+            // the box is on the API path or the subscriber-CLI path.
+            let transport = std::env::var("SALESMAN_LLM_TRANSPORT")
+                .unwrap_or_else(|_| "api".to_string())
+                .to_ascii_lowercase();
+            report.insert("llm_transport".into(), serde_json::Value::from(transport));
+
             report.insert("required_ok".into(), serde_json::Value::from(required_ok));
             println!("{}", serde_json::to_string_pretty(&report)?);
             if !required_ok {
