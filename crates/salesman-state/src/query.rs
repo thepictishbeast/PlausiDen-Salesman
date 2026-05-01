@@ -1423,6 +1423,15 @@ impl State {
     /// MIME. We try to thread the reply to a prospect by matching
     /// from_address against any prospect's primary contact email.
     /// If no match, the reply is dropped (warns + returns Ok(None)).
+    ///
+    /// SECURITY: matches against ANY canonical form of the
+    /// from-address (verbatim / lowercased / +-stripped /
+    /// Gmail-dot-stripped). Without this an inbound from
+    /// `John+Sales@Gmail.com` would be silently dropped when the
+    /// prospect was originally seeded as `john@gmail.com` — the
+    /// worst-case false negative because we'd miss opt-outs and
+    /// positive replies. Same canonicalization rule everywhere a
+    /// recipient address is compared.
     pub async fn insert_reply_threaded(
         &self,
         from_address: &str,
@@ -1430,15 +1439,20 @@ impl State {
         body: &str,
         raw_headers: &serde_json::Value,
     ) -> Result<Option<uuid::Uuid>> {
+        let candidates = salesman_core::email_match_candidates(from_address);
+        if candidates.is_empty() {
+            tracing::warn!(%from_address, "empty from-address on inbound reply — dropping");
+            return Ok(None);
+        }
         let row = sqlx::query(
             "SELECT p.id AS prospect_id
              FROM prospects p
              JOIN contacts c ON c.id = p.primary_contact_id
-             WHERE c.email = $1
+             WHERE c.email = ANY($1)
              ORDER BY p.state_changed_at DESC
              LIMIT 1",
         )
-        .bind(from_address)
+        .bind(&candidates)
         .fetch_optional(self.pool())
         .await
         .map_err(|e| Error::Db(e.to_string()))?;
