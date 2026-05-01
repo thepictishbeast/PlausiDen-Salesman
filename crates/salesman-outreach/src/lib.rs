@@ -33,8 +33,12 @@ use zeroize::Zeroizing;
 pub struct SmtpConfig {
     pub host: String,
     pub port: u16,
-    pub username: String,
-    pub password: Zeroizing<String>,
+    /// SASL username. None when relaying via a local / cluster-
+    /// internal MTA that allowlists the sender by IP (no AUTH
+    /// required). The two are coupled — must be either both Some
+    /// or both None.
+    pub username: Option<String>,
+    pub password: Option<Zeroizing<String>>,
     pub from_name: String,
     pub from_email: String,
     /// Optional Reply-To if different from From.
@@ -68,13 +72,36 @@ impl SmtpConfig {
                 None
             }
         };
+        // Username + password are paired. Either both set (SASL
+        // auth path — typical for hosted SMTP like SendGrid /
+        // Mailgun) or both unset (cluster-internal relay where the
+        // upstream MTA allowlists the sender by IP and skips AUTH).
+        // Mixed half-set state is a config error — fail loud.
+        let username = std::env::var("SALESMAN_SMTP_USERNAME").ok();
+        let password = std::env::var("SALESMAN_SMTP_PASSWORD").ok();
+        let (username, password) = match (username, password) {
+            (Some(u), Some(p)) => (Some(u), Some(Zeroizing::new(p))),
+            (None, None) => (None, None),
+            (Some(_), None) => {
+                return Err(Error::Config(
+                    "SALESMAN_SMTP_USERNAME set but SALESMAN_SMTP_PASSWORD missing — \
+                     SASL credentials must be both set or both unset".into(),
+                ));
+            }
+            (None, Some(_)) => {
+                return Err(Error::Config(
+                    "SALESMAN_SMTP_PASSWORD set but SALESMAN_SMTP_USERNAME missing — \
+                     SASL credentials must be both set or both unset".into(),
+                ));
+            }
+        };
         Ok(Self {
             host: env("SALESMAN_SMTP_HOST")?,
             port: env("SALESMAN_SMTP_PORT")?
                 .parse()
                 .map_err(|_| Error::Config("SALESMAN_SMTP_PORT not a valid u16".into()))?,
-            username: env("SALESMAN_SMTP_USERNAME")?,
-            password: Zeroizing::new(env("SALESMAN_SMTP_PASSWORD")?),
+            username,
+            password,
             from_name: env("SALESMAN_FROM_NAME")?,
             from_email: env("SALESMAN_FROM_EMAIL")?,
             reply_to: std::env::var("SALESMAN_REPLY_TO").ok(),
@@ -97,12 +124,19 @@ pub struct SmtpSender {
 
 impl SmtpSender {
     pub fn new(config: SmtpConfig) -> Result<Self> {
-        let creds = Credentials::new(config.username.clone(), (*config.password).clone());
-        let transport = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.host)
-            .map_err(|e| Error::Config(format!("smtp transport: {e}")))?
-            .port(config.port)
-            .credentials(creds)
-            .build();
+        // Build the transport once. AUTH is added only when the
+        // operator configured SASL credentials. Cluster-internal
+        // relay (web-01 trusts openclaw's IP via mynetworks) skips
+        // AUTH entirely; lettre's `relay` builder issues no AUTH
+        // command in that case.
+        let mut builder =
+            AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.host)
+                .map_err(|e| Error::Config(format!("smtp transport: {e}")))?
+                .port(config.port);
+        if let (Some(u), Some(p)) = (config.username.as_ref(), config.password.as_ref()) {
+            builder = builder.credentials(Credentials::new(u.clone(), (**p).clone()));
+        }
+        let transport = builder.build();
         Ok(Self { config, transport })
     }
 
