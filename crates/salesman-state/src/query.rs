@@ -1709,13 +1709,19 @@ impl State {
                 ),
                 _ => ("reply optout", "reply_optout"),
             };
+            // SECURITY: store the canonical form so future
+            // is_suppressed lookups against `john@gmail.com` also
+            // match an opt-out logged from `John+Sales@Gmail.com`.
+            // Same canonicalization rule as the public
+            // add_suppression — see salesman-core::email_match.
+            let canonical_from = salesman_core::normalize_email_for_match(from_address);
             sqlx::query(
                 "INSERT INTO suppressions (id, target, target_kind, reason, source) \
                  VALUES ($1, $2, 'email', $3, $4) \
                  ON CONFLICT (target) DO NOTHING",
             )
             .bind(uuid::Uuid::now_v7())
-            .bind(from_address)
+            .bind(&canonical_from)
             .bind(reason_text)
             .bind(source_tag)
             .execute(&mut *tx)
@@ -2162,6 +2168,12 @@ impl State {
 
     /// Idempotent insert. `target` is either a full email or a domain.
     /// `target_kind` MUST be "email" or "domain".
+    ///
+    /// SECURITY: emails are normalized via
+    /// `salesman_core::normalize_email_for_match` before insert so
+    /// repeat suppressions of the same logical mailbox (e.g.
+    /// `John+Sales@Gmail.com` and `john@gmail.com`) collapse onto
+    /// the same row. Domains are lowercased.
     pub async fn add_suppression(
         &self,
         target: &str,
@@ -2174,6 +2186,14 @@ impl State {
                 "target_kind must be 'email' or 'domain', got `{target_kind}`"
             )));
         }
+        // Canonicalize so future is_suppressed() lookups against the
+        // SAME logical mailbox match this row regardless of casing,
+        // plus-suffix, or Gmail dotting in either direction.
+        let canonical_target = match target_kind {
+            "email" => salesman_core::normalize_email_for_match(target),
+            "domain" => target.trim().to_lowercase(),
+            _ => unreachable!(),
+        };
         let row = sqlx::query(
             "INSERT INTO suppressions (id, target, target_kind, reason, source) \
              VALUES ($1, $2, $3, $4, $5) \
@@ -2181,7 +2201,7 @@ impl State {
              RETURNING id",
         )
         .bind(uuid::Uuid::now_v7())
-        .bind(target)
+        .bind(&canonical_target)
         .bind(target_kind)
         .bind(reason)
         .bind(source)
@@ -2196,7 +2216,10 @@ impl State {
                 self.pool(),
                 "suppression.added",
                 serde_json::json!({
-                    "target": target,
+                    // Emit the canonical form on the wire — downstream
+                    // CRM listeners should dedupe against the same
+                    // value future is_suppressed checks will hit.
+                    "target": canonical_target,
                     "target_kind": target_kind,
                     "source": source,
                     "reason": reason,
@@ -2207,19 +2230,44 @@ impl State {
         Ok(())
     }
 
-    /// True if either the full email is suppressed OR its domain is.
-    /// Case-insensitive thanks to CITEXT on the column.
+    /// True if the email matches a `target_kind=email` suppression
+    /// in any of its canonical forms (verbatim / lowercased /
+    /// plus-stripped / Gmail-dot-stripped) OR if its domain is on
+    /// the list.
+    ///
+    /// Broader than the legacy exact-match — a subsequent send to
+    /// `john+sales@gmail.com` is now correctly blocked when an
+    /// earlier opt-out was logged for `john@gmail.com` (and vice
+    /// versa). See salesman-core/src/email_match.rs for the rules.
+    ///
+    /// SECURITY: this function is the LAST gate before
+    /// `send-pending --for-real` actually transmits. Any new
+    /// candidate generator added in salesman-core must continue to
+    /// be a SUPERSET of the prior generator's output (false
+    /// positives are tolerated; false negatives are not).
     pub async fn is_suppressed(&self, email: &str) -> Result<bool> {
-        let domain = email.rsplit_once('@').map(|(_, d)| d).unwrap_or(email);
+        let domain = email
+            .rsplit_once('@')
+            .map(|(_, d)| d.trim().to_lowercase())
+            .unwrap_or_else(|| email.trim().to_lowercase());
+        let candidates = salesman_core::email_match_candidates(email);
+        if candidates.is_empty() {
+            // Caller passed an empty/whitespace string. Treat as
+            // not-suppressed but log so the caller sees this didn't
+            // gate a send (it'd be a separate validation bug if a
+            // blank email reached the send path).
+            tracing::warn!("is_suppressed called with empty email — returning false");
+            return Ok(false);
+        }
         let row = sqlx::query(
             "SELECT EXISTS (
                 SELECT 1 FROM suppressions
-                WHERE (target_kind = 'email'  AND target = $1)
+                WHERE (target_kind = 'email'  AND target = ANY($1))
                    OR (target_kind = 'domain' AND target = $2)
              ) AS hit",
         )
-        .bind(email)
-        .bind(domain)
+        .bind(&candidates)
+        .bind(&domain)
         .fetch_one(self.pool())
         .await
         .map_err(|e| Error::Db(e.to_string()))?;
