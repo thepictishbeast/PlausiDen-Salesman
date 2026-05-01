@@ -136,3 +136,84 @@ once at router-build time.
 Set `SALESMAN_LLM_TRANSPORT=api` (or unset it) and restart the
 service. The `api` transport path is unchanged from before this
 patch — no migration step needed.
+
+## Common gotchas (verified 2026-05-01 on the openclaw deployment)
+
+These are caught by the code now, but useful to know when
+diagnosing a failure:
+
+### "Credit balance is too low" from claude
+The Claude Code CLI prefers `ANTHROPIC_API_KEY` env var over the
+OAuth subscriber session when both are present. If the operator
+left a stale or zero-balance API key in `/etc/salesman.env` from
+the API-path days, the CLI would silently bill the dev account
+instead of using the subscription. **The SubscriberCliBackend now
+scrubs `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` (and the related
+`ANTHROPIC_AUTH_TOKEN` / `GOOGLE_API_KEY` / `GOOGLE_GENAI_USE_*`
+vars) from the spawned subprocess's environment per-vendor**, so
+the CLI falls back to OAuth automatically. No operator action
+needed; documented for explainability.
+
+### "Gemini CLI is not running in a trusted directory"
+The newer gemini-cli refuses headless invocations from "untrusted"
+directories. **Default args now include `--skip-trust`** —
+operator can override via `SALESMAN_GEMINI_CLI_ARGS` if a tighter
+posture is wanted.
+
+### "Prompt-injection attempt" detection refuses the request
+Anthropic's Claude Code CLI ships an injection detector that
+fires on literal `SYSTEM:` / `USER:` / `ASSISTANT:` markers at the
+end of a prompt. The original `render_prompt` used those markers
+and got either a refusal-text response or an exit-1 with empty
+stderr. **The current `render_prompt` uses markdown headings
+(`# Instructions`, `# Request`) and a natural-language closing
+("Reply now.")** which the detector accepts. No operator action
+needed.
+
+### Logged in as the wrong user
+The subscriber session lives in the user's home directory. If
+`claude login` / `gemini auth login` were run as root (e.g.
+quick test in a root SSH session), the tokens land in
+`/root/.claude/.credentials.json` and `/root/.gemini/oauth_creds.json`
+— **invisible to the salesman user**. The fix is one of:
+
+  - Re-login as the salesman user:
+    ```bash
+    sudo -iu salesman bash -lc 'claude login && gemini auth login'
+    ```
+  - Or copy the credential files (the OAuth tokens are
+    location-agnostic; not tied to the source user):
+    ```bash
+    sudo mkdir -p /home/salesman/.claude /home/salesman/.gemini
+    sudo cp -a /root/.claude/.credentials.json /home/salesman/.claude/
+    sudo cp -a /root/.gemini/oauth_creds.json /home/salesman/.gemini/
+    sudo cp -a /root/.gemini/google_accounts.json /home/salesman/.gemini/
+    sudo cp -a /root/.gemini/installation_id /home/salesman/.gemini/
+    sudo chown -R salesman:salesman /home/salesman/.claude /home/salesman/.gemini
+    sudo chmod 700 /home/salesman/.claude /home/salesman/.gemini
+    sudo chmod 600 /home/salesman/.claude/.credentials.json \
+                   /home/salesman/.gemini/oauth_creds.json
+    ```
+
+### Debugging a CLI-path failure
+Set `SALESMAN_LLM_CLI_DEBUG_DIR=/tmp/cli_dump` (must exist + be
+writable by the salesman user) and re-run. Every prompt + response
+pair lands as numbered files in that directory:
+
+```
+$ ls /tmp/cli_dump/
+claude-1777651145383610-prompt.txt
+claude-1777651145383610-response.txt
+```
+
+The response file includes exit code, stdout, stderr — usually
+enough to see whether the CLI is rejecting auth, the prompt
+content, or some other gate. Pipe the prompt back into the CLI
+manually to bisect:
+
+```bash
+sudo -iu salesman bash -lc 'claude --print < /tmp/cli_dump/claude-XXXX-prompt.txt'
+```
+
+Remove the env var (or the dir) when done — the dump grows fast
+and contains full prompt content.
