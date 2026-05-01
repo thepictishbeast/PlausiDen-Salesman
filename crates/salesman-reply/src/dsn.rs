@@ -252,6 +252,7 @@ mod tests {
             in_reply_to: None,
             references: Vec::new(),
             raw_headers: BTreeMap::new(),
+            authentication_results_raw: Vec::new(),
         }
     }
 

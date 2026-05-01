@@ -26,11 +26,13 @@
 //! to remove the foot-gun.
 #![forbid(unsafe_code)]
 
+pub mod auth_results;
 pub mod config;
 pub mod dsn;
 pub mod parsed;
 pub mod poller;
 
+pub use auth_results::{AuthResult, AuthResults, MethodResult};
 pub use config::ImapConfig;
 pub use dsn::DsnInfo;
 pub use parsed::ParsedReply;
