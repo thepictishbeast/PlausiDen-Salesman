@@ -234,6 +234,34 @@ enum Cmd {
         #[arg(long, default_value_t = false)]
         persist: bool,
     },
+    /// Autonomous prospect discovery via the registered LLM (no
+    /// search API needed). Asks the model to enumerate companies
+    /// that match the supplied ICP, then validates EVERY candidate
+    /// homepage by DNS + HTTP fetch — hallucinated domains are
+    /// dropped before they enter the campaign. Use when no
+    /// BRAVE_SEARCH_API_KEY is configured and the operator has no
+    /// prospect CSV to seed from. Defaults to PRINT-only — pass
+    /// `--persist` to import the survivors as Companies + Prospects.
+    DiscoverLlm {
+        #[arg(long)]
+        campaign: String,
+        /// Ideal customer profile description, e.g. "EU SMB
+        /// cybersecurity teams running self-hosted log
+        /// infrastructure (Splunk / Elastic / Loki / Wazuh)
+        /// who care about data sovereignty under GDPR".
+        /// More specific = better; the LLM treats this as
+        /// criteria, not keywords.
+        #[arg(long)]
+        icp: String,
+        /// Max validated companies to keep. The LLM is asked
+        /// for ~1.5x this so the homepage-validation drop-rate
+        /// (typically 20-40%) still leaves enough survivors.
+        #[arg(long, default_value_t = 25)]
+        top: u32,
+        /// Insert into DB. Without this the command is read-only.
+        #[arg(long, default_value_t = false)]
+        persist: bool,
+    },
     /// Fetch homepages for all companies in a campaign + write
     /// extracted facts back into companies.
     Enrich {
@@ -1480,6 +1508,258 @@ async fn main() -> Result<()> {
                      Refine the --query if these don't match the profile."
                 );
             }
+        }
+
+        Cmd::DiscoverLlm {
+            campaign,
+            icp,
+            top,
+            persist,
+        } => {
+            // Ask the LLM for ~1.5x the requested top, since
+            // homepage validation typically drops 20-40% to
+            // hallucinated / dead / parking-page domains.
+            let llm_target = ((top as f64 * 1.5).ceil() as u32).max(top);
+
+            if router.registered_kinds().is_empty() {
+                anyhow::bail!(
+                    "discover-llm needs at least one LLM backend registered \
+                     (set ANTHROPIC_API_KEY / GEMINI_API_KEY for the API \
+                     path, or SALESMAN_LLM_TRANSPORT=cli + login the \
+                     subscriber CLIs for the CLI path)"
+                );
+            }
+
+            let system = "You are a B2B prospect-discovery assistant. The operator \
+                          gives you an Ideal Customer Profile (ICP) description. \
+                          You return a JSON array of REAL companies that match — \
+                          ones you have high confidence actually exist with the \
+                          stated homepage. Do NOT invent companies. Do NOT include \
+                          companies whose websites you are not certain are correct. \
+                          When unsure, return fewer rather than fabricating.\n\n\
+                          Output STRICT JSON only, no prose, no code fences:\n\
+                          {\"companies\": [\
+                          {\"display_name\": string, \
+                            \"homepage\": string (full https://... URL), \
+                            \"industry\": string, \
+                            \"region\": string, \
+                            \"description\": string (one short sentence), \
+                            \"why_match\": string (one short sentence)\
+                          }, ...]}\n\n\
+                          Skip social media (linkedin.com, x.com, etc.), \
+                          news sites (techcrunch.com, etc.), job boards, and \
+                          aggregators (g2.com, capterra.com). Only company \
+                          homepages.";
+
+            let user = format!(
+                "Ideal customer profile:\n{icp}\n\n\
+                 Return up to {llm_target} companies that match. \
+                 Quality over quantity — fewer real ones beat more guesses."
+            );
+
+            let req = salesman_llm::ChatRequest {
+                messages: vec![
+                    salesman_llm::Message {
+                        role: salesman_llm::Role::System,
+                        content: system.to_string(),
+                        tool_calls: vec![],
+                        tool_results: vec![],
+                    },
+                    salesman_llm::Message {
+                        role: salesman_llm::Role::User,
+                        content: user,
+                        tool_calls: vec![],
+                        tool_results: vec![],
+                    },
+                ],
+                tools: vec![],
+                max_tokens: 4096,
+                temperature: 0.3,
+            };
+
+            println!("discover-llm: asking LLM for ~{llm_target} candidate companies...");
+            let resp = router
+                .chat_for(salesman_llm::RouteHint::Reasoning, "discover_llm", req)
+                .await?;
+
+            #[derive(serde::Deserialize)]
+            struct LlmCompany {
+                display_name: String,
+                homepage: String,
+                #[serde(default)]
+                industry: String,
+                #[serde(default)]
+                region: String,
+                #[serde(default)]
+                description: String,
+                #[serde(default)]
+                why_match: String,
+            }
+            #[derive(serde::Deserialize)]
+            struct LlmResponse {
+                companies: Vec<LlmCompany>,
+            }
+
+            let raw = resp.message.content.trim().to_string();
+            // Strip code fences if the model added them anyway.
+            let stripped = raw
+                .trim_start_matches("```json")
+                .trim_start_matches("```")
+                .trim_end_matches("```")
+                .trim();
+            let candidates: Vec<LlmCompany> =
+                match serde_json::from_str::<LlmResponse>(stripped) {
+                    Ok(r) => r.companies,
+                    Err(e) => {
+                        // Try to find a JSON object inside the response.
+                        match (stripped.find('{'), stripped.rfind('}')) {
+                            (Some(s), Some(e2)) if e2 > s => {
+                                match serde_json::from_str::<LlmResponse>(&stripped[s..=e2]) {
+                                    Ok(r) => r.companies,
+                                    Err(e3) => anyhow::bail!(
+                                        "LLM output not parseable as JSON: {e3}. \
+                                         First 200 chars: {}",
+                                        stripped.chars().take(200).collect::<String>()
+                                    ),
+                                }
+                            }
+                            _ => anyhow::bail!(
+                                "LLM output not parseable as JSON: {e}. \
+                                 First 200 chars: {}",
+                                stripped.chars().take(200).collect::<String>()
+                            ),
+                        }
+                    }
+                };
+
+            println!("  LLM proposed {} candidate(s); validating homepages...", candidates.len());
+
+            // Validate each homepage by HTTP fetch. Drop hallucinated
+            // / dead / parked. Concurrency-capped at 8 — we're being
+            // polite to small sites.
+            let fetcher = std::sync::Arc::new(salesman_discovery::HomepageFetcher::new());
+            let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
+            let mut handles = Vec::with_capacity(candidates.len());
+            for c in candidates {
+                let fetcher = fetcher.clone();
+                let sem = sem.clone();
+                handles.push(tokio::spawn(async move {
+                    let _permit = sem.acquire_owned().await.ok()?;
+                    let url = url::Url::parse(&c.homepage).ok()?;
+                    // Only http(s).
+                    if !matches!(url.scheme(), "http" | "https") {
+                        return None;
+                    }
+                    let host = url.host_str()?.trim_start_matches("www.").to_ascii_lowercase();
+                    if host.is_empty() {
+                        return None;
+                    }
+                    // Validate by fetching the homepage. 2xx with a
+                    // non-empty title = real page.
+                    let facts = fetcher.fetch(&url).await.ok()?;
+                    if !(200..400).contains(&facts.status) {
+                        return None;
+                    }
+                    if facts.title.as_deref().unwrap_or("").trim().is_empty() {
+                        return None;
+                    }
+                    Some((c, facts, host))
+                }));
+            }
+
+            let mut survivors: Vec<(LlmCompany, salesman_discovery::HomepageFacts, String)> =
+                Vec::new();
+            for h in handles {
+                if let Ok(Some(s)) = h.await {
+                    survivors.push(s);
+                }
+            }
+
+            // Dedup by host — LLM sometimes lists subsidiary + parent.
+            let mut seen: std::collections::BTreeSet<String> =
+                std::collections::BTreeSet::new();
+            survivors.retain(|(_, _, h)| seen.insert(h.clone()));
+
+            // Truncate to the requested top after validation.
+            survivors.truncate(top as usize);
+
+            println!(
+                "  {} survivor(s) after homepage validation + dedup{}",
+                survivors.len(),
+                if persist { "" } else { ", DRY-RUN" },
+            );
+            for (c, facts, host) in &survivors {
+                println!(
+                    "  + {:<35} {:<35} status={} {}",
+                    c.display_name.chars().take(34).collect::<String>(),
+                    host.chars().take(34).collect::<String>(),
+                    facts.status,
+                    if !c.industry.is_empty() {
+                        format!("[{}]", c.industry)
+                    } else {
+                        String::new()
+                    },
+                );
+                if !c.why_match.is_empty() {
+                    println!(
+                        "      why: {}",
+                        c.why_match.chars().take(120).collect::<String>()
+                    );
+                }
+            }
+
+            if !persist {
+                println!(
+                    "\n(dry-run) re-run with --persist to import {} prospect(s).",
+                    survivors.len()
+                );
+                return Ok(());
+            }
+
+            if survivors.is_empty() {
+                println!("\nNothing to persist; refine the --icp.");
+                return Ok(());
+            }
+
+            let companies: Vec<salesman_core::Company> = survivors
+                .iter()
+                .map(|(c, facts, _)| salesman_core::Company {
+                    id: salesman_core::CompanyId::new(),
+                    legal_name: None,
+                    display_name: c.display_name.clone(),
+                    homepage: Some(facts.final_url.clone()),
+                    industry: Some(c.industry.clone()).filter(|s| !s.is_empty()),
+                    size_band: None,
+                    region: Some(c.region.clone()).filter(|s| !s.is_empty()),
+                    description: facts
+                        .meta_description
+                        .clone()
+                        .or_else(|| Some(c.description.clone()).filter(|s| !s.is_empty())),
+                    tech_signals: facts.tech_signals.clone(),
+                    discovered_at: chrono::Utc::now(),
+                    last_enriched_at: Some(chrono::Utc::now()),
+                    source: salesman_core::model::DiscoverySource::Other,
+                    raw: std::collections::BTreeMap::new(),
+                })
+                .collect();
+
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let cids: Vec<_> = companies.iter().map(|c| c.id).collect();
+            let n_companies = state.insert_companies(&companies).await?;
+            let campaign_id = state
+                .ensure_campaign(
+                    &campaign,
+                    &format!("autonomous LLM discovery: {icp}"),
+                    "discover-llm",
+                )
+                .await?;
+            let n_prospects = state
+                .upsert_prospects_for_campaign(campaign_id, &cids)
+                .await?;
+            println!(
+                "\npersisted into `{campaign}`: {n_companies} new \
+                 companies, {n_prospects} new prospect rows.",
+            );
         }
 
         Cmd::Enrich {
