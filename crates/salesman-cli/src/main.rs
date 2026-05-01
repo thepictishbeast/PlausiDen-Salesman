@@ -4519,6 +4519,30 @@ async fn main() -> Result<()> {
                 }
             }
 
+            // --- anti-spoof gate (Authentication-Results trust)
+            //
+            // Without SALESMAN_TRUSTED_AUTHSERV_ID set, classify-replies
+            // CANNOT defend against forged inbound replies that try to
+            // poison our suppression list. Operator should set this to
+            // their MX hostname (the value Postfix etc. stamps in the
+            // `Authentication-Results:` header).
+            print!("[ auth gate   ]  ");
+            match std::env::var("SALESMAN_TRUSTED_AUTHSERV_ID") {
+                Ok(v) if !v.trim().is_empty() => {
+                    println!("OK  trusted authserv-id = `{}`", v.trim());
+                }
+                _ => {
+                    println!(
+                        "WARN  SALESMAN_TRUSTED_AUTHSERV_ID unset — \
+                         classify-replies will NOT verify SPF/DKIM/DMARC \
+                         on inbound optouts/legal-threats. Set it to your \
+                         MX hostname (e.g. mail.plausiden.com) to defend \
+                         against suppression-list poisoning."
+                    );
+                    warnings += 1;
+                }
+            }
+
             // --- SMTP probe (optional)
             if probe_smtp {
                 print!("[ smtp connect]  ");
