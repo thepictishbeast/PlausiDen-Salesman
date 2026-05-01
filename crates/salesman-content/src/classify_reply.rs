@@ -45,9 +45,20 @@ impl ReplyClassifyTool {
     /// Quick keyword-only optout check (no LLM call). Used as a
     /// safety net so we never miss an obvious unsubscribe even if the
     /// LLM mis-classifies.
+    ///
+    /// Multi-locale: covers EN + DE + FR + ES + IT + NL + PT-BR.
+    /// Owner targets international prospects (per
+    /// feedback_salesman_verticals_geo); a German "Abbestellen" or
+    /// French "désinscrire" must trigger the safety net even if the
+    /// LLM wasn't trained well on that locale.
+    ///
+    /// We use `to_lowercase()` (not `to_ascii_lowercase()`) so
+    /// non-ASCII letters like German `ß` and French `é` map to
+    /// their lowercase forms before the substring match.
     pub fn keyword_optout(body: &str) -> bool {
-        let s = body.to_ascii_lowercase();
+        let s = body.to_lowercase();
         const KEYWORDS: &[&str] = &[
+            // EN
             "unsubscribe",
             "remove me",
             "opt out",
@@ -59,6 +70,50 @@ impl ReplyClassifyTool {
             "take me off",
             "no thanks",
             "not interested",
+            // DE
+            "abbestellen",
+            "abmelden",
+            "abmeldung",
+            "kein interesse",
+            "nicht mehr kontaktieren",
+            "nicht kontaktieren",
+            "bitte entfernen",
+            "aus dem verteiler",
+            // FR
+            "désinscrire",
+            "se désabonner",
+            "ne plus contacter",
+            "ne pas contacter",
+            "pas intéressé",
+            "pas intéressée",
+            "retirez-moi",
+            "supprimer mon",
+            // ES
+            "darme de baja",
+            "no me contacte",
+            "no me contacten",
+            "no me escriba",
+            "no estoy interesado",
+            "no estoy interesada",
+            "elimíneme",
+            // IT
+            "cancellami",
+            "annullare l'iscrizione",
+            "non contattarmi",
+            "non contattatemi",
+            "non sono interessato",
+            "non sono interessata",
+            // NL
+            "afmelden",
+            "uitschrijven",
+            "geen interesse",
+            "niet meer mailen",
+            "niet contacteren",
+            // PT-BR
+            "cancelar inscrição",
+            "remover meu",
+            "não tenho interesse",
+            "não me contacte",
         ];
         KEYWORDS.iter().any(|k| s.contains(k))
     }
@@ -72,13 +127,19 @@ impl ReplyClassifyTool {
     /// risk (the auto-drafter sending a salesy reply to a
     /// cease-and-desist), so we err generous.
     ///
+    /// Multi-locale: covers EN + DE + FR + ES + IT + PT-BR. NL is
+    /// omitted because most Dutch legal threats are written in
+    /// English by default. New jurisdictions: add a section + run
+    /// the round-trip tests.
+    ///
     /// SECURITY: this is the first defense layer. The LLM also looks
     /// for legal threats and either signal flips the reply. Only
-    /// `body.to_ascii_lowercase().contains(k)` matching here — no
-    /// regex, no shell, no path traversal possible.
+    /// `body.to_lowercase().contains(k)` matching here — no regex,
+    /// no shell, no path traversal possible.
     pub fn keyword_legal_threat(body: &str) -> bool {
-        let s = body.to_ascii_lowercase();
+        let s = body.to_lowercase();
         const KEYWORDS: &[&str] = &[
+            // === EN ===
             // Cease-and-desist
             "cease and desist",
             "cease & desist",
@@ -121,6 +182,62 @@ impl ReplyClassifyTool {
             "legally required",
             "legal obligation to",
             "violation of law",
+            // === DE === (German law uses very specific terms)
+            "abmahnung",                   // formal cease-and-desist letter
+            "unterlassungserklärung",      // declaration of discontinuance
+            "anwalt",                      // attorney/lawyer
+            "rechtsanwalt",                // attorney-at-law
+            "rechtsbeistand",              // legal counsel
+            "anzeige erstatten",           // file criminal complaint
+            "datenschutzbeauftragten",     // data protection officer
+            "datenschutzbehörde",          // data protection authority
+            "bundesdatenschutz",           // federal data-protection (BDSG)
+            "dsgvo verstoß",               // GDPR violation (DE acronym)
+            "auskunftsersuchen",           // subject access request
+            "löschung meiner daten",       // deletion of my data
+            // === FR ===
+            "mise en demeure",             // formal notice / cease-and-desist
+            "huissier",                    // bailiff
+            "mon avocat",                  // my lawyer
+            "notre avocat",                // our lawyer
+            "conseil juridique",           // legal counsel
+            "porter plainte",              // file complaint
+            "saisir la cnil",              // file with the French DPA
+            "rgpd article 17",             // GDPR Art. 17 (FR acronym)
+            "droit à l'effacement",        // right to erasure
+            "droit à l'oubli",             // right to be forgotten
+            "supprimer mes données",       // delete my data
+            // === ES ===
+            "burofax",                     // certified legal letter
+            "requerimiento legal",         // legal demand
+            "mi abogado",                  // my lawyer
+            "nuestro abogado",             // our lawyer
+            "denuncia formal",             // formal complaint
+            "agencia de protección de datos",  // Spanish DPA (AEPD)
+            "rgpd artículo 17",            // GDPR Art. 17 (ES acronym)
+            "derecho al olvido",           // right to be forgotten
+            "derecho de supresión",        // right to erasure
+            "eliminar mis datos",          // delete my data
+            // === IT ===
+            "diffida legale",              // legal cease-and-desist
+            "il mio avvocato",             // my lawyer
+            "nostro avvocato",             // our lawyer
+            "consulente legale",           // legal counsel
+            "denuncia formale",            // formal complaint
+            "garante della privacy",       // Italian DPA
+            "rgpd articolo 17",            // GDPR Art. 17 (IT acronym)
+            "diritto all'oblio",           // right to be forgotten
+            "cancellazione dei miei dati", // delete my data
+            // === PT-BR ===
+            "notificação extrajudicial",   // formal extra-judicial notice
+            "meu advogado",                // my lawyer
+            "nosso advogado",              // our lawyer
+            "ação judicial",               // legal action
+            "processo judicial",           // judicial process
+            "lgpd artigo 18",              // LGPD Art. 18 (BR data-prot.)
+            "anpd",                        // Brazilian DPA acronym
+            "direito ao esquecimento",     // right to be forgotten
+            "excluir meus dados",          // delete my data
         ];
         KEYWORDS.iter().any(|k| s.contains(k))
     }
@@ -404,5 +521,85 @@ mod tests {
         assert!(ReplyClassifyTool::keyword_legal_threat("CEASE AND DESIST"));
         assert!(ReplyClassifyTool::keyword_legal_threat("My Attorney"));
         assert!(ReplyClassifyTool::keyword_legal_threat("RIGHT TO ERASURE"));
+    }
+
+    // --- Multi-locale: verify each EU language hits both detectors ---
+
+    #[test]
+    fn optout_handles_eu_locales() {
+        // DE: "please unsubscribe"
+        assert!(ReplyClassifyTool::keyword_optout(
+            "Bitte abbestellen, ich habe kein Interesse."
+        ));
+        // FR: "remove me from your list"
+        assert!(ReplyClassifyTool::keyword_optout(
+            "Veuillez me désinscrire de votre liste."
+        ));
+        // ES: "unsubscribe me"
+        assert!(ReplyClassifyTool::keyword_optout(
+            "Por favor, darme de baja de su lista."
+        ));
+        // IT: "cancel me"
+        assert!(ReplyClassifyTool::keyword_optout(
+            "Cancellami dalla tua lista, non sono interessato."
+        ));
+        // NL: "unsubscribe"
+        assert!(ReplyClassifyTool::keyword_optout(
+            "Graag uitschrijven van uw mailing list."
+        ));
+        // PT-BR: "cancel my subscription"
+        assert!(ReplyClassifyTool::keyword_optout(
+            "Por favor, cancelar inscrição. Não tenho interesse."
+        ));
+    }
+
+    #[test]
+    fn legal_threat_handles_eu_locales() {
+        // DE: cease-and-desist (Abmahnung)
+        assert!(ReplyClassifyTool::keyword_legal_threat(
+            "Sie erhalten hiermit eine Abmahnung. Mein Anwalt wird sich melden."
+        ));
+        // DE: GDPR variant
+        assert!(ReplyClassifyTool::keyword_legal_threat(
+            "DSGVO Verstoß — bitte sofort Löschung meiner Daten."
+        ));
+        // FR: mise en demeure
+        assert!(ReplyClassifyTool::keyword_legal_threat(
+            "Ceci est une mise en demeure. Cessez tout contact."
+        ));
+        // FR: regulator complaint to CNIL
+        assert!(ReplyClassifyTool::keyword_legal_threat(
+            "Je vais saisir la CNIL pour cette violation du RGPD."
+        ));
+        // ES: burofax / Spanish DPA
+        assert!(ReplyClassifyTool::keyword_legal_threat(
+            "Recibirá un burofax de mi abogado en los próximos días."
+        ));
+        // IT: diffida legale
+        assert!(ReplyClassifyTool::keyword_legal_threat(
+            "Questa è una diffida legale dal mio avvocato."
+        ));
+        // PT-BR: notificação extrajudicial
+        assert!(ReplyClassifyTool::keyword_legal_threat(
+            "Esta é uma notificação extrajudicial do meu advogado."
+        ));
+    }
+
+    #[test]
+    fn locale_keywords_dont_fire_on_business_speak() {
+        // Make sure legitimate business mentions of generic words
+        // ("law", "data") don't trigger the threat detector.
+        assert!(!ReplyClassifyTool::keyword_legal_threat(
+            "We're a law-abiding shop and would love to hear more."
+        ));
+        assert!(!ReplyClassifyTool::keyword_legal_threat(
+            "Tell me more about your data-handling story."
+        ));
+        // The optout detector also shouldn't trip on "I'm interested
+        // in unsubscribe-style products" or similar tangential
+        // mentions — these phrasings don't match our exact substrings.
+        assert!(!ReplyClassifyTool::keyword_optout(
+            "Tell me about your interest-rate optimization."
+        ));
     }
 }
