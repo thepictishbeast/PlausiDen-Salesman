@@ -62,6 +62,68 @@ impl ReplyClassifyTool {
         ];
         KEYWORDS.iter().any(|k| s.contains(k))
     }
+
+    /// Quick keyword-only legal-threat detector. Fires BEFORE the LLM
+    /// call so a model mis-classification can never downgrade a real
+    /// threat to a benign objection. False positives are tolerated —
+    /// "we're suing for $X in funding" or "my attorney told me about
+    /// your product" will trip it; the operator reviews legal-flagged
+    /// replies manually anyway. False negatives would be the actual
+    /// risk (the auto-drafter sending a salesy reply to a
+    /// cease-and-desist), so we err generous.
+    ///
+    /// SECURITY: this is the first defense layer. The LLM also looks
+    /// for legal threats and either signal flips the reply. Only
+    /// `body.to_ascii_lowercase().contains(k)` matching here — no
+    /// regex, no shell, no path traversal possible.
+    pub fn keyword_legal_threat(body: &str) -> bool {
+        let s = body.to_ascii_lowercase();
+        const KEYWORDS: &[&str] = &[
+            // Cease-and-desist
+            "cease and desist",
+            "cease & desist",
+            "c&d letter",
+            // Legal counsel
+            "my attorney",
+            "our attorney",
+            "my lawyer",
+            "our lawyer",
+            "legal counsel",
+            "general counsel",
+            "law firm",
+            // Litigation
+            "we will sue",
+            "i will sue",
+            "see you in court",
+            "filing suit",
+            "filing a lawsuit",
+            "take legal action",
+            "pursue legal action",
+            // Regulatory complaints
+            "ftc complaint",
+            "report you to",
+            "data protection authority",
+            "supervisory authority",
+            "ico complaint",
+            "attorney general",
+            "state attorney",
+            // GDPR / CCPA / CAN-SPAM
+            "gdpr article 17",
+            "right to erasure",
+            "right to be forgotten",
+            "subject access request",
+            "ccpa request",
+            "do-not-sell",
+            "can-spam violation",
+            "can-spam act",
+            "casl violation",
+            // Generic threats
+            "legally required",
+            "legal obligation to",
+            "violation of law",
+        ];
+        KEYWORDS.iter().any(|k| s.contains(k))
+    }
 }
 
 #[async_trait]
@@ -102,11 +164,40 @@ impl Tool for ReplyClassifyTool {
             .map(str::to_string);
 
         let keyword_hit = Self::keyword_optout(&body);
+        let legal_hit = Self::keyword_legal_threat(&body);
+
+        // SECURITY: legal-threat short-circuit. Skip the LLM call
+        // entirely so a model mis-classification can't downgrade a
+        // cease-and-desist to a benign objection. The downstream
+        // handler in salesman-state then suppresses the sender,
+        // rejects in-flight touches, and surfaces in alerts.
+        if legal_hit {
+            tracing::warn!(
+                "reply.classify: legal-threat keyword pre-check fired; \
+                 short-circuiting LLM classification"
+            );
+            return Ok(json!({
+                "kind": "legal_threat",
+                "optout_detected": true,
+                "reason": "legal-threat keyword pre-check fired (cease-and-desist / attorney / regulatory complaint)",
+                "confidence": 0.95,
+                "keyword_optout": keyword_hit,
+                "keyword_legal_threat": true
+            }));
+        }
 
         let system = "You classify B2B outbound-reply emails into ONE of:\n\
-                      engaged | question | objection | optout | out_of_office | bounce | spam | unclassified\n\
+                      engaged | question | objection | optout | out_of_office | bounce | spam | unclassified | legal_threat\n\
                       \n\
                       Also detect explicit unsubscribe/opt-out language.\n\
+                      \n\
+                      Use `legal_threat` ONLY when the body contains: \
+                      cease-and-desist, attorney/lawyer language, GDPR/CCPA/CAN-SPAM \
+                      complaint, threat to file with a regulator (FTC / DPA / state AG), \
+                      or explicit demand to delete personal data citing a legal right. \
+                      Mere annoyance or 'this is spam' alone is NOT legal_threat — \
+                      use `optout` or `spam` for those.\n\
+                      \n\
                       Output STRICT JSON: { \"kind\": <category>, \"optout_detected\": bool, \"reason\": short string, \"confidence\": 0..1 }\n\
                       No prose outside JSON.";
         let mut user = String::new();
@@ -155,7 +246,16 @@ impl Tool for ReplyClassifyTool {
 
         // Force optout if either signal fires — never under-suppress.
         let optout_detected = parsed.optout_detected || keyword_hit;
-        let kind = if optout_detected {
+
+        // Severity ordering (most-severe wins):
+        //   legal_threat  >  optout  >  parsed.kind
+        // Both stronger forms ALSO mark optout_detected=true so the
+        // suppression path runs. legal_threat must NOT be downgraded
+        // to optout — it triggers stronger downstream handling
+        // (refuse to draft, alert the operator).
+        let kind = if parsed.kind == "legal_threat" {
+            "legal_threat".to_string()
+        } else if optout_detected {
             "optout".to_string()
         } else {
             parsed.kind.clone()
@@ -236,5 +336,73 @@ mod tests {
         let c = parse_classification(raw).unwrap();
         assert_eq!(c.kind, "optout");
         assert!(c.optout_detected);
+    }
+
+    // --- legal-threat keyword pre-check (defense in depth) ---
+
+    #[test]
+    fn legal_threat_detects_cease_and_desist() {
+        assert!(ReplyClassifyTool::keyword_legal_threat(
+            "This is a cease and desist letter. Stop emailing me immediately."
+        ));
+        assert!(ReplyClassifyTool::keyword_legal_threat(
+            "Consider this a CEASE AND DESIST. Future contact will be reported."
+        ));
+        assert!(ReplyClassifyTool::keyword_legal_threat(
+            "I'm CC'ing my attorney on this thread."
+        ));
+    }
+
+    #[test]
+    fn legal_threat_detects_regulator_complaints() {
+        assert!(ReplyClassifyTool::keyword_legal_threat(
+            "I'll be filing an FTC complaint about your spam tactics."
+        ));
+        assert!(ReplyClassifyTool::keyword_legal_threat(
+            "I'm going to report you to the data protection authority."
+        ));
+        assert!(ReplyClassifyTool::keyword_legal_threat(
+            "Expect a complaint to my state attorney general."
+        ));
+    }
+
+    #[test]
+    fn legal_threat_detects_gdpr_requests() {
+        assert!(ReplyClassifyTool::keyword_legal_threat(
+            "I'm exercising my right to erasure under GDPR Article 17."
+        ));
+        assert!(ReplyClassifyTool::keyword_legal_threat(
+            "Per CCPA do-not-sell, remove all my data."
+        ));
+        assert!(ReplyClassifyTool::keyword_legal_threat(
+            "This is a CAN-SPAM violation."
+        ));
+    }
+
+    #[test]
+    fn legal_threat_does_not_fire_on_benign_replies() {
+        assert!(!ReplyClassifyTool::keyword_legal_threat(
+            "Sure, let's set up a demo next week."
+        ));
+        assert!(!ReplyClassifyTool::keyword_legal_threat(
+            "What's the price?"
+        ));
+        assert!(!ReplyClassifyTool::keyword_legal_threat(
+            "Please remove me from your list."
+        ));
+        // Common business mentions of "law" / "right" without legal-action posture.
+        assert!(!ReplyClassifyTool::keyword_legal_threat(
+            "We work in the law-firm vertical actually."
+        ));
+        assert!(!ReplyClassifyTool::keyword_legal_threat(
+            "You're absolutely right, that's a great point."
+        ));
+    }
+
+    #[test]
+    fn legal_threat_is_case_insensitive() {
+        assert!(ReplyClassifyTool::keyword_legal_threat("CEASE AND DESIST"));
+        assert!(ReplyClassifyTool::keyword_legal_threat("My Attorney"));
+        assert!(ReplyClassifyTool::keyword_legal_threat("RIGHT TO ERASURE"));
     }
 }

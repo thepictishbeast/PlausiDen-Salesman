@@ -1673,7 +1673,11 @@ impl State {
         // Map ReplyKind → FunnelState transition.
         let new_state: Option<&str> = match kind {
             ReplyKind::Engaged | ReplyKind::Question => Some("engaged"),
-            ReplyKind::Optout => Some("suppressed"),
+            // LegalThreat is treated as a stricter form of Optout —
+            // sender is suppressed, prospect is dropped from active
+            // outreach. The drafter refuses to respond; the operator
+            // handles legally-charged replies personally.
+            ReplyKind::Optout | ReplyKind::LegalThreat => Some("suppressed"),
             ReplyKind::Bounce => Some("lost"),
             // Objection / OOO / Spam / Unclassified — leave funnel state.
             _ => None,
@@ -1692,19 +1696,32 @@ impl State {
             summary.push_str(&format!("prospect → {target}; "));
         }
 
-        // Optout: also add to suppressions + reject any in-flight touches.
-        if matches!(kind, ReplyKind::Optout) {
+        // Optout / LegalThreat: add to suppressions + reject any
+        // in-flight touches. LegalThreat carries a distinct source
+        // tag so audit + alerts can distinguish a benign opt-out
+        // from a legally-charged inbound that needs operator
+        // attention RIGHT NOW.
+        if matches!(kind, ReplyKind::Optout | ReplyKind::LegalThreat) {
+            let (reason_text, source_tag) = match kind {
+                ReplyKind::LegalThreat => (
+                    "reply contained legal threat (cease-and-desist / attorney / regulator)",
+                    "reply_legal_threat",
+                ),
+                _ => ("reply optout", "reply_optout"),
+            };
             sqlx::query(
                 "INSERT INTO suppressions (id, target, target_kind, reason, source) \
-                 VALUES ($1, $2, 'email', 'reply optout', 'reply_optout') \
+                 VALUES ($1, $2, 'email', $3, $4) \
                  ON CONFLICT (target) DO NOTHING",
             )
             .bind(uuid::Uuid::now_v7())
             .bind(from_address)
+            .bind(reason_text)
+            .bind(source_tag)
             .execute(&mut *tx)
             .await
             .map_err(|e| Error::Db(e.to_string()))?;
-            summary.push_str("added to suppressions; ");
+            summary.push_str(&format!("added to suppressions ({source_tag}); "));
 
             sqlx::query(
                 "UPDATE touches SET outcome = 'suppressed' \
@@ -1746,6 +1763,7 @@ impl State {
             ReplyKind::OutOfOffice => Some("auto: reply classified out_of_office"),
             ReplyKind::Optout => Some("auto: reply classified optout"),
             ReplyKind::Bounce => Some("auto: reply classified bounce"),
+            ReplyKind::LegalThreat => Some("auto: reply classified legal_threat — operator must handle"),
             _ => None,
         };
         if let Some(reason) = pause_reason {

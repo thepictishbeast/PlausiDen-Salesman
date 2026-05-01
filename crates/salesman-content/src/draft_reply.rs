@@ -370,11 +370,24 @@ impl Tool for DraftReplyTool {
 
         // Refuse to draft on terminal kinds. The classifier already
         // suppressed optout/bounce; spam shouldn't get a reply.
-        const TERMINAL: &[&str] = &["optout", "bounce", "spam", "out_of_office"];
+        // legal_threat is treated even more strictly — operator MUST
+        // handle it personally, never auto-draft a response.
+        const TERMINAL: &[&str] =
+            &["optout", "bounce", "spam", "out_of_office", "legal_threat"];
         if TERMINAL
             .iter()
             .any(|t| t.eq_ignore_ascii_case(&inbound_kind))
         {
+            // SECURITY: legal_threat surfaces a louder error so the
+            // operator notices in the batch-drafter logs even if
+            // alerts isn't running. The drafter MUST NOT compose
+            // anything that could be construed as a legal response.
+            if inbound_kind.eq_ignore_ascii_case("legal_threat") {
+                tracing::warn!(
+                    "draft_reply: REFUSING to draft a reply to a legal_threat \
+                     classification — operator must respond personally"
+                );
+            }
             return Err(Error::Validation(format!(
                 "draft_reply: refusing to draft a reply to kind=`{inbound_kind}` (terminal)"
             )));

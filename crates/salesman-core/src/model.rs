@@ -237,4 +237,17 @@ pub enum ReplyKind {
     Bounce,
     Spam,
     Unclassified,
+    /// Inbound contains a legal threat — cease-and-desist,
+    /// attorney/lawyer language, GDPR Article 17 erasure demand,
+    /// CAN-SPAM violation claim, or threat to file with a regulator
+    /// (FTC / DPA / state AG). The reply MUST NOT be auto-drafted —
+    /// operator handles legally-charged replies personally. Sender
+    /// is auto-suppressed with source=`reply_legal_threat`, all
+    /// in-flight touches to the prospect are rejected, the prospect's
+    /// funnel state moves to `suppressed`, and an alert surfaces in
+    /// `salesman alerts` so the operator notices within one cycle.
+    /// SECURITY: defense in depth — the keyword pre-check fires
+    /// BEFORE the LLM call so a model mis-classification can't
+    /// downgrade a legal threat to a benign objection.
+    LegalThreat,
 }

@@ -3193,6 +3193,10 @@ async fn main() -> Result<()> {
                 .list_replies_since_with_kinds(since_hours, &["engaged", "question"])
                 .await
                 .unwrap_or_default();
+            let legal_threats = state
+                .list_replies_since_with_kinds(since_hours, &["legal_threat"])
+                .await
+                .unwrap_or_default();
             let optouts = state
                 .list_replies_since_with_kinds(since_hours, &["optout"])
                 .await
@@ -3213,6 +3217,11 @@ async fn main() -> Result<()> {
             if cli.json {
                 let v = serde_json::json!({
                     "since_hours": since_hours,
+                    "legal_threats": legal_threats.iter().map(|r| serde_json::json!({
+                        "received_at": r.received_at.to_rfc3339(),
+                        "from": r.from_address,
+                        "subject": r.subject,
+                    })).collect::<Vec<_>>(),
                     "positive_replies": positive.iter().map(|r| serde_json::json!({
                         "received_at": r.received_at.to_rfc3339(),
                         "from": r.from_address,
@@ -3246,6 +3255,27 @@ async fn main() -> Result<()> {
                 "salesman alerts — last {since_hours}h ({})\n",
                 chrono::Utc::now().to_rfc3339()
             );
+            // Legal-threat section first — operator must see this
+            // BEFORE any other triage. Only printed when non-empty
+            // so the noise-floor stays low on healthy days; absence
+            // is implicitly "no legal threats received."
+            if !legal_threats.is_empty() {
+                println!(
+                    "=== ⚠⚠⚠ LEGAL THREATS ({}) — operator must respond personally ===",
+                    legal_threats.len()
+                );
+                for r in &legal_threats {
+                    println!(
+                        "  {} | {} | {}",
+                        r.received_at.format("%Y-%m-%d %H:%M:%SZ"),
+                        r.from_address,
+                        r.subject.as_deref().unwrap_or("(no subject)"),
+                    );
+                }
+                println!("  → senders auto-suppressed; in-flight touches rejected; \
+                          drafter REFUSED to compose. Run `salesman thread <prospect>` \
+                          to read context, then respond manually.\n");
+            }
             println!(
                 "=== positive replies ({}): engaged + question ===",
                 positive.len()
@@ -3316,7 +3346,14 @@ async fn main() -> Result<()> {
             }
             println!();
             // Summary banner — fast triage line for ops at a glance.
-            let banner = if !positive.is_empty() {
+            // Legal threats trump everything else — operator must
+            // know within one alert cycle.
+            let banner = if !legal_threats.is_empty() {
+                format!(
+                    "🛑 {} LEGAL THREAT(S) — handle personally before anything else",
+                    legal_threats.len()
+                )
+            } else if !positive.is_empty() {
                 format!("⤴ {} positive reply(ies) — review!", positive.len())
             } else if !competitor_replies.is_empty() {
                 format!(
@@ -3338,12 +3375,29 @@ async fn main() -> Result<()> {
             // surfaces inline but doesn't error the command.
             if let Some(url) = webhook_url {
                 let any_action = !positive.is_empty()
+                    || !legal_threats.is_empty()
                     || !optouts.is_empty()
                     || !bounces.is_empty()
                     || !competitor_replies.is_empty();
                 if any_action || webhook_always {
                     let mut text = format!("*Salesman alerts — last {since_hours}h*\n");
                     text.push_str(&format!("{banner}\n"));
+                    // Legal threats first in the webhook body too —
+                    // pages oncall before they scroll through the
+                    // positive-replies section.
+                    if !legal_threats.is_empty() {
+                        text.push_str(&format!(
+                            "\n*🛑 LEGAL THREATS ({})* — handle personally\n",
+                            legal_threats.len()
+                        ));
+                        for r in legal_threats.iter().take(5) {
+                            text.push_str(&format!(
+                                "• {} — {}\n",
+                                r.from_address,
+                                r.subject.as_deref().unwrap_or("(no subject)"),
+                            ));
+                        }
+                    }
                     if !positive.is_empty() {
                         text.push_str(&format!("\n*Positive replies ({})*\n", positive.len()));
                         for r in positive.iter().take(5) {
