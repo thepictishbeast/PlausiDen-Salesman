@@ -300,6 +300,11 @@ pub struct UnclassifiedReply {
     pub from_address: String,
     pub subject: Option<String>,
     pub body: String,
+    /// Raw header bag persisted at insert_reply_threaded time.
+    /// The classifier checks `Authentication-Results` here BEFORE
+    /// auto-suppressing on Optout / LegalThreat — defends against
+    /// suppression-list poisoning by forged inbounds (RFC 8601).
+    pub raw_headers: serde_json::Value,
 }
 
 /// A classified reply that needs a response. Carries both the
@@ -1584,7 +1589,8 @@ impl State {
     /// List replies in `unclassified` state (queue for the classifier).
     pub async fn list_unclassified_replies(&self, limit: i64) -> Result<Vec<UnclassifiedReply>> {
         let rows = sqlx::query(
-            "SELECT r.id, r.prospect_id, r.from_address, r.subject, r.body, p.campaign_id
+            "SELECT r.id, r.prospect_id, r.from_address, r.subject, r.body, \
+                    r.raw_headers, p.campaign_id
              FROM replies r
              JOIN prospects p ON p.id = r.prospect_id
              WHERE r.kind = 'unclassified'
@@ -1610,6 +1616,7 @@ impl State {
                 from_address: r.try_get("from_address").unwrap_or_default(),
                 subject: r.try_get("subject").unwrap_or(None),
                 body: r.try_get("body").unwrap_or_default(),
+                raw_headers: r.try_get("raw_headers").unwrap_or(serde_json::Value::Null),
             });
         }
         Ok(out)

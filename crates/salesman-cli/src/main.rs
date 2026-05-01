@@ -2810,6 +2810,93 @@ async fn main() -> Result<()> {
                         continue;
                     }
                 };
+
+                // SECURITY: anti-spoof gate for auto-suppression.
+                // The MIME From: header has no integrity guarantee —
+                // anyone with our IMAP inbox address can forge an
+                // optout/legal-threat from a real prospect to poison
+                // our suppression list (DOS against pipeline).
+                //
+                // When SALESMAN_TRUSTED_AUTHSERV_ID is set we read
+                // Authentication-Results headers stamped by that
+                // server and refuse to auto-suppress when SPF/DKIM/
+                // DMARC alignment FAILED for the From: domain.
+                // Unset env or no AR header → fail OPEN (legacy
+                // behavior); operator should set the env on
+                // production deployments.
+                if matches!(
+                    kind,
+                    salesman_core::model::ReplyKind::Optout
+                        | salesman_core::model::ReplyKind::LegalThreat
+                ) && let Ok(trusted) = std::env::var("SALESMAN_TRUSTED_AUTHSERV_ID")
+                    && !trusted.trim().is_empty()
+                {
+                    let ar_headers: Vec<String> = r
+                        .raw_headers
+                        .as_object()
+                        .and_then(|m| m.get("Authentication-Results"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| vec![s.to_string()])
+                        .unwrap_or_default();
+                    let from_domain = r
+                        .from_address
+                        .rsplit_once('@')
+                        .map(|(_, d)| d.trim().to_ascii_lowercase())
+                        .unwrap_or_default();
+                    let trusted_lc = trusted.trim().to_ascii_lowercase();
+                    let mut saw_trusted = false;
+                    let mut passed = false;
+                    for raw in &ar_headers {
+                        if let Some(parsed) = salesman_reply::AuthResults::parse(raw)
+                            && parsed.authserv_id == trusted_lc
+                        {
+                            saw_trusted = true;
+                            if parsed.is_from_authenticated(&from_domain) {
+                                passed = true;
+                                break;
+                            }
+                        }
+                    }
+                    if saw_trusted && !passed {
+                        tracing::warn!(
+                            reply = %r.reply_id,
+                            from = %r.from_address,
+                            kind = %kind_str,
+                            "REFUSING to auto-suppress: trusted Authentication-Results \
+                             header reports SPF/DKIM/DMARC alignment FAILED — likely \
+                             forged inbound. Tagging reply as auth_failed for operator \
+                             review; suppression-list NOT modified."
+                        );
+                        if let Err(e) = state
+                            .set_reply_tag(
+                                r.reply_id,
+                                "auth_failed",
+                                &serde_json::json!(true),
+                            )
+                            .await
+                        {
+                            tracing::warn!(reply = %r.reply_id, "%e" = %e, "set_reply_tag failed");
+                        }
+                        // Update kind to a dedicated marker so the
+                        // reply doesn't keep getting re-classified
+                        // and re-attempted on the next sweep.
+                        // We use Spam (existing terminal kind) as a
+                        // conservative bucket — operator reviews the
+                        // auth_failed tag in `salesman inbox`.
+                        if let Err(e) = state
+                            .update_reply_kind(
+                                r.reply_id,
+                                salesman_core::model::ReplyKind::Spam,
+                            )
+                            .await
+                        {
+                            tracing::warn!(reply = %r.reply_id, "%e" = %e, "update_reply_kind failed");
+                        }
+                        *counts.entry("auth_failed_skipped".into()).or_default() += 1;
+                        continue;
+                    }
+                }
+
                 let summary = state
                     .apply_reply_to_prospect(r.reply_id, r.prospect_id, &r.from_address, kind)
                     .await?;
