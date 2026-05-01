@@ -60,6 +60,28 @@ salesman import-csv \
 Drop `--dry-run` for the real import. Idempotent on
 `(campaign, company)` so re-runs collapse instead of duplicating.
 
+## salesman.env.example  *(env file — copy to /etc/salesman.env)*
+
+A complete `/etc/salesman.env` template with every supported variable
+grouped into 10 sections (db, LLM credentials, sender identity, SMTP,
+unsubscribe, IMAP, anti-spoof gate, operator brief, alerting, cost
+ledger). Each section has inline comments explaining why and what
+breaks when you skip it.
+
+Path on the operator's box:
+```sh
+sudo install -m 0640 -o root -g salesman \
+     samples/salesman.env.example /etc/salesman.env
+sudo -e /etc/salesman.env       # fill the CHANGEME placeholders
+sudo systemctl restart salesman
+sudo /opt/salesman/bin/salesman doctor   # verify each block landed
+```
+
+The file pre-fills the values that are not secret and that the
+operator already knows (sender domain = `outreach.plausiden.com`,
+SMTP/IMAP host = `mail.plausiden.com`, anti-spoof authserv-id =
+`mail.plausiden.com`). Replace every `CHANGEME` with a real value.
+
 ## Other samples in this folder
 
 - `pricing.toml`     — pricing-question reply drafter consults this.

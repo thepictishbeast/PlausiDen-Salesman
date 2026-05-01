@@ -7,24 +7,6 @@ work session.
 
 ## Active
 
-### B2 — Sender domain decision
-Pick the actual sending domain (recommendation:
-`outreach.plausiden.com` subdomain to keep reputation isolated
-from main brand mail). Tell me:
-- domain
-- display name (e.g. "PlausiDen", "William Armstrong")
-- reply-to address
-Unblocks: DKIM key generation + DNS record drafting + first send.
-
-### B3 — DNS records on the chosen sender domain
-Once B2 lands, follow `docs/EMAIL_DELIVERABILITY.md`:
-- SPF TXT listing 45.77.217.37
-- DKIM keypair (opendkim-genkey on the openclaw VPS) + public-key TXT
-- DMARC TXT (start `p=none` for reporting)
-- Vultr PTR set on 45.77.217.37 to the chosen sending hostname
-I can generate the exact copy-paste DNS entries once B2 lands.
-Unblocks: any send that doesn't get spam-binned by Gmail/Outlook.
-
 ### B4 — LLM credentials (API keys OR subscriber login)
 **Two paths, pick one.**
 
@@ -158,15 +140,28 @@ Sequence the operator works through to flip from "ready to draft" to
 "ready to actually send for real":
 
 ```
-[ ] B2  — sender domain decision (outreach.plausiden.com or other)
-[ ] B3  — SPF + DKIM + DMARC + PTR for that domain
+[X] B2  — sender domain decision (outreach.plausiden.com)         ✓ done
+[X] B3  — SPF + DKIM + DMARC + PTR for that domain                ✓ done
 [ ] B4  — LLM credentials (API keys OR subscriber-CLI)
 [ ] B4.5 — unsubscribe minter env + endpoint reachable
-[ ] B5  — first 25-prospect CSV
+[ ] B5  — first 25-prospect CSV (template ready in samples/)
 [ ] B5.5 — SALESMAN_TRUSTED_AUTHSERV_ID set + restart
 [ ] B6  — template review pass
 [ ] B7  — Vultr snapshot
 [ ] B8  — Postmaster Tools + SNDS registration
+
+Quick start (B4 + B4.5 + B5.5 in one shot):
+  scp samples/salesman.env.example openclaw:/tmp/
+  ssh openclaw 'sudo install -m 0640 -o root -g salesman \
+                /tmp/salesman.env.example /etc/salesman.env && \
+                sudo -e /etc/salesman.env'
+  # Fill in the CHANGEME values; SALESMAN_TRUSTED_AUTHSERV_ID
+  # is pre-filled. Save + quit.
+  ssh openclaw 'sudo systemctl restart salesman && \
+                /opt/salesman/bin/salesman doctor'
+  # Walk down the rows; everything should be OK except (maybe)
+  # IMAP if you haven't yet provisioned the salesman@plausiden.com
+  # mailbox on web-01.
 
 Then:
   ssh openclaw
@@ -194,6 +189,25 @@ need same-day response; auth_failed-tagged replies need a manual
 look (don't auto-suppress those).
 
 ## Resolved
+
+### B3 — DNS records on outreach.plausiden.com  *(resolved 2026-05-01)*
+Owner published all four records. Verified via
+`salesman dns-check --domain outreach.plausiden.com --sender-ip 207.246.86.218 --expected-ptr mail.plausiden.com`:
+- SPF: `v=spf1 ip4:207.246.86.218 ip6:... ~all` (warmup softfail —
+  escalate to `-all` after 48h of clean sends)
+- DKIM: `s1._domainkey.outreach.plausiden.com` (420-char TXT, valid)
+- DMARC: `v=DMARC1; p=quarantine; rua=mailto:team@plausiden.com`
+- PTR: `207.246.86.218 → mail.plausiden.com`
+VERDICT: YELLOW (1 warning, 0 blockers). DKIM signing test landed
+2026-05-01 — outbound is signing end-to-end.
+
+### B2 — Sender domain decision  *(resolved 2026-05-01, implicit via B3)*
+Domain locked to `outreach.plausiden.com` per the published DNS.
+Sending IP is `207.246.86.218` (web-01), not openclaw's
+`45.77.217.37`. The Postfix relay on web-01 signs + sends; salesman
+on openclaw submits via `mail.plausiden.com:587`. Display name +
+reply-to live in the env file (samples/salesman.env.example
+template, sections 3 + 4).
 
 ### B1 — Sieve classification on web-01  *(resolved 2026-04-27)*
 Web-01 deployed a typed Sieve `internal_source` rule (score 100)
