@@ -25,12 +25,34 @@ Once B2 lands, follow `docs/EMAIL_DELIVERABILITY.md`:
 I can generate the exact copy-paste DNS entries once B2 lands.
 Unblocks: any send that doesn't get spam-binned by Gmail/Outlook.
 
-### B4 — LLM API keys
+### B4 — LLM credentials (API keys OR subscriber login)
+**Two paths, pick one.**
+
+**Path A — API keys (legacy, fastest to set up):**
 SSH `openclaw`; edit `/etc/salesman.env` (already templated).
 Uncomment + fill:
 - `ANTHROPIC_API_KEY=sk-ant-...`  (one of the two LLM keys is enough)
 - `GEMINI_API_KEY=...`            (both is better — bulk vs reasoning)
 - `BRAVE_SEARCH_API_KEY=...`      (optional but enables OSINT search)
+
+**Path B — subscriber login (uses your paid Pro/Max + Gemini Advanced
+seats; no per-completion billing):**
+See `docs/SUBSCRIBER_LOGIN.md` for the full bootstrap. Short version:
+1. As `salesman` user on openclaw, install the `claude` and `gemini`
+   CLIs.
+2. Run `claude login` and `gemini auth login` once each (browser-auth
+   flow; tokens land in salesman's home).
+3. Append to `/etc/salesman.env`:
+   ```
+   SALESMAN_LLM_TRANSPORT=cli
+   ```
+4. Restart `salesman`; `journalctl -u salesman -n 20` should show
+   `registered Claude (subscriber-cli) backend` and likewise Gemini.
+
+Path B does NOT support tool-use (CLI returns plain text). Tool-using
+call sites need Path A. You can run BOTH (set transport=cli for the
+drafter; tool-using paths use the API backends if their keys are set).
+
 Unblocks: every LLM-powered tool — draft, classify, comparison,
 case-study, SEO, reply-classifier, and the agent loop itself.
 
@@ -57,6 +79,36 @@ header row, **required column:** `display_name`. **Optional:**
 `size_band`. Drop the path on the laptop and tell me.
 Unblocks: discover → enrich → draft → review → send loop running
 against real data.
+
+### B5.5 — Anti-spoof gate env (one line, do this when MX is locked)
+Once you know the hostname your inbound mail server uses to stamp
+`Authentication-Results:` headers (typically your MX, e.g.
+`mail.plausiden.com` for the openclaw web-01 setup), append to
+`/etc/salesman.env`:
+
+```
+SALESMAN_TRUSTED_AUTHSERV_ID=mail.plausiden.com
+```
+
+Then restart and verify:
+```
+sudo systemctl restart salesman
+/opt/salesman/bin/salesman doctor 2>&1 | grep "auth gate"
+# Expect: [ auth gate   ]  OK  trusted authserv-id = `mail.plausiden.com`
+```
+
+**Why this matters:** without this, `classify-replies` cannot defend
+against forged inbound replies that try to poison the suppression
+list. An attacker sending `From: alice@bigprospect.com` with body
+"please remove me" would auto-suppress the real Alice. With the env
+set, the classifier honors the SPF/DKIM/DMARC verdict your MX
+already computes.
+
+The gate is fail-OPEN until you set this — current behavior is the
+legacy "trust the From header." `salesman doctor` warns on every
+run while the env is unset so the gap stays visible.
+
+Unblocks: production-grade `send-pending --for-real` at volume.
 
 ### B6 — Template review pass
 `templates/cold/*.toml` — 10 starter templates (5 segment-agnostic
@@ -99,6 +151,47 @@ TOS acceptance for browser-automation paths.
   unknown event kinds + missing fields log + skip rather than crash.
   `crm-cli drain-once --timeout-ms N` for one-shot consume. Ready
   to deploy when there's a CRM Postgres + Salesman events to consume.
+
+## Final-readiness checklist for first send
+
+Sequence the operator works through to flip from "ready to draft" to
+"ready to actually send for real":
+
+```
+[ ] B2  — sender domain decision (outreach.plausiden.com or other)
+[ ] B3  — SPF + DKIM + DMARC + PTR for that domain
+[ ] B4  — LLM credentials (API keys OR subscriber-CLI)
+[ ] B4.5 — unsubscribe minter env + endpoint reachable
+[ ] B5  — first 25-prospect CSV
+[ ] B5.5 — SALESMAN_TRUSTED_AUTHSERV_ID set + restart
+[ ] B6  — template review pass
+[ ] B7  — Vultr snapshot
+[ ] B8  — Postmaster Tools + SNDS registration
+
+Then:
+  ssh openclaw
+  sudo -iu salesman /opt/salesman/bin/salesman doctor
+  # All rows OK except (optionally) a couple of WARNs you accept.
+  sudo -iu salesman /opt/salesman/bin/salesman dns-check \
+      --sender-domain outreach.plausiden.com
+  # Per-record OK/WARN/FAIL with remediation.
+  sudo -iu salesman /opt/salesman/bin/salesman preflight \
+      --campaign warmup-25
+  # Verifies: signing key, unsub minter, SMTP, LLM backends, draft
+  # queue, no test addresses. Prints 3 sample drafts.
+  sudo -iu salesman /opt/salesman/bin/salesman send-pending \
+      --campaign warmup-25
+  # DEFAULT IS DRY-RUN. Eyeball the [DRY-RUN] would-send lines.
+  sudo -iu salesman /opt/salesman/bin/salesman send-pending \
+      --campaign warmup-25 --for-real --max-batch 5 --confirm-typed
+  # First real send. Warmup gradient caps it at 5/day for the first
+  # 2 days of a campaign regardless.
+```
+
+Run `salesman alerts --since-hours 24` daily after that. The 🛑
+LEGAL THREAT(S) banner trumps everything else; positive replies
+need same-day response; auth_failed-tagged replies need a manual
+look (don't auto-suppress those).
 
 ## Resolved
 
