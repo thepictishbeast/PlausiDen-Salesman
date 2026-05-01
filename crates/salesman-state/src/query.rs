@@ -2396,6 +2396,13 @@ impl State {
         domain: &str,
         window_hours: i64,
     ) -> Result<i64> {
+        // Lowercase the domain — callers commonly pass `to
+        // .rsplit_once('@').map(...)` which preserves whatever
+        // casing the recipient stored. Add_suppression now stores
+        // the canonical (lowercased) form on every insert, so the
+        // LIKE pattern would miss historical or case-mismatched
+        // suppressions if we didn't normalize the lookup side too.
+        let needle = domain.trim().to_ascii_lowercase();
         let row = sqlx::query(
             "SELECT COUNT(*)::BIGINT AS n \
              FROM suppressions \
@@ -2404,7 +2411,7 @@ impl State {
                AND target LIKE '%@' || $1 \
                AND added_at > NOW() - ($2 || ' hours')::INTERVAL",
         )
-        .bind(domain)
+        .bind(&needle)
         .bind(window_hours.to_string())
         .fetch_one(self.pool())
         .await
@@ -2791,11 +2798,19 @@ impl State {
 
     /// Count touches sent to any address in `domain` in the last
     /// `window_hours` — per-domain rate cap.
+    ///
+    /// Same casing-normalization story as
+    /// `count_bounces_to_domain_since`: lowercase the needle so the
+    /// LIKE match doesn't miss historical or case-mismatched
+    /// rows. contacts.email is now stored canonically (lowercased,
+    /// plus-stripped, gmail-dot-stripped) per the email-canon
+    /// sweep, but legacy rows may have any casing.
     pub async fn count_touches_to_domain_since(
         &self,
         domain: &str,
         window_hours: i64,
     ) -> Result<i64> {
+        let needle = domain.trim().to_ascii_lowercase();
         let row = sqlx::query(
             "SELECT COUNT(*)::BIGINT AS n
              FROM touches t
@@ -2804,7 +2819,7 @@ impl State {
              WHERE ct.email LIKE '%@' || $1 AND t.sent_at IS NOT NULL
                AND t.sent_at > NOW() - ($2 || ' hours')::INTERVAL",
         )
-        .bind(domain)
+        .bind(&needle)
         .bind(window_hours.to_string())
         .fetch_one(self.pool())
         .await
