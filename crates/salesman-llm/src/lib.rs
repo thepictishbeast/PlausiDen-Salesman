@@ -16,6 +16,7 @@ pub mod claude;
 pub mod gemini;
 pub mod rates;
 pub mod router;
+pub mod subscriber_cli;
 pub mod types;
 
 pub use rates::{Rate, compute_cost_micro_usd, lookup_rate};

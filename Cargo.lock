@@ -2601,6 +2601,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "csv",
  "dialoguer",
  "reqwest",
  "salesman-content",

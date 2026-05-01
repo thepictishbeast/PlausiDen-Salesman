@@ -152,6 +152,7 @@ use salesman_discovery::{
 };
 use salesman_llm::claude::ClaudeBackend;
 use salesman_llm::gemini::GeminiBackend;
+use salesman_llm::subscriber_cli::SubscriberCliBackend;
 use salesman_llm::{LlmBackend, LlmRouter, Message, Role, RouteHint};
 use salesman_orchestrator::Orchestrator;
 use salesman_outreach::{SmtpConfig, SmtpSender};
@@ -753,6 +754,21 @@ enum Cmd {
         #[arg(long)]
         campaign: String,
     },
+    /// Insert N synthetic-but-plausible prospects into the campaign
+    /// for end-to-end smoke testing. Each stub gets a realistic
+    /// example.com-class homepage, a sensible industry / size_band,
+    /// and a small tech_signals array — enough to exercise the
+    /// drafter (which reads ProspectWithFacts) without requiring a
+    /// real CSV or external discovery API.
+    /// USE: validate the openclaw deployment end-to-end (draft →
+    /// fact-check → approve-all → send-pending --dry-run) BEFORE
+    /// owner has imported real prospects.
+    QuickStub {
+        #[arg(long)]
+        campaign: String,
+        #[arg(long, default_value_t = 5)]
+        count: usize,
+    },
     /// Bulk fact-check every awaiting-approval draft in a campaign.
     /// Runs the U44 fact-trace gate (numeric claims must trace back
     /// to prospect facts JSONB) across the whole queue and reports
@@ -868,19 +884,55 @@ fn build_router(
     sink: Option<Arc<dyn salesman_llm::LlmCallSink>>,
 ) -> LlmRouter {
     let mut router = LlmRouter::new();
-    if let Ok(b) = ClaudeBackend::from_env(claude_model) {
-        let kind = b.kind();
-        router.register(Arc::new(b));
-        tracing::info!(%kind, model = %claude_model, "registered Claude backend");
-    } else {
-        tracing::info!("ANTHROPIC_API_KEY not set — Claude backend not registered");
-    }
-    if let Ok(b) = GeminiBackend::from_env(gemini_model) {
-        let kind = b.kind();
-        router.register(Arc::new(b));
-        tracing::info!(%kind, model = %gemini_model, "registered Gemini backend");
-    } else {
-        tracing::info!("GEMINI_API_KEY not set — Gemini backend not registered");
+    // Transport selection — owner directive 2026-04-30: on the
+    // openclaw deployment we drive subscriber-login CLIs (claude
+    // / gemini) instead of API keys so we use the paid Pro/Max
+    // and Gemini Advanced seats. Set SALESMAN_LLM_TRANSPORT=cli
+    // to pick that path; default `api` keeps legacy behavior.
+    let transport = std::env::var("SALESMAN_LLM_TRANSPORT")
+        .unwrap_or_else(|_| "api".to_string())
+        .to_ascii_lowercase();
+    match transport.as_str() {
+        "cli" => {
+            match SubscriberCliBackend::claude_from_env(claude_model) {
+                Ok(b) => {
+                    let kind = b.kind();
+                    router.register(Arc::new(b));
+                    tracing::info!(%kind, model = %claude_model,
+                        "registered Claude (subscriber-cli) backend");
+                }
+                Err(e) => {
+                    tracing::warn!("Claude subscriber-cli backend not registered: {e}");
+                }
+            }
+            match SubscriberCliBackend::gemini_from_env(gemini_model) {
+                Ok(b) => {
+                    let kind = b.kind();
+                    router.register(Arc::new(b));
+                    tracing::info!(%kind, model = %gemini_model,
+                        "registered Gemini (subscriber-cli) backend");
+                }
+                Err(e) => {
+                    tracing::warn!("Gemini subscriber-cli backend not registered: {e}");
+                }
+            }
+        }
+        _ => {
+            if let Ok(b) = ClaudeBackend::from_env(claude_model) {
+                let kind = b.kind();
+                router.register(Arc::new(b));
+                tracing::info!(%kind, model = %claude_model, "registered Claude backend");
+            } else {
+                tracing::info!("ANTHROPIC_API_KEY not set — Claude backend not registered");
+            }
+            if let Ok(b) = GeminiBackend::from_env(gemini_model) {
+                let kind = b.kind();
+                router.register(Arc::new(b));
+                tracing::info!(%kind, model = %gemini_model, "registered Gemini backend");
+            } else {
+                tracing::info!("GEMINI_API_KEY not set — Gemini backend not registered");
+            }
+        }
     }
     if let Some(sink) = sink {
         router = router.with_sink(sink);
@@ -1617,6 +1669,67 @@ async fn main() -> Result<()> {
                     println!();
                 }
             }
+        }
+
+        Cmd::QuickStub { campaign, count } => {
+            // Synthetic-but-plausible prospect templates. Cycled
+            // for `count`; each rotation gets a unique slug appended
+            // so the (campaign, company) UNIQUE constraint never
+            // collides on repeat runs.
+            const STUBS: &[(&str, &str, &str, salesman_core::model::SizeBand, &str)] = &[
+                ("Acme Logging Co",     "https://acme-logging.example",     "B2B SaaS",     salesman_core::model::SizeBand::Small,      "Self-hosted log aggregation for security teams"),
+                ("Beta Devops",         "https://beta-devops.example",      "Devtools",     salesman_core::model::SizeBand::Mid,        "CI/CD platform for monorepos"),
+                ("Gamma Industrial",    "https://gamma-industrial.example", "Manufacturing",salesman_core::model::SizeBand::Enterprise, "IoT telemetry + edge compute"),
+                ("Delta Cyber",         "https://delta-cyber.example",      "Security",     salesman_core::model::SizeBand::Small,      "Threat-intel platform for MSSPs"),
+                ("Epsilon Health",      "https://epsilonhealth.example",    "Healthtech",   salesman_core::model::SizeBand::Mid,        "GDPR-first patient-data analytics"),
+                ("Zeta Mobility",       "https://zeta-mobility.example",    "Logistics",    salesman_core::model::SizeBand::Mid,        "Fleet routing + driver-app platform"),
+                ("Eta Climate",         "https://etaclimate.example",       "ClimateTech",  salesman_core::model::SizeBand::Small,      "Carbon-accounting for mid-market"),
+                ("Theta Finserv",       "https://thetafinserv.example",     "FinTech",      salesman_core::model::SizeBand::Mid,        "Compliance-first payments rails"),
+            ];
+
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let campaign_id = state
+                .ensure_campaign(&campaign, "(quick-stub)", "synthetic-smoke")
+                .await?;
+
+            let suffix = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
+            let mut companies: Vec<salesman_core::Company> = Vec::with_capacity(count);
+            for i in 0..count {
+                let (name, homepage, industry, size_band, description) =
+                    STUBS[i % STUBS.len()];
+                // Disambiguator so re-running quick-stub doesn't
+                // collide on the (campaign, company) UNIQUE.
+                let display_name = format!("{name} #{suffix}-{i}");
+                companies.push(salesman_core::Company {
+                    id: salesman_core::CompanyId::new(),
+                    legal_name: Some(display_name.clone()),
+                    display_name,
+                    homepage: url::Url::parse(homepage).ok(),
+                    industry: Some(industry.to_string()),
+                    size_band: Some(size_band),
+                    region: Some("US".to_string()),
+                    description: Some(description.to_string()),
+                    tech_signals: vec![],
+                    discovered_at: chrono::Utc::now(),
+                    last_enriched_at: None,
+                    source: salesman_core::model::DiscoverySource::OwnerSeed,
+                    raw: std::collections::BTreeMap::new(),
+                });
+            }
+            let cids: Vec<_> = companies.iter().map(|c| c.id).collect();
+            let n_companies = state.insert_companies(&companies).await?;
+            let n_prospects = state
+                .upsert_prospects_for_campaign(campaign_id, &cids)
+                .await?;
+            println!(
+                "quick-stub `{campaign}`: {n_companies} new companies, \
+                 {n_prospects} new prospects (suffix=`{suffix}`).\n\n\
+                 Smoke-test the full pipeline:\n  \
+                 salesman draft --campaign {campaign} --product Sentinel\n  \
+                 salesman fact-check --campaign {campaign}\n  \
+                 salesman approve-all --campaign {campaign} --dry-run\n  \
+                 salesman send-pending --campaign {campaign}    # default DRY-RUN",
+            );
         }
 
         Cmd::FactCheck {
