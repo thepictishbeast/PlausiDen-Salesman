@@ -76,20 +76,31 @@ impl SubscriberCliBackend {
     }
 
     /// Build a Claude (Code) CLI backend honoring env overrides:
-    ///   - SALESMAN_CLAUDE_CLI_BIN  (default: `claude`)
-    ///   - SALESMAN_CLAUDE_CLI_ARGS (JSON array, default: `["--print"]`)
+    ///   - SALESMAN_CLAUDE_CLI_BIN   (default: `claude`)
+    ///   - SALESMAN_CLAUDE_CLI_ARGS  (JSON array, default: `["--print"]`)
+    ///   - SALESMAN_CLAUDE_CLI_MODEL (default: unset → don't pass
+    ///     --model, let the CLI pick its own default which usually
+    ///     tracks the subscriber's tier)
     ///   - SALESMAN_LLM_CLI_TIMEOUT_SEC (default: 180)
-    /// `model` is appended via `--model <model>` so the operator
-    /// can pin the subscription model used per call.
+    ///
+    /// `model` (from SALESMAN_CLAUDE_MODEL / --claude-model) is kept
+    /// as the response/ledger label but is NOT passed to the CLI by
+    /// default. The CLI's accepted model-name set differs from the
+    /// API's, so passing the API model name verbatim can fail with
+    /// `--model: invalid value`. Operator can opt back in by setting
+    /// SALESMAN_CLAUDE_CLI_MODEL to a CLI-accepted alias (e.g.
+    /// `sonnet`, `opus`, `claude-sonnet-4-5`).
     pub fn claude_from_env(model: impl Into<String>) -> Result<Self> {
         let model = model.into();
         let bin = std::env::var("SALESMAN_CLAUDE_CLI_BIN")
             .unwrap_or_else(|_| "claude".to_string());
         let mut args = parse_args_env("SALESMAN_CLAUDE_CLI_ARGS")
             .unwrap_or_else(|| vec!["--print".to_string()]);
-        if !model.is_empty() {
+        if let Ok(cli_model) = std::env::var("SALESMAN_CLAUDE_CLI_MODEL")
+            && !cli_model.trim().is_empty()
+        {
             args.push("--model".to_string());
-            args.push(model.clone());
+            args.push(cli_model);
         }
         Ok(Self::new(
             BackendKind::Claude,
@@ -101,8 +112,13 @@ impl SubscriberCliBackend {
     }
 
     /// Build a Gemini CLI backend honoring env overrides:
-    ///   - SALESMAN_GEMINI_CLI_BIN  (default: `gemini`)
-    ///   - SALESMAN_GEMINI_CLI_ARGS (JSON array, default: `["chat"]`)
+    ///   - SALESMAN_GEMINI_CLI_BIN   (default: `gemini`)
+    ///   - SALESMAN_GEMINI_CLI_ARGS  (JSON array, default: `["chat"]`
+    ///     — works in both old and new gemini-cli when stdin is
+    ///     piped; new CLI also accepts `["-p", ""]` for the same
+    ///     headless-with-stdin behavior)
+    ///   - SALESMAN_GEMINI_CLI_MODEL (default: unset → don't pass
+    ///     --model, let the CLI pick its own default)
     ///   - SALESMAN_LLM_CLI_TIMEOUT_SEC (default: 180)
     pub fn gemini_from_env(model: impl Into<String>) -> Result<Self> {
         let model = model.into();
@@ -110,9 +126,11 @@ impl SubscriberCliBackend {
             .unwrap_or_else(|_| "gemini".to_string());
         let mut args = parse_args_env("SALESMAN_GEMINI_CLI_ARGS")
             .unwrap_or_else(|| vec!["chat".to_string()]);
-        if !model.is_empty() {
+        if let Ok(cli_model) = std::env::var("SALESMAN_GEMINI_CLI_MODEL")
+            && !cli_model.trim().is_empty()
+        {
             args.push("--model".to_string());
-            args.push(model.clone());
+            args.push(cli_model);
         }
         Ok(Self::new(
             BackendKind::Gemini,
