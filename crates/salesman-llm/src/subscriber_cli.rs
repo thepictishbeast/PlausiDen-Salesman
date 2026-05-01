@@ -235,14 +235,21 @@ impl LlmBackend for SubscriberCliBackend {
             })?;
 
         // Send prompt over stdin so it never lands in argv / ps.
+        // BUG ASSUMPTION: if the child exits before we finish
+        // writing (e.g. the binary doesn't consume stdin), we'll
+        // get EPIPE here. That isn't *our* failure — the real
+        // diagnosis lives in the subprocess's exit code + stderr,
+        // which we surface in the wait_with_output branch below.
+        // So we swallow EPIPE here and let the wait path raise.
         if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(prompt.as_bytes())
-                .await
-                .map_err(|e| Error::Llm {
+            if let Err(e) = stdin.write_all(prompt.as_bytes()).await
+                && e.kind() != std::io::ErrorKind::BrokenPipe
+            {
+                return Err(Error::Llm {
                     backend: self.kind.to_string(),
                     message: format!("stdin write: {e}"),
-                })?;
+                });
+            }
             // Drop closes stdin so the CLI sees EOF and starts work.
             drop(stdin);
         }
