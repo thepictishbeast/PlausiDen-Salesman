@@ -566,6 +566,16 @@ impl State {
             .begin()
             .await
             .map_err(|e| Error::Db(e.to_string()))?;
+        // Canonicalize email so two find-buyers runs that discover
+        // `John@Acme.com` and `john@acme.com` (or
+        // `john+sales@gmail.com` and `john@gmail.com`) collapse onto
+        // the same row via ON CONFLICT (company_id, email). Without
+        // this they'd create duplicate contacts for the same logical
+        // mailbox and the prospect's primary_contact_id would point
+        // at whichever was inserted last. Same canonicalization rule
+        // every other email comparison uses — see
+        // salesman-core::email_match.
+        let canonical_email = salesman_core::normalize_email_for_match(email);
         // ON CONFLICT (company_id, email) DO UPDATE on the displayable
         // fields so re-runs replace stale title/name with current.
         let row = sqlx::query(
@@ -581,7 +591,7 @@ impl State {
         .bind(company_id.0)
         .bind(name)
         .bind(title)
-        .bind(email)
+        .bind(&canonical_email)
         .bind(source)
         .fetch_one(&mut *tx)
         .await
