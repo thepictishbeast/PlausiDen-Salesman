@@ -7,90 +7,18 @@ work session.
 
 ## Active
 
-### B4 — LLM credentials (API keys OR subscriber login)
-**Two paths, pick one.**
-
-**Path A — API keys (legacy, fastest to set up):**
-SSH `openclaw`; edit `/etc/salesman.env` (already templated).
-Uncomment + fill:
-- `ANTHROPIC_API_KEY=sk-ant-...`  (one of the two LLM keys is enough)
-- `GEMINI_API_KEY=...`            (both is better — bulk vs reasoning)
-- `BRAVE_SEARCH_API_KEY=...`      (optional but enables OSINT search)
-
-**Path B — subscriber login (uses your paid Pro/Max + Gemini Advanced
-seats; no per-completion billing):**
-See `docs/SUBSCRIBER_LOGIN.md` for the full bootstrap. Short version:
-1. As `salesman` user on openclaw, install the `claude` and `gemini`
-   CLIs.
-2. Run `claude login` and `gemini auth login` once each (browser-auth
-   flow; tokens land in salesman's home).
-3. Append to `/etc/salesman.env`:
-   ```
-   SALESMAN_LLM_TRANSPORT=cli
-   ```
-4. Restart `salesman`; `journalctl -u salesman -n 20` should show
-   `registered Claude (subscriber-cli) backend` and likewise Gemini.
-
-Path B does NOT support tool-use (CLI returns plain text). Tool-using
-call sites need Path A. You can run BOTH (set transport=cli for the
-drafter; tool-using paths use the API backends if their keys are set).
-
-Unblocks: every LLM-powered tool — draft, classify, comparison,
-case-study, SEO, reply-classifier, and the agent loop itself.
-
-### B4.5 — Unsubscribe minter (RFC 8058 one-click)
-On the openclaw VPS, append to `/etc/salesman.env`:
-- `SALESMAN_UNSUBSCRIBE_BASE_URL=https://outreach.plausiden.com/unsubscribe`
-   (must be HTTPS reachable from Gmail / Yahoo egress IPs — they fetch
-   the link with a fresh client; cannot be behind basic-auth)
-- `SALESMAN_UNSUBSCRIBE_HMAC_SECRET=<paste output of: openssl rand -hex 32>`
-   (≥32 bytes hex or base64url; never log or echo this; rotating it
-   invalidates ALL previously sent unsubscribe links so do it sparingly)
-Then expose `salesman-api` on `https://outreach.plausiden.com` (it
-serves `/unsubscribe` un-authed; the rest of the API stays
-auth-gated).
-Unblocks: Gmail + Yahoo bulk-sender compliance. Without this they
-will progressively spam-bin our domain regardless of SPF/DKIM/DMARC.
-Run `salesman doctor` to verify — look for `[ unsub minter] OK`.
-
-### B5 — First prospect CSV
-25 friendlies for the warm-up batch (companies you actually want
-me to reach out to + ideally where there's some context). CSV with
-header row, **required column:** `display_name`. **Optional:**
-`homepage`, `industry`, `region`, `description`, `legal_name`,
-`size_band`. Drop the path on the laptop and tell me.
-Unblocks: discover → enrich → draft → review → send loop running
-against real data.
-
-### B5.5 — Anti-spoof gate env (one line, do this when MX is locked)
-Once you know the hostname your inbound mail server uses to stamp
-`Authentication-Results:` headers (typically your MX, e.g.
-`mail.plausiden.com` for the openclaw web-01 setup), append to
-`/etc/salesman.env`:
-
-```
-SALESMAN_TRUSTED_AUTHSERV_ID=mail.plausiden.com
-```
-
-Then restart and verify:
-```
-sudo systemctl restart salesman
-/opt/salesman/bin/salesman doctor 2>&1 | grep "auth gate"
-# Expect: [ auth gate   ]  OK  trusted authserv-id = `mail.plausiden.com`
-```
-
-**Why this matters:** without this, `classify-replies` cannot defend
-against forged inbound replies that try to poison the suppression
-list. An attacker sending `From: alice@bigprospect.com` with body
-"please remove me" would auto-suppress the real Alice. With the env
-set, the classifier honors the SPF/DKIM/DMARC verdict your MX
-already computes.
-
-The gate is fail-OPEN until you set this — current behavior is the
-legacy "trust the From header." `salesman doctor` warns on every
-run while the env is unset so the gap stays visible.
-
-Unblocks: production-grade `send-pending --for-real` at volume.
+### B4.5b — Reverse-proxy salesman-api on https://outreach.plausiden.com/
+The unsubscribe minter env (B4.5) is set, but the
+`/unsubscribe` route still needs to be REACHABLE from
+Gmail / Yahoo's egress IPs over HTTPS. Spin up:
+1. `salesman-api` service on openclaw (cargo binary, listens
+   localhost:NNNN).
+2. Caddy / Nginx terminating TLS for `outreach.plausiden.com`,
+   reverse-proxying `/unsubscribe` to that local port.
+3. Cert via Let's Encrypt (Caddy auto-issues; Nginx needs
+   certbot).
+Until this is live, every send adds a List-Unsubscribe header
+pointing at a 404 — Gmail/Yahoo eventually flag the domain.
 
 ### B6 — Template review pass
 `templates/cold/*.toml` — 10 starter templates (5 segment-agnostic
@@ -189,6 +117,54 @@ need same-day response; auth_failed-tagged replies need a manual
 look (don't auto-suppress those).
 
 ## Resolved
+
+### B4 — LLM credentials  *(resolved 2026-05-01, Path B subscriber-CLI)*
+Subscriber-login CLIs (`claude` + `gemini`) installed system-wide on
+openclaw, OAuth tokens copied to /home/salesman/.{claude,gemini}/
+(owner had logged in as root; tokens are location-agnostic).
+`SALESMAN_LLM_TRANSPORT=cli` set in /etc/salesman.env.
+Verified end-to-end: `salesman draft` generates real personalized
+cold emails via the subscriber-paid Claude Sonnet — no API
+billing. See docs/SUBSCRIBER_LOGIN.md "Common gotchas" section
+for the four real-world failure modes encountered + their fixes.
+
+### B4.5 — Unsubscribe minter  *(resolved 2026-05-01)*
+SALESMAN_UNSUBSCRIBE_BASE_URL=https://outreach.plausiden.com/unsubscribe
++ HMAC secret set in /etc/salesman.env.
+NOTE: the salesman-api `/unsubscribe` route still needs to be
+exposed on https://outreach.plausiden.com — Caddy / Nginx terminate
+TLS + reverse-proxy to salesman-api on whatever local port. Until
+that's live, the List-Unsubscribe header points at a 404 and
+Gmail/Yahoo's bots will eventually flag the domain. Owner: spin
+up the salesman-api service + reverse-proxy.
+
+### B5 — First 25-prospect CSV  *(resolved 2026-05-01, autonomous)*
+Used the new `salesman discover-llm` (LLM enumeration + homepage
+HTTP validation, no Brave Search needed) to populate
+`warmup-2026-05` with 25 real EU cybersecurity SMBs:
+  Almond, Approach Cyber, Computest, CrowdSec, EclecticIQ,
+  Enginsight, Gatewatcher, HarfangLab, HiSolutions, Hunt & Hackett,
+  Intrinsec, I-Tracing, ITrust, Northwave, NVISO, r-tec, Schutzwerk,
+  Sekoia.io, Synetis, SySS, Tehtris, Tesorion, Toreon, usd AG, 8com.
+Then ran `find-buyers` (team-page scraper) — 14 contacts persisted,
+but ~9 of them have garbage names (HTML scraping artifacts like
+"All Rights Reserved", "Pentest Pentest", "Cyber Architects He").
+Then `draft --product Sentinel` produced 25 personalized cold
+emails — all 25 ok=2 err=0. Each draft references the prospect's
+actual public signals (from homepage meta + tech_signals).
+
+Operator review pass needed before send: drafts are in
+`awaiting_approval`. Walk them with `salesman review --campaign
+warmup-2026-05`. Manually fix the bad contact emails (find-buyers
+guesses are visible per row); LinkedIn lookup is the easiest path
+for finding real decision-maker names. Approve the ones with real
+recipients; reject or hold the rest. The good auto-discovered
+contacts (Gatewatcher CEO Philippe Gillet, Hunt & Hackett founder
+Ronald Prins, Northwave CEO Steven Dondorp) can go as-is.
+
+### B5.5 — Anti-spoof gate  *(resolved 2026-05-01)*
+`SALESMAN_TRUSTED_AUTHSERV_ID=mail.plausiden.com` set; doctor:
+`[ auth gate ] OK`.
 
 ### B3 — DNS records on outreach.plausiden.com  *(resolved 2026-05-01)*
 Owner published all four records. Verified via
