@@ -16,7 +16,7 @@ env:
 jobs:
   rust:
     name: cargo check + test
-    runs-on: [self-hosted, linux, x64, plausiden]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain check
@@ -32,7 +32,7 @@ jobs:
 
   detector_corpus:
     name: AI-detector regression corpus
-    runs-on: [self-hosted, linux, x64, plausiden]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       # The corpus test is in salesman-detector/tests/corpus_test.rs
@@ -42,7 +42,7 @@ jobs:
 
   template_bench:
     name: Template body_seed scoring
-    runs-on: [self-hosted, linux, x64, plausiden]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Build CLI
@@ -65,7 +65,7 @@ jobs:
 
   docs:
     name: docs sanity (key files exist + non-empty)
-    runs-on: [self-hosted, linux, x64, plausiden]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: All authoritative docs present
@@ -81,7 +81,7 @@ jobs:
 
   shellcheck:
     name: shellcheck
-    runs-on: [self-hosted, linux, x64, plausiden]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: install shellcheck
@@ -91,7 +91,7 @@ jobs:
 
   cli_help:
     name: CLI help smoke test (parse-only)
-    runs-on: [self-hosted, linux, x64, plausiden]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Build CLI
