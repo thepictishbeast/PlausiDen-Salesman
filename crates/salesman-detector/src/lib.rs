@@ -34,10 +34,14 @@ pub struct RiskScore {
 }
 
 impl RiskScore {
+    /// True if the AI-tell score is strictly below `threshold` — i.e. the
+    /// draft is human-enough to pass the gate at that threshold.
     pub fn passes(&self, threshold: f32) -> bool {
         self.score < threshold
     }
 
+    /// Human-readable explanation lines, one per signal hit, formatted as
+    /// `[name/weight] evidence` — surfaced to the operator at review.
     pub fn reasons(&self) -> Vec<String> {
         self.hits
             .iter()

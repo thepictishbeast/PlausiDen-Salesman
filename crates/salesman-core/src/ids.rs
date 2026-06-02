@@ -12,6 +12,7 @@ macro_rules! id_type {
         pub struct $name(pub Uuid);
 
         impl $name {
+            /// Generate a fresh, time-ordered id (UUIDv7).
             pub fn new() -> Self {
                 Self(Uuid::now_v7())
             }

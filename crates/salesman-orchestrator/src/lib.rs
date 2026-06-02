@@ -28,6 +28,8 @@ pub struct Orchestrator {
 }
 
 impl Orchestrator {
+    /// Build an orchestrator over an LLM router + tool registry, defaulting
+    /// to a 16-step cap per run.
     pub fn new(router: Arc<LlmRouter>, tools: Arc<ToolRegistry>) -> Self {
         Self {
             router,
@@ -36,6 +38,7 @@ impl Orchestrator {
         }
     }
 
+    /// Override the maximum number of LLM turns per run (builder style).
     pub fn with_max_steps(mut self, max_steps: u32) -> Self {
         self.max_steps = max_steps;
         self
