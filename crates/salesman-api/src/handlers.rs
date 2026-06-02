@@ -13,6 +13,7 @@ use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// `GET /healthz` — liveness probe; always 200 `ok`.
 pub async fn healthz() -> impl IntoResponse {
     (
         StatusCode::OK,
@@ -21,6 +22,9 @@ pub async fn healthz() -> impl IntoResponse {
     )
 }
 
+/// `GET /pipeline/summary` — JSON snapshot of the last 24h: counts by
+/// funnel state, recent sends/replies/opt-outs/receipts, and suppression
+/// totals.
 pub async fn pipeline_summary_json(
     State(app): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -48,6 +52,7 @@ pub async fn pipeline_summary_json(
     })))
 }
 
+/// `GET /campaigns` — JSON list of all campaigns.
 pub async fn campaigns_json(
     State(app): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -55,6 +60,8 @@ pub async fn campaigns_json(
     Ok(Json(json!({ "campaigns": campaigns })))
 }
 
+/// `GET /drafts` — operator HTML table of every draft awaiting approval
+/// across all campaigns (company + subject are HTML-escaped).
 pub async fn drafts_html(State(app): State<Arc<AppState>>) -> Result<Html<String>, ApiError> {
     let drafts = app.state.list_all_drafts_awaiting_approval().await?;
     let rows: Vec<(uuid::Uuid, String, Option<String>, chrono::DateTime<chrono::Utc>)> = drafts
@@ -64,6 +71,9 @@ pub async fn drafts_html(State(app): State<Arc<AppState>>) -> Result<Html<String
     Ok(Html(html::drafts_index(&rows)))
 }
 
+/// `POST /drafts/:id/approve` — move the touch `awaiting_approval` →
+/// `approved`. 404 if it is not awaiting approval; otherwise redirect to
+/// `/drafts`.
 pub async fn draft_approve(
     State(app): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
@@ -76,6 +86,9 @@ pub async fn draft_approve(
     Ok(Redirect::to("/drafts").into_response())
 }
 
+/// `POST /drafts/:id/reject` — move the touch `awaiting_approval` →
+/// `rejected`. 404 if it is not awaiting approval; otherwise redirect to
+/// `/drafts`.
 pub async fn draft_reject(
     State(app): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
@@ -88,6 +101,8 @@ pub async fn draft_reject(
     Ok(Redirect::to("/drafts").into_response())
 }
 
+/// `GET /receipts` — HTML table of the 100 most recent signed receipts,
+/// each marked verified/unverified against the loaded signing key.
 pub async fn receipts_html(State(app): State<Arc<AppState>>) -> Result<Html<String>, ApiError> {
     let receipts = app.state.list_recent_receipts(100).await?;
     // Try to load signing key for verify; if missing, mark all as "unverified".

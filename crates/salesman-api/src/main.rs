@@ -23,6 +23,11 @@ pub struct AppState {
     pub unsubscribe_tokens: Option<UnsubscribeTokens>,
 }
 
+/// Build the full Axum router: the operator routes (`/healthz`,
+/// `/pipeline/summary`, `/campaigns`, `/drafts`, `/drafts/:id/approve` +
+/// `/reject`, `/receipts`) behind optional HTTP Basic auth, merged with the
+/// always-public RFC 8058 `/unsubscribe` routes (which authenticate via
+/// their own HMAC token, not credentials).
 pub fn build_router(app_state: AppState, basic_auth: Option<String>) -> Router {
     // Unsubscribe routes are mounted on a sub-router that bypasses
     // basic auth — RFC 8058 one-click MUST work without credentials,

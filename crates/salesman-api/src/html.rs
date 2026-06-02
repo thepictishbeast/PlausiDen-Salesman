@@ -75,6 +75,9 @@ pub fn drafts_index(
     page("drafts — salesman", &body)
 }
 
+/// Render the receipts page from rows of
+/// `(created_at, event_kind, short-hash-hex, verified)` — the `verified`
+/// flag drives the OK/FAIL styling per row.
 pub fn receipts_table(rows: &[(chrono::DateTime<chrono::Utc>, String, String, bool)]) -> String {
     let mut body = String::from("<h1>Receipts (most recent 100)</h1>\n");
     if rows.is_empty() {
