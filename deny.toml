@@ -1,0 +1,68 @@
+# deny.toml — supply-chain policy for PlausiDen-Salesman.
+#
+# Wired into scripts/check.sh (`cargo deny check`) but previously absent, so
+# the gate fell back to cargo-deny defaults and rejected every license. This
+# file makes the gate actually enforce a sane, documented policy.
+#
+# See PlausiDen-Meta SECURITY_BASELINE (dependency hygiene) + FOSS_AUDIT.md.
+# Authored 2026-06-02.
+
+[advisories]
+version = 2
+yanked = "deny"
+# Documented risk-acceptances. Each is transitive and UNMAINTAINED-ONLY (a
+# warning, not a vulnerability). Revisit when the upstream chain moves on.
+ignore = [
+  # async-std discontinued (RUSTSEC-2025-0052). Pulled only via async-imap
+  # (salesman-reply). No maintained drop-in; revisit when async-imap moves
+  # off async-std.
+  "RUSTSEC-2025-0052",
+  # fxhash unmaintained (RUSTSEC-2025-0057). Pulled only via scraper->selectors
+  # (salesman-discovery); used as a non-cryptographic hasher. Revisit on a
+  # scraper bump.
+  "RUSTSEC-2025-0057",
+  #
+  # NOT ignored here, by design: RUSTSEC-2023-0071 (rsa / Marvin timing attack,
+  # medium). It is a real vulnerability with no fixed upstream version, so it
+  # requires an explicit OWNER risk-acceptance rather than a silent waiver.
+  # Context: rsa is pulled ONLY by sqlx-macros-core's compile-time multi-backend
+  # support (sqlx-mysql); this project is Postgres-only and never exercises the
+  # MySQL RSA auth path, so the vulnerable code is unreachable at runtime. To
+  # accept that risk, add "RUSTSEC-2023-0071" to this list.
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+# Permissive + the workspace's own AGPL. Crates offering "<permissive> OR
+# GPL-2.0-only" (self_cell) or "<permissive> OR LGPL-2.1-or-later" (r-efi) are
+# satisfied via their permissive branch. Copyleft-ONLY is intentionally NOT
+# allowed, so any future GPL/LGPL-only dependency fails the gate loudly.
+allow = [
+  "MIT",
+  "MIT-0",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-1-Clause",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "0BSD",
+  "ISC",
+  "BSL-1.0",
+  "CC0-1.0",
+  "CDLA-Permissive-2.0",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Unlicense",
+  "Zlib",
+  "AGPL-3.0-or-later",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
