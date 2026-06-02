@@ -115,10 +115,14 @@ impl Signer {
         })
     }
 
+    /// The key id stamped onto every receipt this signer produces
+    /// (`Receipt::signing_key_id`); chains are verified per key id.
     pub fn key_id(&self) -> &str {
         &self.key_id
     }
 
+    /// The public verifying key for this signer — hand to
+    /// [`verify_receipt`] / [`verify_chain`] to check signatures offline.
     pub fn verifying_key(&self) -> VerifyingKey {
         self.signing_key.verifying_key()
     }
@@ -210,18 +214,24 @@ fn canonical_json(v: &serde_json::Value) -> Vec<u8> {
     serde_json::to_vec(v).unwrap_or_default()
 }
 
+/// The all-zero 32-byte hash used as the genesis receipt's `prev_hash`.
 pub fn zero_hash() -> Vec<u8> {
     vec![0u8; HASH_LEN]
 }
 
+/// Hex-encode a hash / `prev_hash` for display, logging, or storage.
 pub fn hash_to_hex(h: &[u8]) -> String {
     hex::encode(h)
 }
 
+/// Decode a hex string (the inverse of [`hash_to_hex`]) back into raw
+/// bytes. Errors if the input is not valid hex.
 pub fn hex_to_hash(s: &str) -> Result<Vec<u8>> {
     hex::decode(s).map_err(|e| Error::Validation(format!("hex: {e}")))
 }
 
+/// Default on-disk location of the Ed25519 signing seed (mode 0600).
+/// Callers may override this; see [`Signer::load_or_generate`].
 pub fn default_seed_path() -> PathBuf {
     PathBuf::from("/opt/salesman/config/signing.seed")
 }
