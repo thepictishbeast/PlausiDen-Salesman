@@ -28,10 +28,13 @@ pub struct DnsInfo {
 pub struct DnsInfoClient;
 
 impl DnsInfoClient {
+    /// Build a DNS-info client.
     pub fn new() -> Self {
         Self
     }
 
+    /// Resolve `domain` into [`DnsInfo`] (A records, etc.) via the tokio
+    /// resolver. Errors on resolver failure.
     pub async fn lookup(&self, domain: &str) -> Result<DnsInfo> {
         // A records via tokio resolver
         let a = match tokio::net::lookup_host(format!("{domain}:0")).await {
@@ -73,6 +76,7 @@ pub struct DnsInfoTool {
 }
 
 impl DnsInfoTool {
+    /// Wrap a shared [`DnsInfoClient`] as an OSINT [`Tool`].
     pub fn new(inner: std::sync::Arc<DnsInfoClient>) -> Self {
         Self { inner }
     }

@@ -30,6 +30,7 @@ impl Default for GdeltClient {
 }
 
 impl GdeltClient {
+    /// Build a GDELT (global news) API client.
     pub fn new() -> Self {
         Self {
             http: reqwest::Client::builder()
@@ -88,6 +89,7 @@ pub struct GdeltTool {
 }
 
 impl GdeltTool {
+    /// Wrap a shared [`GdeltClient`] as an OSINT [`Tool`].
     pub fn new(inner: std::sync::Arc<GdeltClient>) -> Self {
         Self { inner }
     }

@@ -35,6 +35,7 @@ impl Default for HnClient {
 }
 
 impl HnClient {
+    /// Build a Hacker News (Firebase API) client.
     pub fn new() -> Self {
         Self {
             // SAFETY: rustls-tls backend with default options + a
@@ -99,6 +100,7 @@ pub struct HnTool {
 }
 
 impl HnTool {
+    /// Wrap a shared [`HnClient`] as an OSINT [`Tool`].
     pub fn new(inner: std::sync::Arc<HnClient>) -> Self {
         Self { inner }
     }
