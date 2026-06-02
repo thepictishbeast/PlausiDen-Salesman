@@ -12,6 +12,11 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
+  # No crate uses sqlx's compile-time query!/query_as! macros (by design —
+  # see crates/salesman-state/src/query.rs), so the build needs no live DB.
+  # Make that explicit: if such a macro is ever added without a checked-in
+  # .sqlx cache, CI fails loudly here instead of silently trying to connect.
+  SQLX_OFFLINE: "true"
 
 jobs:
   rust:
@@ -28,7 +33,7 @@ jobs:
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
       - name: cargo clippy
-        run: cargo clippy --workspace --all-targets
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
   detector_corpus:
     name: AI-detector regression corpus
@@ -120,3 +125,15 @@ jobs:
           ./target/debug/salesman suppressions count --help
           ./target/debug/salesman queue-clear --help
           ./target/debug/salesman approve-batch --help
+
+  supply_chain:
+    name: supply-chain (cargo deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Enforces deny.toml: advisories (RustSec DB) + license allow-list +
+      # bans + source allow-list. deny's `advisories` check reads the same
+      # database as `cargo audit`, so this supersedes a standalone audit step.
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
