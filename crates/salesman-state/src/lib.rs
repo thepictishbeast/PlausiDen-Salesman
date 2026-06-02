@@ -43,6 +43,8 @@ impl State {
         Ok(Self { pool })
     }
 
+    /// The underlying Postgres connection pool, for callers that need to
+    /// run a query or transaction not covered by a typed method here.
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }

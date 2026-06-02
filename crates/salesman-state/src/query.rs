@@ -111,6 +111,7 @@ pub struct TemplateStat {
 }
 
 impl TemplateStat {
+    /// Replies per send, in [0,1] (0 when nothing has been sent).
     pub fn reply_rate(&self) -> f32 {
         if self.sent == 0 {
             0.0
@@ -118,6 +119,7 @@ impl TemplateStat {
             self.replied as f32 / self.sent as f32
         }
     }
+    /// Engaged replies per send, in [0,1] (0 when nothing has been sent).
     pub fn engaged_rate(&self) -> f32 {
         if self.sent == 0 {
             0.0
@@ -138,11 +140,14 @@ pub struct CampaignCostRow {
 }
 
 impl CampaignCostRow {
+    /// True once spend has reached/exceeded the campaign cost cap; false
+    /// when no cap is set.
     pub fn over_cap(&self) -> bool {
         self.cost_cap_micro_usd
             .map(|cap| self.spent_micro_usd >= cap)
             .unwrap_or(false)
     }
+    /// Percent of the cost cap consumed, or `None` when no positive cap is set.
     pub fn pct_used(&self) -> Option<f32> {
         self.cost_cap_micro_usd.and_then(|cap| {
             if cap <= 0 {
@@ -223,6 +228,8 @@ pub struct PipelineSummary {
 }
 
 impl PipelineSummary {
+    /// Render this pipeline summary as the human-readable text block
+    /// shown by the operator CLI.
     pub fn render_text(&self) -> String {
         format!(
             "PlausiDen-Salesman pipeline summary ({}h window)\n\
@@ -380,6 +387,8 @@ pub struct TriggerEventRow {
 }
 
 impl TriggerEventRow {
+    /// Composite ranking score (recency × relevance) used to order
+    /// trigger events for outreach prioritisation.
     pub fn rank(&self) -> f32 {
         self.recency_score * self.relevance_score
     }
@@ -1183,6 +1192,8 @@ impl State {
             .collect())
     }
 
+    /// Per-template funnel counts (drafted / sent / replied / engaged),
+    /// for A/B comparison of cold-email templates. See [`TemplateStat`].
     pub async fn template_stats(&self) -> Result<Vec<TemplateStat>> {
         let rows = sqlx::query(
             "SELECT
@@ -1741,6 +1752,9 @@ impl State {
             .collect())
     }
 
+    /// Overwrite a reply's classified [`ReplyKind`] (e.g. after re-running
+    /// the classifier). Does not itself advance the prospect's funnel — see
+    /// `apply_reply_to_prospect` for that.
     pub async fn update_reply_kind(&self, reply_id: uuid::Uuid, kind: ReplyKind) -> Result<()> {
         sqlx::query("UPDATE replies SET kind = $2 WHERE id = $1")
             .bind(reply_id)
