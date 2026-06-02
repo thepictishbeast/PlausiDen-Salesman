@@ -84,6 +84,8 @@ pub struct DraftColdEmailTool {
 }
 
 impl DraftColdEmailTool {
+    /// Build the cold-email drafting tool over the LLM `router`, signing as
+    /// `sender_name` at `sender_company` with the `sender_one_liner` pitch.
     pub fn new(
         router: Arc<LlmRouter>,
         sender_name: impl Into<String>,

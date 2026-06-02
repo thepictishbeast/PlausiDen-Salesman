@@ -38,6 +38,7 @@ pub struct ReplyClassifyTool {
 }
 
 impl ReplyClassifyTool {
+    /// Build the reply-classifier tool over the LLM `router`.
     pub fn new(router: Arc<LlmRouter>) -> Self {
         Self { router }
     }

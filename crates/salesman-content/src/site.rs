@@ -68,6 +68,7 @@ pub struct SiteConfig {
 }
 
 impl SiteConfig {
+    /// Build a site config for the given `origin` URL and `site_name`.
     pub fn new(origin: impl Into<String>, site_name: impl Into<String>) -> Self {
         let site_name = site_name.into();
         Self {

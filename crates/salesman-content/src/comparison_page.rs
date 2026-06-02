@@ -25,6 +25,8 @@ pub struct ComparisonPageTool {
 }
 
 impl ComparisonPageTool {
+    /// Build the comparison-page generator over the LLM `router`, writing
+    /// on behalf of `sender_company`.
     pub fn new(router: Arc<LlmRouter>, sender_company: impl Into<String>) -> Self {
         Self {
             router,

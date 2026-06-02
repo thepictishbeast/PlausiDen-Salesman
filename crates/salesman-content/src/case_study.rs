@@ -19,6 +19,8 @@ pub struct CaseStudyDraftTool {
 }
 
 impl CaseStudyDraftTool {
+    /// Build the case-study draft tool over the LLM `router`, writing on
+    /// behalf of `sender_company`.
     pub fn new(router: Arc<LlmRouter>, sender_company: impl Into<String>) -> Self {
         Self {
             router,

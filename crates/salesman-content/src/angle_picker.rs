@@ -53,6 +53,8 @@ pub struct AnglePickerTool {
 }
 
 impl AnglePickerTool {
+    /// Build the angle-picker tool over the LLM `router`, choosing outreach
+    /// angles on behalf of `sender_company`.
     pub fn new(router: Arc<LlmRouter>, sender_company: impl Into<String>) -> Self {
         Self {
             router,

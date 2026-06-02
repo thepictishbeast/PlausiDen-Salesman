@@ -37,6 +37,7 @@ pub struct InterestExtractTool {
 }
 
 impl InterestExtractTool {
+    /// Build the interest-extraction tool over the LLM `router`.
     pub fn new(router: Arc<LlmRouter>) -> Self {
         Self { router }
     }

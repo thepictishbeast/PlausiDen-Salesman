@@ -27,6 +27,8 @@ pub struct SeoMetaTool {
 }
 
 impl SeoMetaTool {
+    /// Build the SEO-metadata tool over the LLM `router` for the site
+    /// `site_name` at `site_origin`.
     pub fn new(
         router: Arc<LlmRouter>,
         site_name: impl Into<String>,

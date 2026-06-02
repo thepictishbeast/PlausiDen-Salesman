@@ -57,6 +57,8 @@ impl CompetitorCatalog {
     }
 }
 
+/// Parse a competitor catalog from TOML `text`. Returns the catalog, or a
+/// human-readable parse-error string on malformed input.
 pub fn load_competitors_toml(text: &str) -> Result<CompetitorCatalog, String> {
     toml::from_str(text).map_err(|e| format!("competitor catalog parse: {e}"))
 }

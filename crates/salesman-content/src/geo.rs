@@ -52,6 +52,7 @@ pub struct GeoTool {
 }
 
 impl GeoTool {
+    /// Build the GEO (generative-engine-optimization) tool over the LLM `router`.
     pub fn new(router: Arc<LlmRouter>) -> Self {
         Self { router }
     }
