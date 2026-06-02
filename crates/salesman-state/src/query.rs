@@ -1254,6 +1254,81 @@ impl State {
         Ok(out)
     }
 
+    /// Like [`Self::list_drafts_awaiting_approval`] but across ALL
+    /// campaigns. Powers the API `/drafts` operator view. Read-only.
+    pub async fn list_all_drafts_awaiting_approval(&self) -> Result<Vec<TouchSummary>> {
+        let rows = sqlx::query(
+            "SELECT t.id, t.prospect_id, t.subject, t.body, t.channel, t.queued_at,
+                    t.produced_by, c.display_name AS company
+             FROM touches t
+             JOIN prospects p ON p.id = t.prospect_id
+             JOIN companies c ON c.id = p.company_id
+             WHERE t.outcome = 'awaiting_approval'
+             ORDER BY t.queued_at",
+        )
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            out.push(TouchSummary {
+                touch_id: salesman_core::TouchId(
+                    r.try_get("id").unwrap_or_else(|_| uuid::Uuid::nil()),
+                ),
+                prospect_id: ProspectId(
+                    r.try_get("prospect_id")
+                        .unwrap_or_else(|_| uuid::Uuid::nil()),
+                ),
+                company: r.try_get("company").unwrap_or_default(),
+                channel: r.try_get("channel").unwrap_or_default(),
+                subject: r.try_get("subject").unwrap_or(None),
+                body: r.try_get("body").unwrap_or_default(),
+                queued_at: r
+                    .try_get("queued_at")
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+                produced_by: r.try_get("produced_by").ok().flatten(),
+            });
+        }
+        Ok(out)
+    }
+
+    /// List all campaigns, newest first. Powers the API `/campaigns`
+    /// operator view. Read-only.
+    pub async fn list_campaigns(&self) -> Result<Vec<Campaign>> {
+        let rows = sqlx::query(
+            "SELECT id, name, goal, target_segment, status, created_at,
+                    paused_at, paused_reason
+             FROM campaigns
+             ORDER BY created_at DESC",
+        )
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            // status is stored as a snake_case string; fall back to Draft
+            // if it is somehow unparseable rather than failing the whole list.
+            let status = r
+                .try_get::<String, _>("status")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(CampaignStatus::Draft);
+            out.push(Campaign {
+                id: CampaignId(r.try_get("id").unwrap_or_else(|_| uuid::Uuid::nil())),
+                name: r.try_get("name").unwrap_or_default(),
+                goal: r.try_get("goal").unwrap_or_default(),
+                target_segment: r.try_get("target_segment").unwrap_or_default(),
+                status,
+                created_at: r.try_get("created_at").unwrap_or_else(|_| Utc::now()),
+                paused_at: r.try_get("paused_at").unwrap_or(None),
+                paused_reason: r.try_get("paused_reason").unwrap_or(None),
+            });
+        }
+        Ok(out)
+    }
+
     // -----------------------------------------------------------------
     // touch transitions
     // -----------------------------------------------------------------

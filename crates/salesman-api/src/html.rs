@@ -45,16 +45,33 @@ fn page(title: &str, body: &str) -> String {
     out
 }
 
-pub fn drafts_index(awaiting_count: i64) -> String {
-    let body = format!(
-        r#"<h1>Drafts awaiting approval ({n})</h1>
-<p class="small">Per-draft review with body + approve/reject buttons lands in J2.b.
-For now, list-all-across-campaigns needs a state op
-(<code>list_all_drafts_awaiting_approval</code>) — pending. Use the
-CLI: <code>salesman review --campaign &lt;name&gt;</code> to see drafts.</p>
-"#,
-        n = awaiting_count,
+/// Operator view: every draft awaiting approval, across all campaigns.
+/// `rows` is (touch_id, company, subject, queued_at). Company and
+/// subject originate from scraped/LLM data, so both are HTML-escaped.
+pub fn drafts_index(
+    rows: &[(uuid::Uuid, String, Option<String>, chrono::DateTime<chrono::Utc>)],
+) -> String {
+    let mut body = format!(
+        "<h1>Drafts awaiting approval ({n})</h1>\n",
+        n = rows.len(),
     );
+    if rows.is_empty() {
+        body.push_str("<p class=\"small\">No drafts awaiting approval.</p>\n");
+    } else {
+        body.push_str(
+            "<table><thead><tr><th>queued</th><th>company</th><th>subject</th><th>touch id</th></tr></thead><tbody>\n",
+        );
+        for (id, company, subject, queued_at) in rows {
+            body.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td><code>{}</code></td></tr>\n",
+                queued_at.to_rfc3339(),
+                h(company),
+                h(subject.as_deref().unwrap_or("(no subject)")),
+                id,
+            ));
+        }
+        body.push_str("</tbody></table>\n");
+    }
     page("drafts — salesman", &body)
 }
 
@@ -243,5 +260,29 @@ mod tests {
         // Public unsubscribe pages should not be indexed.
         let r = unsubscribe_done("a@b.com");
         assert!(r.contains(r#"name="robots" content="noindex,nofollow""#));
+    }
+
+    #[test]
+    fn drafts_index_escapes_company_and_subject() {
+        let rows = vec![(
+            uuid::Uuid::nil(),
+            "<script>evil</script>".to_string(),
+            Some("Re: <b>hi</b>".to_string()),
+            chrono::DateTime::from_timestamp(0, 0).unwrap(),
+        )];
+        let r = drafts_index(&rows);
+        // Raw scraped/LLM strings must never reach the page unescaped.
+        assert!(!r.contains("<script>evil</script>"));
+        assert!(r.contains("&lt;script&gt;evil&lt;/script&gt;"));
+        assert!(r.contains("&lt;b&gt;hi&lt;/b&gt;"));
+        assert!(r.contains("Drafts awaiting approval (1)"));
+    }
+
+    #[test]
+    fn drafts_index_empty_has_no_table() {
+        let r = drafts_index(&[]);
+        assert!(r.contains("Drafts awaiting approval (0)"));
+        assert!(r.contains("No drafts awaiting approval"));
+        assert!(!r.contains("<table>"));
     }
 }

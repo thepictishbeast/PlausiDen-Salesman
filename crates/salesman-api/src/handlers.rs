@@ -49,19 +49,19 @@ pub async fn pipeline_summary_json(
 }
 
 pub async fn campaigns_json(
-    State(_app): State<Arc<AppState>>,
+    State(app): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    // Phase 1.4 placeholder — stub returns empty until we add
-    // list_campaigns to salesman-state.
-    Ok(Json(json!({"campaigns": []})))
+    let campaigns = app.state.list_campaigns().await?;
+    Ok(Json(json!({ "campaigns": campaigns })))
 }
 
 pub async fn drafts_html(State(app): State<Arc<AppState>>) -> Result<Html<String>, ApiError> {
-    // Until we have list_all_drafts_awaiting_approval (across all
-    // campaigns), iterate per-campaign would need that state op.
-    // For now we expose a minimal shell with a TODO note.
-    let summary = app.state.pipeline_summary(24).await?;
-    Ok(Html(html::drafts_index(summary.awaiting_approval)))
+    let drafts = app.state.list_all_drafts_awaiting_approval().await?;
+    let rows: Vec<(uuid::Uuid, String, Option<String>, chrono::DateTime<chrono::Utc>)> = drafts
+        .into_iter()
+        .map(|d| (d.touch_id.0, d.company, d.subject, d.queued_at))
+        .collect();
+    Ok(Html(html::drafts_index(&rows)))
 }
 
 pub async fn draft_approve(
