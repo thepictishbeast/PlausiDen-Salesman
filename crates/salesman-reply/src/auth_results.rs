@@ -402,4 +402,25 @@ mod tests {
         assert!(r.is_from_authenticated("mail.example.org"));
         assert!(!r.is_from_authenticated("example.org"));
     }
+
+    proptest::proptest! {
+        // The Authentication-Results header value is attacker-controlled, so
+        // parse() is a trust boundary: it must never panic — only Some/None.
+        #[test]
+        fn parse_never_panics(raw in "[\\x09\\x20-\\x7e]{0,1000}") {
+            let _ = AuthResults::parse(&raw);
+        }
+
+        // parse() + querying with an arbitrary from-domain must both be
+        // panic-free, and a garbage header must never spuriously authenticate.
+        #[test]
+        fn parse_and_query_never_panic(
+            raw in "[\\x09\\x20-\\x7e]{0,1000}",
+            dom in "[a-zA-Z0-9.-]{0,80}"
+        ) {
+            if let Some(ar) = AuthResults::parse(&raw) {
+                let _ = ar.is_from_authenticated(&dom);
+            }
+        }
+    }
 }

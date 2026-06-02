@@ -261,4 +261,29 @@ mod tests {
         assert_eq!(p.is_from_authenticated(""), None);
         assert_eq!(p.is_from_authenticated("   "), None);
     }
+
+    proptest::proptest! {
+        // An inbound reply is fully attacker-controlled, so from_rfc5322 is a
+        // trust boundary: it must NEVER panic — only ever return Some/None.
+        #[test]
+        fn from_rfc5322_never_panics_on_arbitrary_bytes(
+            bytes in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..4096)
+        ) {
+            let _ = ParsedReply::from_rfc5322(&bytes);
+        }
+
+        // Header-shaped fuzz: tabs/CR/LF/colons + printable ASCII exercise the
+        // header-splitting paths specifically.
+        #[test]
+        fn from_rfc5322_never_panics_on_headerish_text(
+            s in "[\\x09\\x0a\\x0d\\x20-\\x7e]{0,2000}"
+        ) {
+            if let Some(p) = ParsedReply::from_rfc5322(s.as_bytes()) {
+                // Downstream calls on a parsed-from-garbage reply must also be
+                // panic-free.
+                let _ = p.from_domain();
+                let _ = p.is_from_authenticated("plausiden.com");
+            }
+        }
+    }
 }
