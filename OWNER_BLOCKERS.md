@@ -185,6 +185,13 @@ on openclaw submits via `mail.plausiden.com:587`. Display name +
 reply-to live in the env file (samples/salesman.env.example
 template, sections 3 + 4).
 
+> ⚠️ STALE (pre-2026-05-31 rebuild): openclaw was re-provisioned; its old IP
+> `45.77.217.37` is dead (openclaw is now `207.148.30.162`). The web-01
+> sending IP `207.246.86.218` and the relay topology above are UNVERIFIED
+> after the rebuild — re-confirm the real sender on-box and re-derive
+> SPF/PTR/DMARC before any send (HANDOFF.md → "RECONCILE ON-BOX", item 2).
+> Intentionally not asserting a corrected sending IP here.
+
 ### B1 — Sieve classification on web-01  *(resolved 2026-04-27)*
 Web-01 deployed a typed Sieve `internal_source` rule (score 100)
 pinning From: @vultr.guest, @plausiden.com, @plausiden.internal,
