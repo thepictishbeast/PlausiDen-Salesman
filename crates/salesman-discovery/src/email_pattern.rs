@@ -32,6 +32,7 @@ pub struct GuessedEmail {
 pub struct EmailPatternGuesser;
 
 impl EmailPatternGuesser {
+    /// Build an email-pattern guesser.
     pub fn new() -> Self {
         Self
     }
@@ -82,6 +83,7 @@ pub struct EmailPatternTool {
 }
 
 impl EmailPatternTool {
+    /// Build the email-pattern-guessing discovery [`Tool`].
     pub fn new() -> Self {
         Self::default()
     }

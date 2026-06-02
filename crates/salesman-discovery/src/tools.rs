@@ -22,6 +22,7 @@ impl Default for CsvSeedTool {
 }
 
 impl CsvSeedTool {
+    /// Build the CSV-seed discovery [`Tool`].
     pub fn new() -> Self {
         Self {
             seed: CsvSeed::new(),
@@ -75,6 +76,7 @@ impl Default for HomepageFetchTool {
 }
 
 impl HomepageFetchTool {
+    /// Build the homepage-fetch discovery [`Tool`].
     pub fn new() -> Self {
         Self {
             fetcher: Arc::new(HomepageFetcher::new()),

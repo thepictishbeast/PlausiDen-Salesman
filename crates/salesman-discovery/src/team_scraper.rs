@@ -99,6 +99,8 @@ impl Default for TeamScraper {
 }
 
 impl TeamScraper {
+    /// Build a team-page scraper with the crate's default HTTP client
+    /// (custom UA, timeout, limited redirects).
     pub fn new() -> Self {
         // SAFETY: rustls + UA + timeout + redirect = build() infallible.
         let http = reqwest::Client::builder()

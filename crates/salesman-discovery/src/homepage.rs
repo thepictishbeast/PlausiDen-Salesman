@@ -33,6 +33,8 @@ impl Default for HomepageFetcher {
 }
 
 impl HomepageFetcher {
+    /// Build a homepage fetcher with the crate's default HTTP client
+    /// (custom UA, timeout, limited redirects).
     pub fn new() -> Self {
         // SAFETY: rustls-tls + UA + timeout + a known-good redirect
         // policy — none of these inputs can drive Client::build()
@@ -46,6 +48,8 @@ impl HomepageFetcher {
         Self { http }
     }
 
+    /// Fetch `url` and extract [`HomepageFacts`] (title, tech signals,
+    /// etc.). Errors on network failure or an unparseable response.
     pub async fn fetch(&self, url: &Url) -> Result<HomepageFacts> {
         let resp = self
             .http

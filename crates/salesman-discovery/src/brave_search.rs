@@ -42,6 +42,7 @@ pub struct BraveSearch {
 }
 
 impl BraveSearch {
+    /// Build a Brave Search client with the given API key.
     pub fn new(api_key: impl Into<String>) -> Self {
         Self {
             api_key: Zeroizing::new(api_key.into()),
@@ -54,6 +55,8 @@ impl BraveSearch {
         }
     }
 
+    /// Build a Brave Search client, reading the key from
+    /// `BRAVE_SEARCH_API_KEY` (errors if unset).
     pub fn from_env() -> Result<Self> {
         let key = std::env::var("BRAVE_SEARCH_API_KEY")
             .map_err(|_| Error::Config("BRAVE_SEARCH_API_KEY not set".into()))?;
@@ -124,6 +127,7 @@ pub struct BraveSearchTool {
 }
 
 impl BraveSearchTool {
+    /// Wrap a shared [`BraveSearch`] client as a discovery [`Tool`].
     pub fn new(inner: std::sync::Arc<BraveSearch>) -> Self {
         Self { inner }
     }

@@ -23,6 +23,7 @@ struct Row {
 pub struct CsvSeed;
 
 impl CsvSeed {
+    /// Build a CSV-seed loader.
     pub fn new() -> Self {
         Self
     }
