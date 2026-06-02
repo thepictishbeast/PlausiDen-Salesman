@@ -1776,18 +1776,10 @@ impl State {
             .await
             .map_err(|e| Error::Db(e.to_string()))?;
 
-        // Map ReplyKind → FunnelState transition.
-        let new_state: Option<&str> = match kind {
-            ReplyKind::Engaged | ReplyKind::Question => Some("engaged"),
-            // LegalThreat is treated as a stricter form of Optout —
-            // sender is suppressed, prospect is dropped from active
-            // outreach. The drafter refuses to respond; the operator
-            // handles legally-charged replies personally.
-            ReplyKind::Optout | ReplyKind::LegalThreat => Some("suppressed"),
-            ReplyKind::Bounce => Some("lost"),
-            // Objection / OOO / Spam / Unclassified — leave funnel state.
-            _ => None,
-        };
+        // Map ReplyKind → FunnelState transition. The policy lives in
+        // salesman-core (ReplyKind::funnel_state_label) so it is unit-tested
+        // independently of the DB — see salesman-core reply_kind_props.rs.
+        let new_state: Option<&str> = kind.funnel_state_label();
         if let Some(target) = new_state {
             sqlx::query(
                 "UPDATE prospects SET state = $2, state_changed_at = NOW(), \
@@ -1807,7 +1799,7 @@ impl State {
         // tag so audit + alerts can distinguish a benign opt-out
         // from a legally-charged inbound that needs operator
         // attention RIGHT NOW.
-        if matches!(kind, ReplyKind::Optout | ReplyKind::LegalThreat) {
+        if kind.is_suppression_trigger() {
             let (reason_text, source_tag) = match kind {
                 ReplyKind::LegalThreat => (
                     "reply contained legal threat (cease-and-desist / attorney / regulator)",

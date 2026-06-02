@@ -251,3 +251,34 @@ pub enum ReplyKind {
     /// downgrade a legal threat to a benign objection.
     LegalThreat,
 }
+
+impl ReplyKind {
+    /// The `prospects.state` funnel label a classified reply drives the
+    /// prospect to, or `None` if this kind does not itself move the funnel
+    /// (Objection / OutOfOffice / Spam / Unclassified are left as-is for
+    /// operator judgement). The strings are the canonical `FunnelState`
+    /// wire labels written to the DB.
+    ///
+    /// Compliance-critical: `Optout` and `LegalThreat` MUST map to
+    /// `"suppressed"`. The match is exhaustive on purpose — a new
+    /// `ReplyKind` variant should force an explicit routing decision here
+    /// rather than silently fall through to "no transition".
+    pub fn funnel_state_label(self) -> Option<&'static str> {
+        match self {
+            ReplyKind::Engaged | ReplyKind::Question => Some("engaged"),
+            ReplyKind::Optout | ReplyKind::LegalThreat => Some("suppressed"),
+            ReplyKind::Bounce => Some("lost"),
+            ReplyKind::Objection
+            | ReplyKind::OutOfOffice
+            | ReplyKind::Spam
+            | ReplyKind::Unclassified => None,
+        }
+    }
+
+    /// `true` iff this reply kind MUST suppress the prospect — an opt-out
+    /// or a legal threat. This is the consent / legal gate; never narrow
+    /// it. Both kinds also add the sender to the global suppression list.
+    pub fn is_suppression_trigger(self) -> bool {
+        matches!(self, ReplyKind::Optout | ReplyKind::LegalThreat)
+    }
+}
