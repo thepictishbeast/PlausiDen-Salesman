@@ -13,10 +13,8 @@ yanked = "deny"
 # Documented risk-acceptances. Each is transitive and UNMAINTAINED-ONLY (a
 # warning, not a vulnerability). Revisit when the upstream chain moves on.
 ignore = [
-  # async-std discontinued (RUSTSEC-2025-0052). Pulled only via async-imap
-  # (salesman-reply). No maintained drop-in; revisit when async-imap moves
-  # off async-std.
-  "RUSTSEC-2025-0052",
+  # (RUSTSEC-2025-0052 / async-std removed 2026-06-02 — salesman-reply now
+  #  builds async-imap with runtime-tokio, so async-std is no longer pulled.)
   # fxhash unmaintained (RUSTSEC-2025-0057). Pulled only via scraper->selectors
   # (salesman-discovery); used as a non-cryptographic hasher. Revisit on a
   # scraper bump.
