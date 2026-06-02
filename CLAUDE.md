@@ -5,6 +5,7 @@ Get PlausiDen more clients. AI-driven market intelligence + cold sales
 automation. Ship the smallest useful slice fast, layer defenses over time.
 
 ## Read first
+0. `HANDOFF.md` — **current runtime + where we left off (READ THIS FIRST)**
 1. `SCOPE.md` — current strawman + owner decision points
 2. `ARCHITECTURE.md` — planned shape (stub until phase 0.1 locks)
 3. PlausiDen-Meta operating principles
@@ -18,7 +19,7 @@ automation. Ship the smallest useful slice fast, layer defenses over time.
 - LFI (PlausiDen-AI) for personalization — never SaaS LLM in the data path
 
 ## Compute split
-- **VPS (45.77.217.37, Ubuntu 24.04)**: orchestrator + workers + Postgres + Redis. Cohabits with existing OpenClaw service.
+- **VPS (207.148.30.162, Debian 13 trixie)**: orchestrator + workers + Postgres + Redis. Re-provisioned 2026-05-31 — the old `45.77.217.37` is DEAD (see `HANDOFF.md`). Cohabits with the OpenClaw service.
 - **Laptop**: dev environment + self-hosted CI runner.
 
 ## Hard rules
