@@ -23,7 +23,7 @@ description = "First-touch outreach. Establish who, why, low-friction CTA."
 segment     = "any"
 delay_days  = 0
 
-subject_seed = "Quick question on {{prospect_industry}} workflow"
+subject_seed = "On your {{prospect_industry}} workflow"
 
 body_seed = """
 {{prospect_specific_observation_one_sentence}}

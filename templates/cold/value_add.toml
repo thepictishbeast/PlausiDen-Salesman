@@ -24,9 +24,15 @@ How {{our_product}} would have helped (and where it wouldn't have):
 No ask. Just figured you'd want to see this.
 
 — {{sender_name}}
+
+Reply STOP and I won't follow up.
 """
 
-mandatory_phrases = []
+# Even a no-ask touch is a commercial message: it carries a working
+# opt-out (CLAUDE.md + CAN-SPAM). Enforced by tests/template_voice.rs.
+mandatory_phrases = [
+  "Reply STOP and I won't follow up.",
+]
 
 forbidden_phrases = [
   "how can we help",
