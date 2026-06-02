@@ -25,6 +25,8 @@ pub struct ImapPoller {
 }
 
 impl ImapPoller {
+    /// Build a poller bound to `config`. The TLS connection is opened
+    /// lazily per [`Self::poll_once`], not here.
     pub fn new(config: ImapConfig) -> Self {
         Self { config }
     }

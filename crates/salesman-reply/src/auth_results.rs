@@ -68,6 +68,8 @@ impl AuthResult {
         }
     }
 
+    /// True only for an explicit `pass` result — never for
+    /// none / fail / softfail / temperror / permerror / other.
     pub fn is_pass(self) -> bool {
         matches!(self, Self::Pass)
     }

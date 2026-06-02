@@ -11,6 +11,9 @@ pub struct ImapConfig {
 }
 
 impl ImapConfig {
+    /// Build an [`ImapConfig`] from the `SALESMAN_IMAP_*` environment
+    /// variables. Errors if a required var is missing or the port is not
+    /// a valid `u16`.
     pub fn from_env() -> Result<Self> {
         let env = |k: &str| std::env::var(k).map_err(|_| Error::Config(format!("env {k} not set")));
         let port: u16 = env("SALESMAN_IMAP_PORT")?
