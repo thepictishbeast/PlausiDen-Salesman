@@ -15,10 +15,8 @@ yanked = "deny"
 ignore = [
   # (RUSTSEC-2025-0052 / async-std removed 2026-06-02 — salesman-reply now
   #  builds async-imap with runtime-tokio, so async-std is no longer pulled.)
-  # fxhash unmaintained (RUSTSEC-2025-0057). Pulled only via scraper->selectors
-  # (salesman-discovery); used as a non-cryptographic hasher. Revisit on a
-  # scraper bump.
-  "RUSTSEC-2025-0057",
+  # (RUSTSEC-2025-0057 / fxhash removed 2026-06-02 — scraper bumped to 0.27,
+  #  whose selectors 0.38 uses foldhash instead of fxhash.)
   #
   # NOT ignored here, by design: RUSTSEC-2023-0071 (rsa / Marvin timing attack,
   # medium). It is a real vulnerability with no fixed upstream version, so it
