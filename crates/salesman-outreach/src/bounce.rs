@@ -119,6 +119,9 @@ const PERMANENT_NON_RECIPIENT_PREFIXES: &[&str] = &[
     "5.7.26", // multiple auth checks failed (Gmail)
 ];
 
+/// Classify an SMTP error / DSN string into an [`SmtpFailure`] from its
+/// enhanced status code (e.g. `5.1.1` hard bounce vs a `4.x` transient
+/// failure) plus message text, so the caller can decide suppress-vs-retry.
 pub fn classify(error_text: &str) -> SmtpFailure {
     let basic = find_basic_code(error_text);
     let enhanced = find_enhanced_code(error_text);

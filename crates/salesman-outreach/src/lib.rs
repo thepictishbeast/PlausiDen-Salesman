@@ -59,6 +59,11 @@ pub struct SmtpConfig {
 }
 
 impl SmtpConfig {
+    /// Build an [`SmtpConfig`] from the `SALESMAN_SMTP_*` env vars. The
+    /// RFC 8058 unsubscribe minter is best-effort: if its env vars are
+    /// missing, sends fall back to a static List-Unsubscribe and
+    /// `salesman doctor` flags it as a deliverability warning rather than
+    /// erroring here.
     pub fn from_env() -> Result<Self> {
         let env = |k: &str| std::env::var(k).map_err(|_| Error::Config(format!("env {k} not set")));
         // The minter is best-effort: if either env var is missing we
@@ -123,6 +128,10 @@ pub struct SmtpSender {
 }
 
 impl SmtpSender {
+    /// Build a STARTTLS SMTP sender from `config`. SASL AUTH is added
+    /// only when credentials are configured; a cluster-internal relay
+    /// (IP-trusted via `mynetworks`) sends without AUTH. Errors if the
+    /// transport cannot be constructed.
     pub fn new(config: SmtpConfig) -> Result<Self> {
         // Build the transport once. AUTH is added only when the
         // operator configured SASL credentials. Cluster-internal
@@ -140,6 +149,7 @@ impl SmtpSender {
         Ok(Self { config, transport })
     }
 
+    /// The configured envelope / From address used for outbound mail.
     pub fn from_email(&self) -> &str {
         &self.config.from_email
     }

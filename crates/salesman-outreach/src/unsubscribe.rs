@@ -79,6 +79,8 @@ impl UnsubscribeTokens {
         Self::new(secret, base_url)
     }
 
+    /// The public base URL one-click unsubscribe links are minted
+    /// against (e.g. `https://outreach.plausiden.com/unsubscribe`).
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
