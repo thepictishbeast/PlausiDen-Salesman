@@ -33,6 +33,7 @@ impl Default for WaybackClient {
 }
 
 impl WaybackClient {
+    /// Build a Wayback Machine (web.archive.org) client.
     pub fn new() -> Self {
         Self {
             // SAFETY: reqwest::Client::builder().build() only fails on
@@ -92,6 +93,7 @@ pub struct WaybackTool {
 }
 
 impl WaybackTool {
+    /// Wrap a shared [`WaybackClient`] as an OSINT [`Tool`].
     pub fn new(inner: std::sync::Arc<WaybackClient>) -> Self {
         Self { inner }
     }

@@ -34,6 +34,7 @@ impl Default for WikipediaClient {
 }
 
 impl WikipediaClient {
+    /// Build a Wikipedia REST API client.
     pub fn new() -> Self {
         Self {
             // SAFETY: rustls-tls + UA + timeout — known-good combo;
@@ -46,6 +47,8 @@ impl WikipediaClient {
         }
     }
 
+    /// Fetch the Wikipedia REST summary for `title`, or `None` if there
+    /// is no matching page.
     pub async fn summary(&self, title: &str) -> Result<Option<WikipediaSummary>> {
         let url = format!("{SUMMARY_BASE}{}", urlencode_path(title));
         let resp = self.http.get(&url).send().await.map_err(|e| Error::Tool {
@@ -84,6 +87,7 @@ pub struct WikipediaTool {
 }
 
 impl WikipediaTool {
+    /// Wrap a shared [`WikipediaClient`] as an OSINT [`Tool`].
     pub fn new(inner: std::sync::Arc<WikipediaClient>) -> Self {
         Self { inner }
     }

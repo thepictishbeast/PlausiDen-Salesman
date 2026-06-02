@@ -50,6 +50,8 @@ impl Default for GithubOrgClient {
 }
 
 impl GithubOrgClient {
+    /// Build a GitHub org client. A `token` raises the API rate limit;
+    /// `None` uses unauthenticated requests.
     pub fn new(token: Option<String>) -> Self {
         Self {
             // SAFETY: rustls-tls + single timeout setter; reqwest's
@@ -77,6 +79,7 @@ impl GithubOrgClient {
         req
     }
 
+    /// Fetch the [`GithubOrg`] profile for the org `slug`.
     pub async fn org(&self, slug: &str) -> Result<GithubOrg> {
         let resp = self
             .req(&format!("/orgs/{slug}"))
@@ -98,6 +101,7 @@ impl GithubOrgClient {
         })
     }
 
+    /// Fetch up to `limit` of org `slug`'s most-starred public repos.
     pub async fn top_repos(&self, slug: &str, limit: u32) -> Result<Vec<GithubRepo>> {
         let resp = self
             .req(&format!(
@@ -128,6 +132,7 @@ pub struct GithubOrgTool {
 }
 
 impl GithubOrgTool {
+    /// Wrap a shared [`GithubOrgClient`] as an OSINT [`Tool`].
     pub fn new(inner: std::sync::Arc<GithubOrgClient>) -> Self {
         Self { inner }
     }
