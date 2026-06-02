@@ -43,11 +43,22 @@ impl ColdTemplate {
     /// `<dir>/<key>.toml`. Returns `None` if file is missing; bubbles
     /// errors only on parse failure.
     pub fn load(templates_dir: &std::path::Path, key: &str) -> Result<Option<Self>> {
+        // Template keys are simple identifiers, never paths. Reject anything
+        // that could escape `templates_dir` BEFORE touching the filesystem —
+        // defense-in-depth against CWE-22 path traversal (an absolute key or
+        // one containing `..` would otherwise read outside the templates dir).
+        if key.is_empty() || key.contains('/') || key.contains('\\') || key.contains("..") {
+            return Err(Error::Validation(format!(
+                "invalid template key `{key}`: must not be empty or contain `/`, `\\`, or `..`"
+            )));
+        }
         let path = templates_dir.join(format!("{key}.toml"));
         if !path.exists() {
             return Ok(None);
         }
-        let text = std::fs::read_to_string(&path).map_err(Error::Io)?;
+        // `key` is validated above to be a bare identifier (no `/`, `\`, or
+        // `..`), so `path` cannot escape `templates_dir`.
+        let text = std::fs::read_to_string(&path).map_err(Error::Io)?; // nosemgrep
         let parsed: ColdTemplate = toml::from_str(&text)
             .map_err(|e| Error::Validation(format!("template `{key}` parse: {e}")))?;
         Ok(Some(parsed))
@@ -418,6 +429,24 @@ fn truncate(s: &str, n: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn load_rejects_path_traversal_keys() {
+        // The CWE-22 guard must reject path-ish keys BEFORE any filesystem
+        // access (so this is a pure, disk-free test).
+        let dir = std::path::Path::new("/tmp/salesman-templates-does-not-exist");
+        for bad in ["../secrets", "a/b", "..", "x\\y", "/etc/passwd", ""] {
+            assert!(
+                ColdTemplate::load(dir, bad).is_err(),
+                "template key {bad:?} must be rejected by the traversal guard"
+            );
+        }
+        // A normal key against a missing dir is Ok(None), not an error.
+        assert!(matches!(
+            ColdTemplate::load(dir, "security_pivot"),
+            Ok(None)
+        ));
+    }
 
     #[test]
     fn parses_clean_json() {
