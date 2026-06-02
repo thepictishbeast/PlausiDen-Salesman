@@ -64,6 +64,9 @@ pub struct LlmRouter {
 }
 
 impl LlmRouter {
+    /// Build an empty router with the default per-route backend choices
+    /// (Claude for reasoning/deep-reasoning, Gemini for bulk/grounded,
+    /// LFI for sovereign). Register backends before routing.
     pub fn new() -> Self {
         Self {
             backends: HashMap::new(),
@@ -77,6 +80,7 @@ impl LlmRouter {
         }
     }
 
+    /// Register a backend under its `kind()`, replacing any existing one.
     pub fn register(&mut self, backend: Arc<dyn LlmBackend>) {
         self.backends.insert(backend.kind(), backend);
     }
@@ -122,6 +126,7 @@ impl LlmRouter {
         self
     }
 
+    /// The operator brand/voice brief injected into prompts, if configured.
     pub fn operator_brief(&self) -> Option<&str> {
         self.operator_brief.as_deref()
     }
@@ -185,6 +190,7 @@ impl LlmRouter {
         self.chat_for(hint, "unspecified", req).await
     }
 
+    /// The backend kinds currently registered (unordered).
     pub fn registered_kinds(&self) -> Vec<BackendKind> {
         self.backends.keys().copied().collect()
     }

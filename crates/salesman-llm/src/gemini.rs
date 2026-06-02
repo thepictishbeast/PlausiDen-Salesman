@@ -38,6 +38,7 @@ pub struct GeminiBackend {
 }
 
 impl GeminiBackend {
+    /// Build a Gemini backend for `model` with an explicit API key.
     pub fn new(model: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
             model: model.into(),
@@ -51,6 +52,8 @@ impl GeminiBackend {
         }
     }
 
+    /// Build a Gemini backend, reading the key from `GEMINI_API_KEY`
+    /// (errors if unset).
     pub fn from_env(model: &str) -> Result<Self> {
         let key = std::env::var("GEMINI_API_KEY")
             .map_err(|_| Error::Config("GEMINI_API_KEY not set".into()))?;

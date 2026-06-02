@@ -40,6 +40,7 @@ pub struct ClaudeBackend {
 }
 
 impl ClaudeBackend {
+    /// Build a Claude backend for `model` with an explicit API key.
     pub fn new(model: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
             model: model.into(),
@@ -55,6 +56,8 @@ impl ClaudeBackend {
         }
     }
 
+    /// Build a Claude backend, reading the key from `ANTHROPIC_API_KEY`
+    /// (errors if unset).
     pub fn from_env(model: &str) -> Result<Self> {
         let key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| Error::Config("ANTHROPIC_API_KEY not set".into()))?;

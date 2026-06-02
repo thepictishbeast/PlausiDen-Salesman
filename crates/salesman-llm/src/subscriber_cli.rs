@@ -59,6 +59,9 @@ pub struct SubscriberCliBackend {
 }
 
 impl SubscriberCliBackend {
+    /// Build a backend that shells out to a subscriber CLI (`binary` +
+    /// `extra_args`) for the given `kind`/`model`, bounded by `timeout`
+    /// per call.
     pub fn new(
         kind: BackendKind,
         model: impl Into<String>,
