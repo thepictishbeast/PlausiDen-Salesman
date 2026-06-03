@@ -7,9 +7,13 @@ use uuid::Uuid;
 
 macro_rules! id_type {
     ($name:ident) => {
+        #[doc = concat!("Strongly-typed `", stringify!($name), "` (a UUIDv7 newtype).")]
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
         #[serde(transparent)]
-        pub struct $name(pub Uuid);
+        pub struct $name(
+            /// The underlying time-ordered UUID.
+            pub Uuid,
+        );
 
         impl $name {
             /// Generate a fresh, time-ordered id (UUIDv7).

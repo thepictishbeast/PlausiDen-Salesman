@@ -4,6 +4,7 @@
 //! free of heavy dependencies.
 #![forbid(unsafe_code)]
 #![deny(missing_debug_implementations)]
+#![deny(missing_docs)]
 
 pub mod email_match;
 pub mod error;
