@@ -24,6 +24,7 @@ pub mod csv_seed;
 pub mod email_pattern;
 pub mod homepage;
 pub mod import_root;
+pub mod locality;
 pub mod team_scraper;
 pub mod tools;
 
