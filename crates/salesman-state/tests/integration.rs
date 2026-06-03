@@ -126,22 +126,13 @@ async fn full_round_trip() {
         .expect("mark_sent");
     assert_eq!(n, 1);
 
-    // 6b) owner audit-notification: queue, list-pending, mark-delivered
+    // 6b) the owner audit-notification is AUTO-enqueued from the sent
+    // touch (production path), then list-pending + mark-delivered.
     let notif_id = state
-        .insert_owner_notification(&salesman_state::query::OwnerNotificationInsert {
-            touch_id: Some(touch_id),
-            prospect_id: pid,
-            prospect_label: "Acme",
-            to_address: "acme-test@acme.example",
-            channel: "email",
-            sent_at: Utc::now(),
-            subject: Some("hi"),
-            body: "test body",
-            receipt_id: Some(receipt_id),
-            campaign: Some(&campaign_name),
-        })
+        .enqueue_owner_notification_for_touch(touch_id)
         .await
-        .expect("insert_owner_notification");
+        .expect("enqueue_owner_notification_for_touch")
+        .expect("a sent touch must enqueue an owner notification");
     let pending = state
         .list_pending_owner_notifications(50)
         .await
@@ -150,8 +141,10 @@ async fn full_round_trip() {
         .iter()
         .find(|r| r.id == notif_id)
         .expect("queued notification present in pending list");
+    // No contact/primary set in this test → label falls back to the
+    // company display name; recipient address is empty.
     assert_eq!(mine.prospect_label, "Acme");
-    assert_eq!(mine.to_address, "acme-test@acme.example");
+    assert_eq!(mine.subject.as_deref(), Some("hi"));
     assert!(mine.delivered_at.is_none());
     let marked = state
         .mark_owner_notification_delivered(notif_id, Utc::now())

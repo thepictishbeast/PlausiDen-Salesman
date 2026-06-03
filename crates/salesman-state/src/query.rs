@@ -1696,6 +1696,46 @@ impl State {
         Ok(result.rows_affected())
     }
 
+    /// Queue an owner audit-notification for a sent touch (call right
+    /// after [`Self::mark_touch_sent`]). Populates the row by joining the
+    /// touch to its prospect, company, contact, and campaign: the label
+    /// prefers the contact name, falling back to the company name; the
+    /// recipient address is the prospect's primary contact email (or `""`).
+    /// Returns the new row id, or `None` if `touch_id` is unknown.
+    ///
+    /// This only WRITES the pending audit row — actual delivery of the
+    /// notification email to the operator is gated behind the send path.
+    pub async fn enqueue_owner_notification_for_touch(
+        &self,
+        touch_id: TouchId,
+    ) -> Result<Option<uuid::Uuid>> {
+        let id = uuid::Uuid::now_v7();
+        let res = sqlx::query(
+            "INSERT INTO owner_notifications
+               (id, touch_id, prospect_id, prospect_label, to_address, channel,
+                sent_at, subject, body, receipt_id, campaign)
+             SELECT $1, t.id, t.prospect_id,
+                    COALESCE(ct.name, c.display_name),
+                    COALESCE(ct.email, ''),
+                    t.channel,
+                    COALESCE(t.sent_at, NOW()),
+                    t.subject, t.body, t.receipt_id,
+                    cmp.name
+             FROM touches t
+             JOIN prospects p   ON p.id = t.prospect_id
+             JOIN companies c   ON c.id = p.company_id
+             JOIN campaigns cmp ON cmp.id = p.campaign_id
+             LEFT JOIN contacts ct ON ct.id = p.primary_contact_id
+             WHERE t.id = $2",
+        )
+        .bind(id)
+        .bind(touch_id.0)
+        .execute(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok((res.rows_affected() > 0).then_some(id))
+    }
+
     /// List touches in `approved` state for a campaign — these are
     /// the work queue for `send-pending`.
     pub async fn list_approved_touches(

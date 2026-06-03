@@ -2942,6 +2942,13 @@ async fn main() -> Result<()> {
                     .await?;
                 if n == 1 {
                     sent += 1;
+                    // Queue the owner audit-notification (who/how/what was
+                    // sent) so the operator has a durable record. Best-effort:
+                    // the send already happened, so an enqueue failure must
+                    // not fail the run — just warn.
+                    if let Err(e) = state.enqueue_owner_notification_for_touch(t.touch_id).await {
+                        tracing::warn!(touch = %t.touch_id, error = %e, "owner-notification enqueue failed");
+                    }
                     let pb_tag = match (t.via_fallback(), t.produced_by_short()) {
                         (true, Some(s)) => format!(" produced_by={s} (FALLBACK)"),
                         (false, Some(s)) => format!(" produced_by={s}"),
