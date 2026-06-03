@@ -2816,7 +2816,7 @@ async fn main() -> Result<()> {
                 };
                 if state.is_suppressed(&to).await? {
                     blocked_supp += 1;
-                    tracing::warn!(to=%to, "suppressed — skipping");
+                    tracing::warn!(to = %salesman_core::mask_email(&to), "suppressed — skipping");
                     continue;
                 }
                 let n_recipient = state
@@ -2824,7 +2824,7 @@ async fn main() -> Result<()> {
                     .await?;
                 if n_recipient >= per_recipient_max {
                     blocked_rate += 1;
-                    tracing::warn!(to=%to, n=%n_recipient, "per-recipient cap hit — skipping");
+                    tracing::warn!(to = %salesman_core::mask_email(&to), n = %n_recipient, "per-recipient cap hit — skipping");
                     continue;
                 }
                 let domain = to
@@ -3044,7 +3044,7 @@ async fn main() -> Result<()> {
                                 .await
                             {
                                 Ok(Some(id)) => {
-                                    tracing::info!(reply_id = %id, from = %reply.from_address, "persisted");
+                                    tracing::info!(reply_id = %id, from = %salesman_core::mask_email(&reply.from_address), "persisted");
                                 }
                                 Ok(None) => {} // already warned
                                 Err(e) => {

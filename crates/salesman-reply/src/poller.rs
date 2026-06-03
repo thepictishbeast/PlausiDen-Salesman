@@ -93,7 +93,7 @@ impl ImapPoller {
                         continue;
                     }
                 };
-                debug!(uid, from = %parsed.from_address, "handing to callback");
+                debug!(uid, from = %salesman_core::mask_email(&parsed.from_address), "handing to callback");
                 on_reply(parsed).await?;
                 // mark \Seen
                 let _ = session

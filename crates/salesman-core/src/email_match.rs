@@ -98,9 +98,47 @@ pub fn email_match_candidates(email: &str) -> Vec<String> {
     out
 }
 
+/// Mask an email address for safe logging: keep the domain and the first
+/// character of the local-part, star out the rest — `"jane.doe@acme.com"`
+/// → `"j***@acme.com"`. An input with no `@` is masked to its first char
+/// (`"j***"`); empty/whitespace returns `""`.
+///
+/// SECURITY: prospect email addresses are PII. Logs get shipped,
+/// persisted, and aggregated, so never log a raw address (CLAUDE.md: no
+/// secrets in logs). The masked form keeps the domain visible for
+/// debugging without exposing the mailbox.
+pub fn mask_email(email: &str) -> String {
+    let e = email.trim();
+    if e.is_empty() {
+        return String::new();
+    }
+    match e.split_once('@') {
+        Some((local, domain)) => {
+            let first = local.chars().next().unwrap_or('*');
+            format!("{first}***@{domain}")
+        }
+        None => {
+            let first = e.chars().next().unwrap_or('*');
+            format!("{first}***")
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mask_email_keeps_domain_hides_mailbox() {
+        assert_eq!(mask_email("jane.doe@acme.com"), "j***@acme.com");
+        assert_eq!(mask_email("a@x.io"), "a***@x.io");
+        // No '@' (e.g. a malformed address) is still masked.
+        assert_eq!(mask_email("notanemail"), "n***");
+        assert_eq!(mask_email(""), "");
+        assert_eq!(mask_email("   "), "");
+        // The full local-part never survives.
+        assert!(!mask_email("secret.mailbox@corp.example").contains("secret.mailbox"));
+    }
 
     #[test]
     fn normalize_lowercases() {
