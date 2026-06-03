@@ -16,8 +16,10 @@
 #![deny(missing_docs)]
 
 pub mod bounce;
+pub mod owner_notify;
 pub mod unsubscribe;
 pub use bounce::{SmtpFailure, classify as classify_smtp_failure};
+pub use owner_notify::{OwnerNotification, OwnerNotifyInput, build_owner_notification};
 pub use unsubscribe::UnsubscribeTokens;
 
 use lettre::message::header::{Header, HeaderName, HeaderValue};
