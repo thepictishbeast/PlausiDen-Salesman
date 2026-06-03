@@ -292,3 +292,158 @@ async fn suppression_broadening_round_trip() {
         .await
         .ok();
 }
+
+/// The consent/legal gate end-to-end: applying a classified Optout (and
+/// LegalThreat) reply must transition the prospect to `suppressed`,
+/// suppress the sender (canonicalized) with the correct source tag, and
+/// mark the prospect's in-flight touches `suppressed` — all in one tx.
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing at a writable Postgres"]
+async fn apply_reply_to_prospect_round_trip() {
+    let url = std::env::var("TEST_DATABASE_URL")
+        .expect("set TEST_DATABASE_URL to a writable postgres URL");
+    let state = State::connect(&url).await.expect("connect");
+
+    let n = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let campaign_name = format!("salesman-replytest-{n}");
+
+    // Setup: company -> campaign -> prospect -> an awaiting-approval touch.
+    let company = Company {
+        id: CompanyId::new(),
+        legal_name: None,
+        display_name: format!("ReplyTest {n}"),
+        homepage: None,
+        industry: None,
+        size_band: None,
+        region: None,
+        description: None,
+        tech_signals: vec![],
+        discovered_at: Utc::now(),
+        last_enriched_at: None,
+        source: DiscoverySource::OwnerSeed,
+        raw: BTreeMap::new(),
+    };
+    state
+        .insert_companies(std::slice::from_ref(&company))
+        .await
+        .expect("insert company");
+    let cid = state
+        .ensure_campaign(&campaign_name, "test", "test")
+        .await
+        .expect("ensure_campaign");
+    state
+        .upsert_prospects_for_campaign(cid, &[company.id])
+        .await
+        .expect("upsert");
+    let pid = state
+        .list_prospects_with_facts_for_campaign(cid)
+        .await
+        .expect("list")[0]
+        .prospect_id;
+    let touch_id = state
+        .insert_touch_draft(pid, TouchChannel::Email, Some("hi"), "body")
+        .await
+        .expect("insert_touch_draft");
+
+    let pool = state.pool();
+
+    // --- Optout reply ---
+    let base = format!("optout{n}");
+    let from = format!("{base}+promo@Gmail.com");
+    let canonical = format!("{base}@gmail.com");
+    let optout_reply = uuid::Uuid::now_v7();
+    sqlx::query("INSERT INTO replies (id, prospect_id, from_address, body) VALUES ($1,$2,$3,$4)")
+        .bind(optout_reply)
+        .bind(pid.0)
+        .bind(&from)
+        .bind("please remove me")
+        .execute(pool)
+        .await
+        .expect("insert optout reply");
+    state
+        .apply_reply_to_prospect(optout_reply, pid, &from, ReplyKind::Optout)
+        .await
+        .expect("apply optout");
+
+    // prospect transitioned to suppressed
+    let pstate: String = sqlx::query_scalar("SELECT state FROM prospects WHERE id = $1")
+        .bind(pid.0)
+        .fetch_one(pool)
+        .await
+        .expect("prospect state");
+    assert_eq!(pstate, "suppressed", "optout must move prospect to suppressed");
+    // in-flight touch suppressed
+    let outcome: String = sqlx::query_scalar("SELECT outcome FROM touches WHERE id = $1")
+        .bind(touch_id.0)
+        .fetch_one(pool)
+        .await
+        .expect("touch outcome");
+    assert_eq!(outcome, "suppressed", "in-flight touch must be suppressed");
+    // reply.kind persisted
+    let rkind: String = sqlx::query_scalar("SELECT kind FROM replies WHERE id = $1")
+        .bind(optout_reply)
+        .fetch_one(pool)
+        .await
+        .expect("reply kind");
+    assert_eq!(rkind, "optout");
+    // sender suppressed by canonical form + a dotted/googlemail variant
+    assert!(state.is_suppressed(&canonical).await.unwrap());
+    let dotted = format!("{}.{}@googlemail.com", &base[..1], &base[1..]);
+    assert!(state.is_suppressed(&dotted).await.unwrap());
+    // source tag is the benign opt-out tag
+    let optout_supps = state
+        .list_suppressions(Some("reply_optout"), 200)
+        .await
+        .expect("list reply_optout");
+    assert!(
+        optout_supps.iter().any(|s| s.target == canonical),
+        "opt-out suppression must carry source=reply_optout"
+    );
+
+    // --- LegalThreat reply (distinct source tag) ---
+    let legal_from = format!("legal{n}@example.com");
+    let legal_reply = uuid::Uuid::now_v7();
+    sqlx::query("INSERT INTO replies (id, prospect_id, from_address, body) VALUES ($1,$2,$3,$4)")
+        .bind(legal_reply)
+        .bind(pid.0)
+        .bind(&legal_from)
+        .bind("our attorney will be in touch")
+        .execute(pool)
+        .await
+        .expect("insert legal reply");
+    state
+        .apply_reply_to_prospect(legal_reply, pid, &legal_from, ReplyKind::LegalThreat)
+        .await
+        .expect("apply legal threat");
+    assert!(state.is_suppressed(&legal_from).await.unwrap());
+    let legal_supps = state
+        .list_suppressions(Some("reply_legal_threat"), 200)
+        .await
+        .expect("list reply_legal_threat");
+    assert!(
+        legal_supps.iter().any(|s| s.target == legal_from),
+        "legal-threat suppression must carry the DISTINCT source=reply_legal_threat"
+    );
+
+    // cleanup (campaign cascade drops prospect/touches/replies)
+    sqlx::query("DELETE FROM campaigns WHERE name = $1")
+        .bind(&campaign_name)
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM companies WHERE id = $1")
+        .bind(company.id.0)
+        .execute(pool)
+        .await
+        .ok();
+    for t in [&canonical, &legal_from] {
+        sqlx::query("DELETE FROM suppressions WHERE target = $1")
+            .bind(t)
+            .execute(pool)
+            .await
+            .ok();
+    }
+}
