@@ -13,6 +13,7 @@
 //! same orchestrator instance — caller spawns one orchestrator per
 //! campaign worker.
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 use salesman_core::Result;
 use salesman_llm::{ChatRequest, ChatResponse, LlmRouter, Message, Role, RouteHint};
@@ -20,6 +21,9 @@ use salesman_tools::ToolRegistry;
 use std::sync::Arc;
 use tracing::{debug, info};
 
+/// The agentic loop: drives an LLM conversation, dispatching tool calls
+/// through the registry until the model returns a terminal answer or the
+/// step cap is reached.
 #[derive(Debug)]
 pub struct Orchestrator {
     router: Arc<LlmRouter>,

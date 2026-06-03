@@ -22,6 +22,7 @@
 //! - The seed is held in-memory wrapped in `Zeroizing` so it's wiped
 //!   on drop.
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signature, Signer as _, SigningKey, Verifier, VerifyingKey};
@@ -35,7 +36,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
+/// Length in bytes of a SHA-256 chain hash.
 pub const HASH_LEN: usize = 32;
+/// Length in bytes of an Ed25519 signature.
 pub const SIG_LEN: usize = 64;
 
 /// One link in the chain. Hashes and signature are kept as `Vec<u8>`
@@ -44,8 +47,11 @@ pub const SIG_LEN: usize = 64;
 /// invariants enforced by constructors.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Receipt {
+    /// Stable identifier for this receipt.
     pub id: ReceiptId,
+    /// The kind of event recorded (e.g. `send.email`, `suppression`).
     pub event_kind: String,
+    /// The event payload that was signed.
     pub event_payload: serde_json::Value,
     /// 32-byte hash of the previous receipt. Zeros for genesis.
     pub prev_hash: Vec<u8>,
@@ -53,10 +59,13 @@ pub struct Receipt {
     pub hash: Vec<u8>,
     /// 64-byte Ed25519 signature over `hash`.
     pub signature: Vec<u8>,
+    /// The id of the signing key that produced `signature`.
     pub signing_key_id: String,
+    /// When this receipt was created.
     pub created_at: DateTime<Utc>,
 }
 
+/// Holds an Ed25519 signing key and signs receipts onto its chain.
 #[derive(Debug)]
 pub struct Signer {
     signing_key: SigningKey,
@@ -69,7 +78,9 @@ impl Signer {
     pub fn load_or_generate(seed_path: &Path, key_id: impl Into<String>) -> Result<Self> {
         let key_id = key_id.into();
         if seed_path.exists() {
-            let bytes = fs::read(seed_path).map_err(Error::Io)?;
+            // seed_path is operator-controlled config (a fixed signing-seed
+            // location, mode 0600), never agent/network input. nosemgrep
+            let bytes = fs::read(seed_path).map_err(Error::Io)?; // nosemgrep
             if bytes.len() != 32 {
                 return Err(Error::Config(format!(
                     "signing seed file `{}` must be exactly 32 bytes (was {})",
@@ -104,7 +115,8 @@ impl Signer {
             use std::os::unix::fs::OpenOptionsExt;
             opts.mode(0o600);
         }
-        let mut f = opts.open(seed_path).map_err(Error::Io)?;
+        // seed_path is operator-controlled config (see note above). nosemgrep
+        let mut f = opts.open(seed_path).map_err(Error::Io)?; // nosemgrep
         f.write_all(seed.as_ref()).map_err(Error::Io)?;
         f.sync_all().map_err(Error::Io)?;
         tracing::info!(path = %seed_path.display(), %key_id, "generated new signing key");

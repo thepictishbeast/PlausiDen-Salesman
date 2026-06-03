@@ -15,6 +15,7 @@
 //! not synchronize concurrent calls into a single tool — implementors
 //! own their concurrency.
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 use async_trait::async_trait;
 use salesman_core::{Result, ToolArgs, ToolCall, ToolResult};
@@ -40,6 +41,7 @@ pub trait Tool: Send + Sync + std::fmt::Debug {
     async fn invoke(&self, args: ToolArgs) -> Result<serde_json::Value>;
 }
 
+/// The set of tools the orchestrator can dispatch to, keyed by name.
 #[derive(Debug, Default)]
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
