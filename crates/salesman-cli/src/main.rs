@@ -8,6 +8,7 @@
 //!   halt         kill switch (stub)
 //!   tools        list registered tools (incl. discovery tools)
 //!   backends     list registered LLM backends + models
+#![deny(missing_docs)]
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};

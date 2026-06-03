@@ -3,6 +3,7 @@
 //! BUG ASSUMPTION: this crate is empty scaffold; nothing here is
 //! production-correct yet. See PLAN.md for the phased delivery order.
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 #[cfg(test)]
 mod tests {

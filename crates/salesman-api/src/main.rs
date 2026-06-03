@@ -1,4 +1,5 @@
 //! salesman-api binary — read + low-risk-write HTTP server.
+#![deny(missing_docs)]
 
 mod handlers;
 mod html;
@@ -14,9 +15,12 @@ use salesman_state::State;
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
+/// Shared application state handed to every request handler.
 #[derive(Clone, Debug)]
 pub struct AppState {
+    /// Database/persistence handle.
     pub state: State,
+    /// Key id used to look up the signing-receipt chain head.
     pub signing_key_id: String,
     /// Per-recipient one-click unsubscribe verifier. None disables the
     /// `/unsubscribe` routes (they 503 with a config-error message).
