@@ -558,3 +558,132 @@ async fn rate_cap_counts_gmail_aliases_as_one_recipient() {
         .await
         .ok();
 }
+
+/// The per-domain rate cap (CLAUDE.md: 10 sends / hour / domain)
+/// aggregates across DIFFERENT mailboxes at the domain, is
+/// case-insensitive, and treats a subdomain as a separate domain.
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing at a writable Postgres"]
+async fn rate_cap_per_domain_aggregates_mailboxes() {
+    let url = std::env::var("TEST_DATABASE_URL")
+        .expect("set TEST_DATABASE_URL to a writable postgres URL");
+    let state = State::connect(&url).await.expect("connect");
+
+    let n = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let campaign_name = format!("salesman-domaintest-{n}");
+    let dom = format!("domtest{n}.example");
+
+    // Two companies -> two prospects in one campaign, each with a
+    // distinct mailbox at the SAME domain.
+    let mk = |label: &str| Company {
+        id: CompanyId::new(),
+        legal_name: None,
+        display_name: format!("DomTest {label} {n}"),
+        homepage: None,
+        industry: None,
+        size_band: None,
+        region: None,
+        description: None,
+        tech_signals: vec![],
+        discovered_at: Utc::now(),
+        last_enriched_at: None,
+        source: DiscoverySource::OwnerSeed,
+        raw: BTreeMap::new(),
+    };
+    let c1 = mk("a");
+    let c2 = mk("b");
+    state
+        .insert_companies(&[c1.clone(), c2.clone()])
+        .await
+        .expect("insert companies");
+    let cid = state
+        .ensure_campaign(&campaign_name, "test", "test")
+        .await
+        .expect("ensure_campaign");
+    state
+        .upsert_prospects_for_campaign(cid, &[c1.id, c2.id])
+        .await
+        .expect("upsert");
+
+    let pool = state.pool();
+    // Map company_id -> prospect_id so we link the right contact.
+    let listed = state
+        .list_prospects_with_facts_for_campaign(cid)
+        .await
+        .expect("list");
+    for (company, local) in [(&c1, "a"), (&c2, "b")] {
+        let pid = listed
+            .iter()
+            .find(|p| p.company_id == company.id)
+            .expect("prospect for company")
+            .prospect_id;
+        state
+            .insert_contact_and_link_as_primary(
+                company.id,
+                pid,
+                "X",
+                "Owner",
+                &format!("{local}@{dom}"),
+                "test",
+            )
+            .await
+            .expect("link contact");
+        let tid = state
+            .insert_touch_draft(pid, TouchChannel::Email, Some("hi"), "body")
+            .await
+            .expect("insert_touch_draft");
+        sqlx::query("UPDATE touches SET sent_at = NOW() WHERE id = $1")
+            .bind(tid.0)
+            .execute(pool)
+            .await
+            .expect("mark sent_at");
+    }
+
+    let window = 24;
+    // Aggregates both mailboxes at the domain.
+    assert_eq!(
+        state.count_touches_to_domain_since(&dom, window).await.unwrap(),
+        2
+    );
+    // Case-insensitive on the domain.
+    assert_eq!(
+        state
+            .count_touches_to_domain_since(&dom.to_uppercase(), window)
+            .await
+            .unwrap(),
+        2
+    );
+    // A subdomain is a different domain — not counted under the parent.
+    assert_eq!(
+        state
+            .count_touches_to_domain_since(&format!("sub.{dom}"), window)
+            .await
+            .unwrap(),
+        0
+    );
+    // An unrelated domain counts zero.
+    assert_eq!(
+        state
+            .count_touches_to_domain_since(&format!("other{n}.example"), window)
+            .await
+            .unwrap(),
+        0
+    );
+
+    // cleanup (campaign cascade drops prospects/contacts/touches).
+    sqlx::query("DELETE FROM campaigns WHERE name = $1")
+        .bind(&campaign_name)
+        .execute(pool)
+        .await
+        .ok();
+    for c in [&c1, &c2] {
+        sqlx::query("DELETE FROM companies WHERE id = $1")
+            .bind(c.id.0)
+            .execute(pool)
+            .await
+            .ok();
+    }
+}
