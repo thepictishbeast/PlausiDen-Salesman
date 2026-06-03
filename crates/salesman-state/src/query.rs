@@ -541,6 +541,61 @@ pub struct TriggerEventInsert<'a> {
     pub raw: &'a serde_json::Value,
 }
 
+/// Input shape for `insert_owner_notification`. Groups the per-contact
+/// fields so the public function stays under the seven-arg lint.
+#[derive(Debug, Clone)]
+pub struct OwnerNotificationInsert<'a> {
+    /// The touch this notification is about, if any.
+    pub touch_id: Option<salesman_core::TouchId>,
+    /// The prospect that was contacted.
+    pub prospect_id: ProspectId,
+    /// Prospect name/business, captured at send time (subject line).
+    pub prospect_label: &'a str,
+    /// The recipient address that was contacted.
+    pub to_address: &'a str,
+    /// Channel used (e.g. `email`).
+    pub channel: &'a str,
+    /// When the contact was sent.
+    pub sent_at: chrono::DateTime<chrono::Utc>,
+    /// The subject that was sent, if any.
+    pub subject: Option<&'a str>,
+    /// The body that was sent.
+    pub body: &'a str,
+    /// The signed receipt id for the send, if recorded.
+    pub receipt_id: Option<salesman_core::ReceiptId>,
+    /// The campaign the contact belonged to, if any.
+    pub campaign: Option<&'a str>,
+}
+
+/// A persisted owner audit-notification row.
+#[derive(Debug, Clone)]
+pub struct OwnerNotificationRow {
+    /// Row id.
+    pub id: uuid::Uuid,
+    /// The prospect that was contacted.
+    pub prospect_id: ProspectId,
+    /// Prospect name/business captured at send time.
+    pub prospect_label: String,
+    /// The recipient address.
+    pub to_address: String,
+    /// Channel used.
+    pub channel: String,
+    /// When the contact was sent.
+    pub sent_at: chrono::DateTime<chrono::Utc>,
+    /// Subject sent, if any.
+    pub subject: Option<String>,
+    /// Body sent.
+    pub body: String,
+    /// Signed receipt id, if any.
+    pub receipt_id: Option<uuid::Uuid>,
+    /// Campaign, if any.
+    pub campaign: Option<String>,
+    /// When the notification row was queued.
+    pub queued_at: chrono::DateTime<chrono::Utc>,
+    /// When the operator mailbox received it; `None` while pending.
+    pub delivered_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
 impl State {
     /// Insert a new company. Returns the assigned id (caller-supplied).
     pub async fn insert_company(&self, c: &Company) -> Result<CompanyId> {
@@ -1122,6 +1177,98 @@ impl State {
         .await
         .map_err(|e| Error::Db(e.to_string()))?;
         Ok(id)
+    }
+
+    /// Persist an owner audit-notification for one outbound contact.
+    /// The row is queued undelivered (`delivered_at IS NULL`) — actual
+    /// delivery to the operator mailbox is gated behind send approval.
+    /// Returns the new row id.
+    pub async fn insert_owner_notification(
+        &self,
+        n: &OwnerNotificationInsert<'_>,
+    ) -> Result<uuid::Uuid> {
+        let id = uuid::Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO owner_notifications
+             (id, touch_id, prospect_id, prospect_label, to_address, channel,
+              sent_at, subject, body, receipt_id, campaign)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+        )
+        .bind(id)
+        .bind(n.touch_id.map(|t| t.0))
+        .bind(n.prospect_id.0)
+        .bind(n.prospect_label)
+        .bind(n.to_address)
+        .bind(n.channel)
+        .bind(n.sent_at)
+        .bind(n.subject)
+        .bind(n.body)
+        .bind(n.receipt_id.map(|r| r.0))
+        .bind(n.campaign)
+        .execute(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(id)
+    }
+
+    /// The pending (undelivered) owner-notification queue, oldest first,
+    /// capped at `limit`.
+    pub async fn list_pending_owner_notifications(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<OwnerNotificationRow>> {
+        let rows = sqlx::query(
+            "SELECT id, prospect_id, prospect_label, to_address, channel, sent_at,
+                    subject, body, receipt_id, campaign, queued_at, delivered_at
+             FROM owner_notifications
+             WHERE delivered_at IS NULL
+             ORDER BY queued_at ASC
+             LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| OwnerNotificationRow {
+                id: r.try_get("id").unwrap_or_else(|_| uuid::Uuid::nil()),
+                prospect_id: ProspectId(
+                    r.try_get("prospect_id").unwrap_or_else(|_| uuid::Uuid::nil()),
+                ),
+                prospect_label: r.try_get("prospect_label").unwrap_or_default(),
+                to_address: r.try_get("to_address").unwrap_or_default(),
+                channel: r.try_get("channel").unwrap_or_default(),
+                sent_at: r.try_get("sent_at").unwrap_or_else(|_| Utc::now()),
+                subject: r.try_get("subject").ok(),
+                body: r.try_get("body").unwrap_or_default(),
+                receipt_id: r.try_get("receipt_id").ok(),
+                campaign: r.try_get("campaign").ok(),
+                queued_at: r.try_get("queued_at").unwrap_or_else(|_| Utc::now()),
+                delivered_at: r.try_get("delivered_at").ok(),
+            })
+            .collect())
+    }
+
+    /// Mark an owner-notification delivered (operator mailbox received
+    /// it). Returns the number of rows updated (0 if the id is unknown
+    /// or it was already delivered).
+    pub async fn mark_owner_notification_delivered(
+        &self,
+        id: uuid::Uuid,
+        delivered_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64> {
+        let res = sqlx::query(
+            "UPDATE owner_notifications
+             SET delivered_at = $2
+             WHERE id = $1 AND delivered_at IS NULL",
+        )
+        .bind(id)
+        .bind(delivered_at)
+        .execute(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(res.rows_affected())
     }
 
     /// Pick a template via epsilon-greedy. With probability `1-epsilon`
