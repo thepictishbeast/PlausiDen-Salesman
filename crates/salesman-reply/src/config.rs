@@ -1,12 +1,21 @@
+//! IMAP connection configuration for the reply poller.
+
 use salesman_core::{Error, Result};
 use zeroize::Zeroizing;
 
+/// IMAP connection config for the reply poller. Only implicit-TLS
+/// port 993 is supported.
 #[derive(Debug, Clone)]
 pub struct ImapConfig {
+    /// IMAP server hostname.
     pub host: String,
+    /// IMAP server port (must be 993 — implicit TLS).
     pub port: u16,
+    /// Login username.
     pub username: String,
+    /// Login password. Zeroized on drop.
     pub password: Zeroizing<String>,
+    /// Mailbox to poll (defaults to `INBOX`).
     pub mailbox: String,
 }
 

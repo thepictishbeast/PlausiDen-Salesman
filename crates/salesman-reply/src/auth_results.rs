@@ -43,12 +43,19 @@ use std::collections::HashMap;
 /// Outcomes per RFC 8601 §2.7.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthResult {
+    /// Authentication passed.
     Pass,
+    /// Authentication failed.
     Fail,
+    /// Soft failure (SPF `~all`).
     SoftFail,
+    /// Neutral — no assertion.
     Neutral,
+    /// No authentication was performed / no policy.
     None,
+    /// Temporary error during evaluation.
     TempError,
+    /// Permanent error during evaluation.
     PermError,
     /// Anything we don't recognize — treat as untrusted by default.
     Other,
@@ -80,6 +87,7 @@ impl AuthResult {
 pub struct MethodResult {
     /// Method name lowercased: "spf" / "dkim" / "dmarc" / "arc" / etc.
     pub method: String,
+    /// The result this method reported.
     pub result: AuthResult,
     /// Property bag from the header — e.g. "smtp.mailfrom" → "alice@x.com",
     /// "header.from" → "alice@x.com", "header.d" → "x.com". Keys are

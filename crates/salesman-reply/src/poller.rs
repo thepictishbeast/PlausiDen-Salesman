@@ -19,6 +19,8 @@ use tracing::{debug, info, warn};
 
 type ImapStream = tokio_rustls::client::TlsStream<TcpStream>;
 
+/// Polls a configured IMAP mailbox for unseen replies and hands each
+/// parsed message to a caller-supplied callback.
 #[derive(Debug)]
 pub struct ImapPoller {
     config: ImapConfig,

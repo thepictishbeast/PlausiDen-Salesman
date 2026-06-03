@@ -1,3 +1,5 @@
+//! Parsing inbound RFC 5322 messages into a normalised [`ParsedReply`].
+
 use chrono::{DateTime, Utc};
 use mail_parser::MessageParser;
 use serde::{Deserialize, Serialize};
@@ -8,15 +10,25 @@ use std::collections::BTreeMap;
 /// can correlate by Message-Id / In-Reply-To / References.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsedReply {
+    /// Sender email address (From).
     pub from_address: String,
+    /// Sender display name, if present.
     pub from_name: Option<String>,
+    /// Subject line, if present.
     pub subject: Option<String>,
+    /// Plain-text body (empty string if none).
     pub body_plain: String,
+    /// HTML body, if present.
     pub body_html: Option<String>,
+    /// Date the message was sent (falls back to now if unparseable).
     pub received_at: DateTime<Utc>,
+    /// `Message-Id` header, if present.
     pub message_id: Option<String>,
+    /// `In-Reply-To` header, if present.
     pub in_reply_to: Option<String>,
+    /// `References` header values, for thread correlation.
     pub references: Vec<String>,
+    /// All headers, collapsed to one value each.
     pub raw_headers: BTreeMap<String, String>,
     /// Raw `Authentication-Results:` header values, in the order
     /// they appeared in the message. A message can have several (one
