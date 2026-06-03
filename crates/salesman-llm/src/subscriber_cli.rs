@@ -80,7 +80,12 @@ impl SubscriberCliBackend {
 
     /// Build a Claude (Code) CLI backend honoring env overrides:
     ///   - SALESMAN_CLAUDE_CLI_BIN   (default: `claude`)
-    ///   - SALESMAN_CLAUDE_CLI_ARGS  (JSON array, default: `["--print"]`)
+    ///   - SALESMAN_CLAUDE_CLI_ARGS  (JSON array, default: `["--print"]`).
+    ///     This is also where reasoning **effort** is configured on the
+    ///     CLI transport — append whatever effort flag your installed
+    ///     `claude` CLI accepts (the exact flag is CLI-version-specific,
+    ///     so it's not hard-coded here). e.g. to run at max effort:
+    ///     `SALESMAN_CLAUDE_CLI_ARGS='["--print","--effort","max"]'`.
     ///   - SALESMAN_CLAUDE_CLI_MODEL (default: unset → don't pass
     ///     --model, let the CLI pick its own default which usually
     ///     tracks the subscriber's tier)
