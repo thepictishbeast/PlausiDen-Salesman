@@ -329,6 +329,12 @@ impl Tool for ReplyClassifyTool {
             user.push_str(&format!("Subject: {s}\n"));
         }
         user.push_str(&format!("Body:\n{body}\n"));
+        // PII-redaction boundary (CLAUDE.md): the inbound body is a SaaS-model
+        // input that can carry the prospect's email/signature. Redact before
+        // the call — the keyword opt-out/legal pre-checks above already ran on
+        // the RAW body, so classification signals are unaffected — then
+        // rehydrate the model's output before parsing.
+        let redaction = salesman_core::redact::redact(&user, &[]);
 
         let req = ChatRequest {
             messages: vec![
@@ -340,7 +346,7 @@ impl Tool for ReplyClassifyTool {
                 },
                 Message {
                     role: Role::User,
-                    content: user,
+                    content: redaction.text().to_string(),
                     tool_calls: vec![],
                     tool_results: vec![],
                 },
@@ -354,7 +360,8 @@ impl Tool for ReplyClassifyTool {
             .router
             .chat_for(RouteHint::Bulk, "classify_reply", req)
             .await?;
-        let parsed = parse_classification(&resp.message.content).unwrap_or_else(|e| {
+        let rehydrated = redaction.rehydrate(&resp.message.content);
+        let parsed = parse_classification(&rehydrated).unwrap_or_else(|e| {
             warn!("%e" = %e, "classifier output unparseable; falling back to heuristic");
             ClassifyReply {
                 kind: if keyword_hit {
@@ -428,6 +435,23 @@ fn parse_classification(raw: &str) -> std::result::Result<ClassifyReply, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pii_redaction_preserves_keyword_safety_net() {
+        // The opt-out / legal-threat keyword pre-checks run on the RAW
+        // body (before the redaction applied to the LLM prompt), so an
+        // email in the body must not change their result — while the
+        // prompt the model sees carries no raw email.
+        let body = "Please remove me from your list. — jane.doe@acme.com";
+        assert!(ReplyClassifyTool::keyword_optout(body));
+        let legal = "Our attorney will file a cease-and-desist. jane@acme.com";
+        assert!(ReplyClassifyTool::keyword_legal_threat(legal));
+        // The redacted prompt (what the SaaS model receives) hides the email.
+        let prompt = format!("Body:\n{body}\n");
+        let red = salesman_core::redact::redact(&prompt, &[]);
+        assert!(!red.text().contains("jane.doe@acme.com"));
+        assert_eq!(red.rehydrate(red.text()), prompt);
+    }
 
     #[test]
     fn keyword_catches_unsubscribe() {
