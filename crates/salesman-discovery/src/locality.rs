@@ -82,6 +82,23 @@ pub fn is_local(region: Option<&str>, target_terms: &[&str], threshold: f32) -> 
     locality_score(region, target_terms) >= threshold
 }
 
+/// Return the indices of `regions` ordered local-first: highest
+/// [`locality_score`] against `target_terms` first, ties preserving the
+/// original order (the sort is stable). Lets a caller re-rank an
+/// already-fetched prospect list local-first without changing what was
+/// discovered. With empty `target_terms` every score is 0, so the
+/// original order is preserved.
+pub fn rank_local_first(regions: &[Option<&str>], target_terms: &[&str]) -> Vec<usize> {
+    let mut idx: Vec<usize> = (0..regions.len()).collect();
+    idx.sort_by(|&a, &b| {
+        let sa = locality_score(regions[a], target_terms);
+        let sb = locality_score(regions[b], target_terms);
+        // Descending by score; NaN can't arise from locality_score.
+        sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    idx
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,6 +145,26 @@ mod tests {
         assert_eq!(locality_score(None, &["london"]), 0.0);
         assert_eq!(locality_score(Some("   "), &["london"]), 0.0);
         assert_eq!(locality_score(Some("London"), &[]), 0.0);
+    }
+
+    #[test]
+    fn rank_local_first_orders_by_score_stably() {
+        let regions = vec![
+            Some("Tokyo, JP"),
+            Some("Edinburgh, Scotland"),
+            None,
+            Some("Glasgow, Scotland"),
+        ];
+        let order = rank_local_first(&regions, &["scotland"]);
+        // Both Scotland rows (1, 3) score 1.0 → first, in original order;
+        // the two zero-scorers (0, 2) follow, also in original order.
+        assert_eq!(order, vec![1, 3, 0, 2]);
+    }
+
+    #[test]
+    fn rank_local_first_empty_targets_preserves_order() {
+        let regions = vec![Some("a"), Some("b"), None];
+        assert_eq!(rank_local_first(&regions, &[]), vec![0, 1, 2]);
     }
 
     #[test]

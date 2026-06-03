@@ -44,7 +44,7 @@ async fn full_round_trip() {
         homepage: Some("https://acme.example".parse().unwrap()),
         industry: Some("Security".into()),
         size_band: None,
-        region: None,
+        region: Some("Edinburgh, Scotland".into()),
         description: None,
         tech_signals: vec![],
         discovered_at: Utc::now(),
@@ -74,6 +74,8 @@ async fn full_round_trip() {
         .await
         .expect("list");
     assert_eq!(listed.len(), 1);
+    // region round-trips through the new ProspectWithFacts.region column.
+    assert_eq!(listed[0].region.as_deref(), Some("Edinburgh, Scotland"));
     let pid = listed[0].prospect_id;
 
     // 3) draft (manual; no LLM in this test)

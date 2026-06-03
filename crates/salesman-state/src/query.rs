@@ -66,6 +66,9 @@ pub struct ProspectWithFacts {
     pub industry: Option<String>,
     /// Company description, if known.
     pub description: Option<String>,
+    /// Company region (free-text), if known. Drives local-first ranking
+    /// (see salesman_discovery::locality).
+    pub region: Option<String>,
     /// Detected tech signals (JSONB array).
     pub tech_signals: serde_json::Value,
     /// Per-prospect tags JSONB (interests, notes, do-not-pitch
@@ -88,6 +91,7 @@ impl ProspectWithFacts {
             "homepage": self.homepage,
             "industry": self.industry,
             "description": self.description,
+            "region": self.region,
             "tech_signals": self.tech_signals,
             "tags": self.tags,
         })
@@ -920,7 +924,7 @@ impl State {
         let rows = sqlx::query(
             "SELECT p.id AS prospect_id, p.tags AS tags, c.id AS company_id,
                     c.display_name, c.homepage, c.industry,
-                    c.description, c.tech_signals
+                    c.description, c.region, c.tech_signals
              FROM prospects p
              JOIN companies c ON c.id = p.company_id
              WHERE p.campaign_id = $1
@@ -945,6 +949,7 @@ impl State {
             let homepage: Option<String> = r.try_get("homepage").unwrap_or(None);
             let industry: Option<String> = r.try_get("industry").unwrap_or(None);
             let description: Option<String> = r.try_get("description").unwrap_or(None);
+            let region: Option<String> = r.try_get("region").unwrap_or(None);
             let tech_signals: serde_json::Value = r
                 .try_get("tech_signals")
                 .unwrap_or(serde_json::Value::Array(vec![]));
@@ -958,6 +963,7 @@ impl State {
                 homepage,
                 industry,
                 description,
+                region,
                 tech_signals,
                 tags,
             });
@@ -1082,7 +1088,7 @@ impl State {
         let row = sqlx::query(
             "SELECT p.id AS prospect_id, p.tags AS tags, c.id AS company_id,
                     c.display_name, c.homepage, c.industry,
-                    c.description, c.tech_signals
+                    c.description, c.region, c.tech_signals
              FROM prospects p
              JOIN companies c ON c.id = p.company_id
              WHERE p.id = $1",
@@ -1106,6 +1112,7 @@ impl State {
             description: r
                 .try_get::<Option<String>, _>("description")
                 .unwrap_or(None),
+            region: r.try_get::<Option<String>, _>("region").unwrap_or(None),
             tech_signals: r
                 .try_get::<serde_json::Value, _>("tech_signals")
                 .unwrap_or(serde_json::Value::Array(vec![])),
@@ -2420,7 +2427,7 @@ impl State {
         let rows = sqlx::query(
             "SELECT p.id AS prospect_id, p.tags AS tags, c.id AS company_id, \
                     c.display_name, c.homepage, c.industry, \
-                    c.description, c.tech_signals \
+                    c.description, c.region, c.tech_signals \
              FROM prospects p \
              JOIN companies c ON c.id = p.company_id \
              WHERE p.state = 'won' \
@@ -2454,6 +2461,7 @@ impl State {
                 description: r
                     .try_get::<Option<String>, _>("description")
                     .unwrap_or(None),
+                region: r.try_get::<Option<String>, _>("region").unwrap_or(None),
                 tech_signals: r
                     .try_get::<Option<serde_json::Value>, _>("tech_signals")
                     .unwrap_or(None)
