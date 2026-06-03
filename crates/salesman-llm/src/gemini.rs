@@ -30,6 +30,7 @@ use zeroize::Zeroizing;
 
 const GEMINI_API_BASE: &str = "https://generativelanguage.googleapis.com/v1beta";
 
+/// [`LlmBackend`](crate::LlmBackend) implementation for Google Gemini.
 #[derive(Debug)]
 pub struct GeminiBackend {
     model: String,

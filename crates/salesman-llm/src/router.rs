@@ -15,6 +15,8 @@ use std::sync::Arc;
 /// depend on salesman-state. State implements this in its own crate.
 #[async_trait]
 pub trait LlmCallSink: Send + Sync + std::fmt::Debug {
+    /// Persist one `llm_calls` accounting row (backend, model, token
+    /// counts, latency, cost, and the call's purpose).
     #[allow(clippy::too_many_arguments)]
     async fn record_call(
         &self,
@@ -48,6 +50,8 @@ pub enum RouteHint {
     Backend(BackendKind),
 }
 
+/// Routes [`ChatRequest`]s to a registered [`LlmBackend`] based on a
+/// [`RouteHint`], with fallback across the preference chain.
 #[derive(Debug)]
 pub struct LlmRouter {
     backends: HashMap<BackendKind, Arc<dyn LlmBackend>>,

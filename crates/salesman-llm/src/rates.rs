@@ -13,11 +13,16 @@
 use crate::types::BackendKind;
 use tracing::warn;
 
+/// Per-model pricing used to estimate call cost.
 #[derive(Debug, Clone, Copy)]
 pub struct Rate {
+    /// The backend this rate applies to.
     pub backend: BackendKind,
+    /// The model identifier this rate applies to.
     pub model: &'static str,
+    /// Input token price, micro-USD per million tokens.
     pub input_per_million_micro_usd: u64,
+    /// Output token price, micro-USD per million tokens.
     pub output_per_million_micro_usd: u64,
     /// Cache-hit input rate (Claude prompt caching pricing). For
     /// Gemini we treat cache hits as full-price input until they
