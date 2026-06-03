@@ -35,6 +35,15 @@ const RATES: &[Rate] = &[
     // Claude — pricing as of 2026-04 (per million tokens, USD).
     Rate {
         backend: BackendKind::Claude,
+        model: "claude-opus-4-8",
+        // Opus 4.x list pricing has held at $15/$75 across 4.6/4.7/4.8;
+        // confirm against the vendor page if it changes.
+        input_per_million_micro_usd: 15_000_000,    // $15/M
+        output_per_million_micro_usd: 75_000_000,   // $75/M
+        cache_hit_per_million_micro_usd: 1_500_000, // $1.50/M (10% of input)
+    },
+    Rate {
+        backend: BackendKind::Claude,
         model: "claude-opus-4-7",
         input_per_million_micro_usd: 15_000_000,    // $15/M
         output_per_million_micro_usd: 75_000_000,   // $75/M
@@ -131,6 +140,16 @@ mod tests {
         // Total = 3_300 micro.
         let cost = compute_cost_micro_usd(BackendKind::Claude, "claude-sonnet-4-6", 2000, 0, 1000);
         assert_eq!(cost, 3_300);
+    }
+
+    #[test]
+    fn default_opus_4_8_is_priced() {
+        // The default agent model (claude-opus-4-8) must be in the rate
+        // table, else every call records as zero cost. Opus: 1k in + 1k
+        // out = 0.001*$15 + 0.001*$75 = $0.090 = 90_000 micro.
+        let cost = compute_cost_micro_usd(BackendKind::Claude, "claude-opus-4-8", 1000, 1000, 0);
+        assert_eq!(cost, 90_000);
+        assert!(lookup_rate(BackendKind::Claude, "claude-opus-4-8").is_some());
     }
 
     #[test]

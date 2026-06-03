@@ -167,7 +167,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use url::Url;
 
-const DEFAULT_CLAUDE_MODEL: &str = "claude-sonnet-4-6";
+// Owner directive: default to the latest Claude (Opus 4.8). Single
+// source of truth — override per-run with --claude-model / env
+// SALESMAN_CLAUDE_MODEL. Cost tracking for this model lives in
+// salesman-llm::rates::RATES.
+const DEFAULT_CLAUDE_MODEL: &str = "claude-opus-4-8";
 const DEFAULT_GEMINI_MODEL: &str = "gemini-1.5-flash";
 
 #[derive(Parser, Debug)]
