@@ -312,4 +312,107 @@ mod tests {
         let vk = s.verifying_key();
         assert!(verify_chain(&[r1, r2, r3], &vk, &zero_hash()).is_err());
     }
+
+    #[test]
+    fn detects_signature_tampering() {
+        let s = tmp_signer();
+        let mut r = s.sign_event("x", json!({"v":1}), &zero_hash()).unwrap();
+        // Flip one bit in the signature; the length stays SIG_LEN so the
+        // mutated receipt reaches the ed25519 verify (not the length
+        // guard) and must be rejected there.
+        r.signature[0] ^= 0x01;
+        assert_eq!(r.signature.len(), SIG_LEN);
+        assert!(verify_receipt(&r, &s.verifying_key()).is_err());
+    }
+
+    #[test]
+    fn rejects_a_different_signers_key() {
+        let s = tmp_signer();
+        let other = tmp_signer();
+        let r = s.sign_event("x", json!({"v":1}), &zero_hash()).unwrap();
+        // The same receipt under the wrong public key must not verify...
+        assert!(verify_receipt(&r, &other.verifying_key()).is_err());
+        // ...but the matching key still does (sanity).
+        verify_receipt(&r, &s.verifying_key()).unwrap();
+    }
+
+    #[test]
+    fn rejects_malformed_field_lengths() {
+        let s = tmp_signer();
+        let vk = s.verifying_key();
+
+        // Signature too short → length guard, before ed25519.
+        let mut r = s.sign_event("x", json!({"v":1}), &zero_hash()).unwrap();
+        r.signature.truncate(SIG_LEN - 1);
+        assert!(verify_receipt(&r, &vk).is_err());
+
+        // Hash wrong length.
+        let mut r = s.sign_event("x", json!({"v":1}), &zero_hash()).unwrap();
+        r.hash.push(0);
+        assert!(verify_receipt(&r, &vk).is_err());
+
+        // prev_hash wrong length.
+        let mut r = s.sign_event("x", json!({"v":1}), &zero_hash()).unwrap();
+        r.prev_hash.pop();
+        assert!(verify_receipt(&r, &vk).is_err());
+    }
+
+    #[test]
+    fn verify_chain_detects_tampered_middle_receipt() {
+        let s = tmp_signer();
+        let r1 = s.sign_event("a", json!({"v":1}), &zero_hash()).unwrap();
+        let mut r2 = s.sign_event("b", json!({"v":2}), &r1.hash).unwrap();
+        let r3 = s.sign_event("c", json!({"v":3}), &r2.hash).unwrap();
+        // Tamper r2's payload but leave its hash/prev_hash intact: the
+        // chain LINKAGE still appears valid, yet r2's hash no longer
+        // matches its payload — verify_chain must still reject it, proving
+        // it validates content per-receipt, not just linkage.
+        r2.event_payload = json!({"v":99});
+        let vk = s.verifying_key();
+        assert!(verify_chain(&[r1, r2, r3], &vk, &zero_hash()).is_err());
+    }
+
+    #[test]
+    fn verify_chain_rejects_wrong_initial_prev() {
+        let s = tmp_signer();
+        let r1 = s.sign_event("a", json!({"v":1}), &zero_hash()).unwrap();
+        let vk = s.verifying_key();
+        // Genesis receipt was signed against zero_hash; asserting a
+        // non-zero initial_prev must fail the index-0 linkage check.
+        let mut wrong = zero_hash();
+        wrong[0] = 1;
+        assert!(verify_chain(&[r1], &vk, &wrong).is_err());
+    }
+
+    #[test]
+    fn verify_chain_rejects_bad_initial_prev_length() {
+        let s = tmp_signer();
+        let r1 = s.sign_event("a", json!({"v":1}), &zero_hash()).unwrap();
+        let vk = s.verifying_key();
+        assert!(verify_chain(&[r1], &vk, &[0u8; 8]).is_err());
+    }
+
+    #[test]
+    fn verify_chain_empty_is_ok() {
+        let s = tmp_signer();
+        // No receipts → vacuously valid (documents the edge).
+        verify_chain(&[], &s.verifying_key(), &zero_hash()).unwrap();
+    }
+
+    #[test]
+    fn canonical_json_hash_is_key_order_independent() {
+        // The provenance hash must be stable regardless of the order in
+        // which a payload's keys were constructed — otherwise two parties
+        // replaying the same logical event would derive different hashes.
+        // serde_json::Value sorts map keys (no `preserve_order` feature);
+        // this pins that assumption. created_at is not hashed, so only the
+        // payload bytes matter here.
+        let s = tmp_signer();
+        let r1 = s.sign_event("e", json!({"a":1, "b":2}), &zero_hash()).unwrap();
+        let r2 = s.sign_event("e", json!({"b":2, "a":1}), &zero_hash()).unwrap();
+        assert_eq!(
+            r1.hash, r2.hash,
+            "hash must not depend on payload key insertion order"
+        );
+    }
 }
