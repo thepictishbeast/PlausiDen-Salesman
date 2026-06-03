@@ -435,6 +435,12 @@ impl Tool for DraftReplyTool {
             inbound_body: &inbound_body,
             inbound_kind: &inbound_kind,
         });
+        // PII-redaction boundary (CLAUDE.md): the draft path already sends
+        // prospect context to a SaaS model, so strip raw email addresses
+        // from the prompt and rehydrate them back into the model's output
+        // afterward — strictly reduces PII exposure, at no personalization
+        // cost (the model doesn't need raw addresses to write a reply).
+        let redaction = salesman_core::redact::redact(&user, &[]);
 
         let req = ChatRequest {
             messages: vec![
@@ -446,7 +452,7 @@ impl Tool for DraftReplyTool {
                 },
                 Message {
                     role: Role::User,
-                    content: user,
+                    content: redaction.text().to_string(),
                     tool_calls: vec![],
                     tool_results: vec![],
                 },
@@ -461,7 +467,9 @@ impl Tool for DraftReplyTool {
             .router
             .chat_for(RouteHint::Reasoning, "draft_reply", req)
             .await?;
-        let draft = parse_reply(&resp.message.content).map_err(|e| Error::Tool {
+        // Restore the real PII before parsing + scoring the model's output.
+        let rehydrated = redaction.rehydrate(&resp.message.content);
+        let draft = parse_reply(&rehydrated).map_err(|e| Error::Tool {
             tool: "content.draft_reply".into(),
             message: format!("parse: {e}"),
         })?;
@@ -697,6 +705,39 @@ fn parse_reply(raw: &str) -> std::result::Result<ReplyDraft, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn user_prompt_redaction_strips_raw_emails() {
+        // The draft path sends the assembled user prompt to a SaaS model;
+        // after redaction it must carry no raw email (e.g. one in the
+        // prospect's inbound signature), and rehydration round-trips.
+        let tool = DraftReplyTool::new(
+            std::sync::Arc::new(salesman_llm::LlmRouter::new()),
+            "Sender",
+            "PlausiDen",
+            "one-liner",
+        );
+        let prospect = serde_json::json!({ "display_name": "Acme" });
+        let user = tool.user_prompt(ReplyDraftContext {
+            prospect: &prospect,
+            prior_thread: None,
+            outbound_subject: None,
+            outbound_body: None,
+            inbound_subject: None,
+            inbound_body: "thanks — reach me at jane.doe@acme.com going forward",
+            inbound_kind: "question",
+        });
+        assert!(
+            user.contains("jane.doe@acme.com"),
+            "sanity: the assembled prompt includes the inbound body"
+        );
+        let red = salesman_core::redact::redact(&user, &[]);
+        assert!(
+            !red.text().contains("jane.doe@acme.com"),
+            "the prompt sent to the model must not contain the raw email"
+        );
+        assert_eq!(red.rehydrate(red.text()), user, "rehydration must round-trip");
+    }
 
     #[test]
     fn parse_clean_json() {
