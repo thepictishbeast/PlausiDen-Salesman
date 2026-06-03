@@ -282,3 +282,93 @@ impl IntoResponse for ApiError {
 fn _swallow_unused<T>(_: T) -> SR<()> {
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use salesman_outreach::UnsubscribeTokens;
+    use salesman_state::State;
+
+    async fn test_app() -> Arc<AppState> {
+        let url = std::env::var("TEST_DATABASE_URL")
+            .expect("set TEST_DATABASE_URL to a writable postgres URL");
+        let state = State::connect(&url).await.expect("connect");
+        let tokens = UnsubscribeTokens::new(vec![7u8; 32], "https://outreach.plausiden.com/unsubscribe")
+            .expect("tokens");
+        Arc::new(AppState {
+            state,
+            signing_key_id: "test".into(),
+            unsubscribe_tokens: Some(tokens),
+        })
+    }
+
+    fn nanos() -> u128 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    }
+
+    /// The public RFC 8058 one-click endpoint: a valid token records the
+    /// opt-out; a forged token is rejected and suppresses nothing; GET is
+    /// prefetch-safe (never suppresses); a missing token is a 400.
+    #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL pointing at a writable Postgres"]
+    async fn one_click_unsubscribe_suppresses_only_with_a_valid_token() {
+        let app = test_app().await;
+        let tokens = app.unsubscribe_tokens.clone().unwrap();
+        let n = nanos();
+
+        // 1) Valid POST → 200 and the address is now suppressed.
+        let email = format!("unsub{n}@example.com");
+        let token = tokens.token_for(&email);
+        let resp = unsubscribe_post(
+            State(app.clone()),
+            Query(UnsubQuery { t: Some(token) }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(app.state.is_suppressed(&email).await.unwrap());
+
+        // 2) Forged token → 400 and it must NOT suppress an arbitrary
+        //    address (else anyone could opt out our whole prospect list).
+        let email2 = format!("unsub{n}b@example.com");
+        let forged = format!("{}A", tokens.token_for(&email2)); // corrupt the MAC
+        let resp = unsubscribe_post(
+            State(app.clone()),
+            Query(UnsubQuery { t: Some(forged) }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            !app.state.is_suppressed(&email2).await.unwrap(),
+            "a forged token must not suppress an arbitrary address"
+        );
+
+        // 3) GET with a valid token → 200 but records NOTHING (link
+        //    prefetchers hit GET; only the POST button suppresses).
+        let email3 = format!("unsub{n}c@example.com");
+        let token3 = tokens.token_for(&email3);
+        let resp = unsubscribe_get(
+            State(app.clone()),
+            Query(UnsubQuery { t: Some(token3) }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(
+            !app.state.is_suppressed(&email3).await.unwrap(),
+            "GET must not record a suppression"
+        );
+
+        // 4) Missing token → 400.
+        let resp =
+            unsubscribe_post(State(app.clone()), Query(UnsubQuery { t: None })).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        // cleanup (canonical form; normalize is idempotent).
+        for e in [&email, &email2, &email3] {
+            let canon = salesman_core::normalize_email_for_match(e);
+            let _ = app.state.remove_suppression(&canon).await;
+        }
+    }
+}
