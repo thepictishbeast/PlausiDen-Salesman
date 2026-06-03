@@ -159,6 +159,12 @@ jobs:
         env:
           TEST_DATABASE_URL: postgres://salesman:salesman@localhost:5432/salesman_test
         run: cargo test -p salesman-state --test integration -- --ignored
+      # Also run the gated salesman-api handler tests (public /unsubscribe
+      # opt-out endpoint), which need the same ephemeral DB.
+      - name: Run gated api handler tests
+        env:
+          TEST_DATABASE_URL: postgres://salesman:salesman@localhost:5432/salesman_test
+        run: cargo test -p salesman-api -- --ignored
 
   supply_chain:
     name: supply-chain (cargo deny)
