@@ -720,6 +720,14 @@ enum Cmd {
         #[arg(long)]
         expected_ptr: Option<String>,
     },
+    /// List the pending owner audit-notifications (one per outbound
+    /// contact, still undelivered). Each shows who / how / what so you
+    /// can find a contact a prospect phoned you about. Read-only.
+    OwnerNotifications {
+        /// Maximum number of pending notifications to show (oldest first).
+        #[arg(long, default_value_t = 50)]
+        limit: i64,
+    },
     /// Manage the global do-not-contact list. Subcommands: list,
     /// add, remove, export, import, count. Required for GDPR
     /// right-to-be-forgotten + audit + backup.
@@ -5994,6 +6002,49 @@ async fn main() -> Result<()> {
                         );
                     }
                 }
+            }
+        }
+
+        Cmd::OwnerNotifications { limit } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let pending = state
+                .list_pending_owner_notifications(limit)
+                .await
+                .unwrap_or_default();
+            if cli.json {
+                let v = serde_json::json!({
+                    "count": pending.len(),
+                    "pending": pending.iter().map(|n| serde_json::json!({
+                        "id": n.id.to_string(),
+                        "prospect_label": n.prospect_label,
+                        "to_address": n.to_address,
+                        "channel": n.channel,
+                        "sent_at": n.sent_at.to_rfc3339(),
+                        "subject": n.subject,
+                        "campaign": n.campaign,
+                        "receipt_id": n.receipt_id.map(|r| r.to_string()),
+                        "queued_at": n.queued_at.to_rfc3339(),
+                    })).collect::<Vec<_>>(),
+                });
+                println!("{}", serde_json::to_string_pretty(&v)?);
+                return Ok(());
+            }
+            println!(
+                "salesman owner-notifications — {} pending (undelivered)\n",
+                pending.len()
+            );
+            for n in &pending {
+                println!(
+                    "  {} | {} <{}> | {} | {}",
+                    n.sent_at.format("%Y-%m-%d %H:%M:%SZ"),
+                    n.prospect_label,
+                    n.to_address,
+                    n.channel,
+                    n.subject.as_deref().unwrap_or("(no subject)"),
+                );
+            }
+            if pending.is_empty() {
+                println!("  (nothing pending — notifications appear here as contacts are made)");
             }
         }
 
