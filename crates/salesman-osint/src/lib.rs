@@ -13,6 +13,7 @@
 //! global throttle here — caller (orchestrator) is expected to
 //! schedule calls sensibly. Per-call timeouts are 20s.
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 pub mod dns_info;
 pub mod gdelt;

@@ -14,29 +14,47 @@ use std::time::Duration;
 const GITHUB_API: &str = "https://api.github.com";
 const UA: &str = "PlausiDenSalesman/0.0";
 
+/// A GitHub repository summary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GithubRepo {
+    /// Repository name.
     pub name: String,
+    /// Web URL of the repo.
     pub html_url: String,
+    /// Repo description, if any.
     pub description: Option<String>,
+    /// Primary language, if detected.
     pub language: Option<String>,
+    /// Star count.
     pub stargazers_count: u64,
+    /// Last push timestamp (ISO 8601), if available.
     pub pushed_at: Option<String>,
+    /// Whether the repo is a fork.
     pub fork: bool,
 }
 
+/// A GitHub organization profile.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GithubOrg {
+    /// Org login/slug.
     pub login: String,
+    /// Display name, if set.
     pub name: Option<String>,
+    /// Org description, if set.
     pub description: Option<String>,
+    /// Blog/website URL, if set.
     pub blog: Option<String>,
+    /// Location, if set.
     pub location: Option<String>,
+    /// Number of public repositories.
     pub public_repos: u64,
+    /// Follower count.
     pub followers: u64,
+    /// Org creation timestamp (ISO 8601).
     pub created_at: String,
 }
 
+/// Client for the GitHub REST org/repos endpoints.
 #[derive(Debug)]
 pub struct GithubOrgClient {
     http: reqwest::Client,
@@ -126,6 +144,7 @@ impl GithubOrgClient {
     }
 }
 
+/// [`GithubOrgClient`] exposed as an agent-callable [`Tool`].
 #[derive(Debug)]
 pub struct GithubOrgTool {
     inner: std::sync::Arc<GithubOrgClient>,

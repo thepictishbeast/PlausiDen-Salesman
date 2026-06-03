@@ -10,19 +10,30 @@ use std::time::Duration;
 
 const HN_API: &str = "https://hn.algolia.com/api/v1/search";
 
+/// One HackerNews search hit (story or comment).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HnHit {
+    /// Algolia object id of the hit.
     pub object_id: String,
+    /// Story title, if this is a story.
     pub title: Option<String>,
+    /// Story URL, if present.
     pub url: Option<String>,
+    /// Points/score, if available.
     pub points: Option<i64>,
+    /// HN username of the author.
     pub author: Option<String>,
+    /// Self-post text, if this is a text story.
     pub story_text: Option<String>,
+    /// Comment text, if this is a comment.
     pub comment_text: Option<String>,
+    /// Creation timestamp (ISO 8601 string from the API).
     pub created_at: String,
+    /// Canonical HN URL for the item.
     pub story_url: String,
 }
 
+/// Client for the Algolia-backed HackerNews search API.
 #[derive(Debug)]
 pub struct HnClient {
     http: reqwest::Client,
@@ -94,6 +105,7 @@ impl HnClient {
     }
 }
 
+/// [`HnClient`] exposed as an agent-callable [`Tool`].
 #[derive(Debug)]
 pub struct HnTool {
     inner: std::sync::Arc<HnClient>,

@@ -14,14 +14,20 @@ use std::time::Duration;
 const SUMMARY_BASE: &str = "https://en.wikipedia.org/api/rest_v1/page/summary/";
 const UA: &str = "PlausiDenSalesman/0.0 (+https://plausiden.com/bots; civic-research)";
 
+/// A Wikipedia REST summary for an article.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WikipediaSummary {
+    /// Article title.
     pub title: String,
+    /// Lede/summary extract.
     pub extract: String,
+    /// Canonical desktop URL of the page.
     pub url: String,
+    /// True if the page is a disambiguation page.
     pub disambiguation: bool,
 }
 
+/// Client for the Wikipedia REST summary API.
 #[derive(Debug)]
 pub struct WikipediaClient {
     http: reqwest::Client,
@@ -81,6 +87,7 @@ impl WikipediaClient {
     }
 }
 
+/// [`WikipediaClient`] exposed as an agent-callable [`Tool`].
 #[derive(Debug)]
 pub struct WikipediaTool {
     inner: std::sync::Arc<WikipediaClient>,

@@ -16,14 +16,20 @@ use salesman_tools::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+/// Resolved DNS records for a domain.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DnsInfo {
+    /// A (IPv4 address) records.
     pub a: Vec<String>,
+    /// MX (mail exchanger) records.
     pub mx: Vec<String>,
+    /// TXT records (SPF/DMARC/verification, etc.).
     pub txt: Vec<String>,
+    /// NS (nameserver) records.
     pub ns: Vec<String>,
 }
 
+/// Resolves DNS records via the system resolver + `dig`.
 #[derive(Debug, Default)]
 pub struct DnsInfoClient;
 
@@ -70,6 +76,7 @@ async fn dig_query(domain: &str, qtype: &str) -> Result<Vec<String>> {
         .collect())
 }
 
+/// [`DnsInfoClient`] exposed as an agent-callable [`Tool`].
 #[derive(Debug)]
 pub struct DnsInfoTool {
     inner: std::sync::Arc<DnsInfoClient>,
