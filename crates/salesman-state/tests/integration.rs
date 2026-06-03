@@ -447,3 +447,114 @@ async fn apply_reply_to_prospect_round_trip() {
             .ok();
     }
 }
+
+/// The per-recipient rate cap (CLAUDE.md: 5 touches / 30d) must count by
+/// the broadened candidate set, so it can't be bypassed by sending to
+/// the same logical Gmail mailbox under dot/+suffix/googlemail aliases.
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing at a writable Postgres"]
+async fn rate_cap_counts_gmail_aliases_as_one_recipient() {
+    let url = std::env::var("TEST_DATABASE_URL")
+        .expect("set TEST_DATABASE_URL to a writable postgres URL");
+    let state = State::connect(&url).await.expect("connect");
+
+    let n = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let campaign_name = format!("salesman-ratetest-{n}");
+    let base = format!("ratetest{n}");
+    let email = format!("{base}@gmail.com");
+
+    let company = Company {
+        id: CompanyId::new(),
+        legal_name: None,
+        display_name: format!("RateTest {n}"),
+        homepage: None,
+        industry: None,
+        size_band: None,
+        region: None,
+        description: None,
+        tech_signals: vec![],
+        discovered_at: Utc::now(),
+        last_enriched_at: None,
+        source: DiscoverySource::OwnerSeed,
+        raw: BTreeMap::new(),
+    };
+    state
+        .insert_companies(std::slice::from_ref(&company))
+        .await
+        .expect("insert company");
+    let cid = state
+        .ensure_campaign(&campaign_name, "test", "test")
+        .await
+        .expect("ensure_campaign");
+    state
+        .upsert_prospects_for_campaign(cid, &[company.id])
+        .await
+        .expect("upsert");
+    let pid = state
+        .list_prospects_with_facts_for_campaign(cid)
+        .await
+        .expect("list")[0]
+        .prospect_id;
+    state
+        .insert_contact_and_link_as_primary(company.id, pid, "Jane", "Owner", &email, "test")
+        .await
+        .expect("link primary contact");
+
+    // Two SENT touches to this prospect (sent_at set so they count).
+    let pool = state.pool();
+    for _ in 0..2 {
+        let tid = state
+            .insert_touch_draft(pid, TouchChannel::Email, Some("hi"), "body")
+            .await
+            .expect("insert_touch_draft");
+        sqlx::query("UPDATE touches SET sent_at = NOW() WHERE id = $1")
+            .bind(tid.0)
+            .execute(pool)
+            .await
+            .expect("mark sent_at");
+    }
+
+    let window = 720; // 30 days
+    // Canonical address: 2 sends counted.
+    assert_eq!(
+        state
+            .count_touches_to_email_since(&email, window)
+            .await
+            .unwrap(),
+        2
+    );
+    // A dotted + plus-suffixed googlemail alias of the SAME mailbox counts
+    // the same — the cap is not alias-bypassable.
+    let alias = format!("{}.{}+work@googlemail.com", &base[..1], &base[1..]);
+    assert_eq!(
+        state
+            .count_touches_to_email_since(&alias, window)
+            .await
+            .unwrap(),
+        2,
+        "alias `{alias}` must count toward the same recipient's cap"
+    );
+    // A genuinely different mailbox at the same domain counts zero.
+    assert_eq!(
+        state
+            .count_touches_to_email_since(&format!("{base}other@gmail.com"), window)
+            .await
+            .unwrap(),
+        0
+    );
+
+    // cleanup (campaign cascade drops prospect/contacts/touches).
+    sqlx::query("DELETE FROM campaigns WHERE name = $1")
+        .bind(&campaign_name)
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM companies WHERE id = $1")
+        .bind(company.id.0)
+        .execute(pool)
+        .await
+        .ok();
+}
