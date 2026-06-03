@@ -11,7 +11,8 @@
 //! v1 redacts email addresses via a hand-rolled linear scan (no regex,
 //! so no catastrophic-backtracking risk) plus caller-supplied literal
 //! terms — e.g. the prospect's name / company, which the system already
-//! knows. Phone numbers and structured detectors can layer on later.
+//! knows — and phone numbers (conservatively; see [`find_phone_spans`]).
+//! Other structured detectors can layer on later.
 //!
 //! Reusable beyond the LLM path: log-line scrubbing, redacting the
 //! owner-notification body, etc.
@@ -66,6 +67,7 @@ impl Redacted {
 pub fn redact(text: &str, extra_terms: &[&str]) -> Redacted {
     // 1) Collect candidate spans (byte ranges into `text`).
     let mut spans: Vec<(usize, usize)> = find_email_spans(text);
+    spans.extend(find_phone_spans(text));
     for term in extra_terms {
         if term.is_empty() {
             continue;
@@ -172,6 +174,67 @@ fn find_email_spans(text: &str) -> Vec<(usize, usize)> {
     out
 }
 
+/// Find byte ranges of phone numbers, conservatively. A run of
+/// `[0-9 () .-]` (optionally led by `+`) qualifies only as a
+/// HIGH-PRECISION phone — a leading `+` with at least 8 digits, or at
+/// least 10 digits with at least one separator. This deliberately skips
+/// bare digit runs (order/account numbers), short ranges like
+/// `2020-2024`, and comma-grouped prices (commas break the run), to
+/// avoid redacting numbers the model legitimately needs. All matched
+/// bytes are ASCII, so the ranges are valid UTF-8 boundaries.
+fn find_phone_spans(text: &str) -> Vec<(usize, usize)> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        // A run starts at '+' or a digit, not glued to the right of an
+        // alphanumeric (avoids matching inside identifiers).
+        let starts = bytes[i] == b'+' || bytes[i].is_ascii_digit();
+        if !starts || (i > 0 && bytes[i - 1].is_ascii_alphanumeric()) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let lead_plus = bytes[i] == b'+';
+        let mut end = i;
+        while end < bytes.len() {
+            let b = bytes[end];
+            if b.is_ascii_digit() || matches!(b, b' ' | b'-' | b'.' | b'(' | b')') {
+                end += 1;
+            } else if b == b'+' && end == start {
+                end += 1; // a leading '+' only
+            } else {
+                break;
+            }
+        }
+        // Trim trailing non-digits so the span ends on the number, THEN
+        // count digits + separators over the trimmed span — otherwise a
+        // trailing space/paren would wrongly count as an internal
+        // separator (making a bare digit run qualify).
+        while end > start && !bytes[end - 1].is_ascii_digit() {
+            end -= 1;
+        }
+        if end <= start {
+            i += 1;
+            continue;
+        }
+        let span = &bytes[start..end];
+        let digits = span.iter().filter(|b| b.is_ascii_digit()).count();
+        let has_sep = span
+            .iter()
+            .any(|b| matches!(b, b' ' | b'-' | b'.' | b'(' | b')'));
+        let qualifies = (lead_plus && digits >= 8) || (digits >= 10 && has_sep);
+        let bounded = end >= bytes.len() || !bytes[end].is_ascii_alphanumeric();
+        if qualifies && bounded {
+            out.push((start, end));
+            i = end;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,6 +247,38 @@ mod tests {
         assert_eq!(r.redacted_count(), 1);
         // round-trip on the redacted text
         assert_eq!(r.rehydrate(r.text()), "please contact jane.doe@acme.com today");
+    }
+
+    #[test]
+    fn redacts_phone_numbers() {
+        for p in [
+            "+1-415-555-0123",
+            "(415) 555-0123",
+            "415.555.0123",
+            "+44 20 1234 5678",
+        ] {
+            let text = format!("call me at {p} anytime");
+            let r = redact(&text, &[]);
+            assert!(!r.text().contains(p), "phone `{p}` must be redacted");
+            assert_eq!(r.rehydrate(r.text()), text, "round-trip for `{p}`");
+        }
+    }
+
+    #[test]
+    fn does_not_redact_non_phone_numbers() {
+        // Bare digit runs, short ranges, and comma-grouped prices must
+        // survive — the model needs these and they aren't PII.
+        for s in [
+            "fiscal years 2020-2024",
+            "order 12345 shipped",
+            "call 1234567890 now", // 10 digits but NO separator
+            "total was 1,234,567.89",
+            "see RFC 8058 section 2",
+        ] {
+            let r = redact(s, &[]);
+            assert_eq!(r.redacted_count(), 0, "`{s}` should have no redactions");
+            assert_eq!(r.text(), s);
+        }
     }
 
     #[test]
