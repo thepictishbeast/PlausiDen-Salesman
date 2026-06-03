@@ -1860,6 +1860,11 @@ async fn main() -> Result<()> {
             let prospects = state
                 .list_prospects_with_facts_for_campaign(campaign_id)
                 .await?;
+            // Local-first: draft for prospects matching SALESMAN_TARGET_LOCALITY
+            // first (no-op when unset).
+            let loc_terms = target_locality_terms();
+            let loc_refs: Vec<&str> = loc_terms.iter().map(|s| s.as_str()).collect();
+            let prospects = order_local_first_with_terms(prospects, &loc_refs);
             let existing = state.list_drafts_awaiting_approval(campaign_id).await?;
             let existing_ids: std::collections::HashSet<_> =
                 existing.iter().map(|t| t.prospect_id).collect();
@@ -5377,9 +5382,14 @@ async fn main() -> Result<()> {
             let campaign_id = state
                 .ensure_campaign(&campaign, "(pick-angle)", "(unspecified)")
                 .await?;
-            let mut prospects = state
+            let prospects = state
                 .list_prospects_with_facts_for_campaign(campaign_id)
                 .await?;
+            // Local-first BEFORE truncate, so a limited batch targets local
+            // prospects first (no-op when SALESMAN_TARGET_LOCALITY unset).
+            let loc_terms = target_locality_terms();
+            let loc_refs: Vec<&str> = loc_terms.iter().map(|s| s.as_str()).collect();
+            let mut prospects = order_local_first_with_terms(prospects, &loc_refs);
             prospects.truncate(max);
             if prospects.is_empty() {
                 println!("(no prospects in `{campaign}` to score)");
@@ -6634,9 +6644,81 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Operator-configured target localities from `SALESMAN_TARGET_LOCALITY`
+/// (comma-separated, e.g. `"Edinburgh, Scotland, UK"`). Empty/unset means
+/// no local-first preference.
+fn target_locality_terms() -> Vec<String> {
+    std::env::var("SALESMAN_TARGET_LOCALITY")
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Reorder a campaign's prospects local-first (highest locality match to
+/// `terms` first; stable otherwise). A no-op when `terms` is empty, so
+/// default behavior is unchanged unless the operator opts in. Pure
+/// reordering of already-fetched rows — does not change what is
+/// discovered.
+fn order_local_first_with_terms(
+    mut prospects: Vec<salesman_state::query::ProspectWithFacts>,
+    terms: &[&str],
+) -> Vec<salesman_state::query::ProspectWithFacts> {
+    if terms.is_empty() {
+        return prospects;
+    }
+    let regions: Vec<Option<&str>> = prospects.iter().map(|p| p.region.as_deref()).collect();
+    let order = salesman_discovery::locality::rank_local_first(&regions, terms);
+    let mut slots: Vec<Option<salesman_state::query::ProspectWithFacts>> =
+        prospects.drain(..).map(Some).collect();
+    order
+        .into_iter()
+        .map(|i| slots[i].take().expect("rank_local_first yields each index once"))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn prospect_in(region: Option<&str>) -> salesman_state::query::ProspectWithFacts {
+        salesman_state::query::ProspectWithFacts {
+            prospect_id: salesman_core::ProspectId::new(),
+            company_id: salesman_core::CompanyId::new(),
+            display_name: region.unwrap_or("nowhere").to_string(),
+            homepage: None,
+            industry: None,
+            description: None,
+            region: region.map(str::to_string),
+            tech_signals: serde_json::Value::Array(vec![]),
+            tags: serde_json::Value::Object(serde_json::Map::new()),
+        }
+    }
+
+    #[test]
+    fn order_local_first_puts_matching_regions_first() {
+        let ps = vec![
+            prospect_in(Some("Tokyo, JP")),
+            prospect_in(Some("Edinburgh, Scotland")),
+            prospect_in(None),
+            prospect_in(Some("Glasgow, Scotland")),
+        ];
+        let out = order_local_first_with_terms(ps, &["scotland"]);
+        // Both Scotland rows come first (stable: Edinburgh before Glasgow),
+        // then the non-matching rows in original order.
+        assert_eq!(out[0].region.as_deref(), Some("Edinburgh, Scotland"));
+        assert_eq!(out[1].region.as_deref(), Some("Glasgow, Scotland"));
+        assert_eq!(out.len(), 4);
+    }
+
+    #[test]
+    fn order_local_first_empty_terms_is_noop() {
+        let ps = vec![prospect_in(Some("Tokyo")), prospect_in(Some("Edinburgh"))];
+        let out = order_local_first_with_terms(ps, &[]);
+        assert_eq!(out[0].region.as_deref(), Some("Tokyo"));
+        assert_eq!(out[1].region.as_deref(), Some("Edinburgh"));
+    }
 
     #[test]
     fn csv_quote_wraps_and_escapes() {
