@@ -10,10 +10,12 @@ pub mod email_match;
 pub mod error;
 pub mod ids;
 pub mod model;
+pub mod redact;
 pub mod tool;
 
 pub use email_match::{email_match_candidates, normalize_email_for_match};
 pub use error::{Error, Result};
+pub use redact::Redacted;
 
 #[cfg(test)]
 mod transition_props;
