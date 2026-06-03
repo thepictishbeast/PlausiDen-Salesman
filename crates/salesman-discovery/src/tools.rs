@@ -9,6 +9,8 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use url::Url;
 
+/// [`CsvSeed`] exposed as an agent-callable [`Tool`], confined to the
+/// operator import directory.
 #[derive(Debug)]
 pub struct CsvSeedTool {
     seed: CsvSeed,
@@ -78,6 +80,7 @@ impl Tool for CsvSeedTool {
     }
 }
 
+/// [`HomepageFetcher`] exposed as an agent-callable [`Tool`].
 #[derive(Debug)]
 pub struct HomepageFetchTool {
     fetcher: Arc<HomepageFetcher>,

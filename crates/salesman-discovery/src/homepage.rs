@@ -1,3 +1,5 @@
+//! Fetch + parse a company homepage into compact [`HomepageFacts`].
+
 use salesman_core::model::TechSignal;
 use salesman_core::{Error, Result};
 use scraper::{Html, Selector};
@@ -12,15 +14,23 @@ const UA: &str = "PlausiDenSalesman/0.0 (+https://plausiden.com/bots; civic-rese
 /// a `description` + a small list of `TechSignal`s.
 #[derive(Debug, Clone)]
 pub struct HomepageFacts {
+    /// The final URL after following redirects.
     pub final_url: Url,
+    /// HTTP status code of the final response.
     pub status: u16,
+    /// `<title>` text, if found.
     pub title: Option<String>,
+    /// `<meta name="description">` content, if found.
     pub meta_description: Option<String>,
+    /// `<meta name="keywords">` values, split + trimmed.
     pub meta_keywords: Vec<String>,
+    /// Detected tech-stack fingerprints.
     pub tech_signals: Vec<TechSignal>,
+    /// Size of the fetched HTML in bytes (capped).
     pub html_bytes: usize,
 }
 
+/// Fetches a homepage over HTTP and extracts [`HomepageFacts`].
 #[derive(Debug)]
 pub struct HomepageFetcher {
     http: reqwest::Client,

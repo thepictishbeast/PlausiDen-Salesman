@@ -17,6 +17,7 @@
 //! SECURITY: requests time out at 15s and are size-capped at 4MiB.
 //! We don't follow more than 5 redirects.
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 pub mod brave_search;
 pub mod csv_seed;

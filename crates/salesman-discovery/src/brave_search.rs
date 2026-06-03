@@ -23,10 +23,14 @@ use zeroize::Zeroizing;
 const BRAVE_SEARCH_URL: &str = "https://api.search.brave.com/res/v1/web/search";
 const SELF_THROTTLE: Duration = Duration::from_millis(1100);
 
+/// A single search result returned by [`BraveSearch`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchHit {
+    /// Result title.
     pub title: String,
+    /// Result URL.
     pub url: String,
+    /// Result snippet/description.
     pub description: String,
     /// Some hits are FAQs / videos / news; for B2B prospect discovery
     /// we typically want `web` results only, but we surface this so
@@ -34,6 +38,7 @@ pub struct SearchHit {
     pub kind: String,
 }
 
+/// Client for the Brave Search API, with built-in self-throttling.
 #[derive(Debug)]
 pub struct BraveSearch {
     api_key: Zeroizing<String>,
@@ -121,6 +126,7 @@ impl BraveSearch {
     }
 }
 
+/// [`BraveSearch`] exposed as an agent-callable [`Tool`].
 #[derive(Debug)]
 pub struct BraveSearchTool {
     inner: std::sync::Arc<BraveSearch>,

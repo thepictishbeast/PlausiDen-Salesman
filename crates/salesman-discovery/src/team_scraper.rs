@@ -27,9 +27,13 @@ const TIMEOUT_S: u64 = 20;
 /// A single found buyer candidate with role + email guess + confidence.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuyerCandidate {
+    /// Person's name.
     pub name: String,
+    /// Their role/title as found on the team page.
     pub role: String,
+    /// Best-guess email address.
     pub email: String,
+    /// The pattern used to guess `email` (e.g. `first.last`).
     pub email_pattern: String,
     /// 0..1 — combination of role priority + email-pattern prior +
     /// scrape-source confidence.
@@ -86,6 +90,8 @@ const ROLE_PRIORITY: &[(&str, f32)] = &[
     ("support", 0.05),
 ];
 
+/// Scrapes a company team/about page for buyer candidates, pairing
+/// each found person with an email guess + confidence.
 #[derive(Debug)]
 pub struct TeamScraper {
     http: Client,
