@@ -18,6 +18,7 @@ use salesman_tools::Tool;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
+/// Generates an honest "us vs. competitor" comparison page via the LLM.
 #[derive(Debug)]
 pub struct ComparisonPageTool {
     router: Arc<LlmRouter>,

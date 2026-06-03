@@ -25,7 +25,9 @@ use std::sync::Arc;
 /// One row of the product catalog.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProductEntry {
+    /// Product name.
     pub name: String,
+    /// One-line pitch.
     pub one_liner: String,
     /// Free-form description of who this is for. The picker uses
     /// this to match against the prospect's industry / description.
@@ -39,13 +41,18 @@ pub struct ProductEntry {
 /// What the picker returns.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnglePick {
+    /// Name of the product the picker chose.
     pub picked_product: String,
+    /// The angle the picker chose (verbatim or a riff).
     pub picked_angle: String,
+    /// Why the picker chose this product + angle.
     pub rationale: String,
+    /// Model confidence, 0..=1.
     #[serde(default)]
     pub confidence: Option<f32>,
 }
 
+/// Picks the best product + outreach angle for a prospect via the LLM.
 #[derive(Debug)]
 pub struct AnglePickerTool {
     router: Arc<LlmRouter>,

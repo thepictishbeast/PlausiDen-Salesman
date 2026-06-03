@@ -23,15 +23,21 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tracing::warn;
 
+/// The LLM's classification of an inbound reply.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClassifyReply {
+    /// Classified reply kind (a `ReplyKind` wire string).
     pub kind: String,
+    /// True if the model detected an opt-out request.
     pub optout_detected: bool,
+    /// Short rationale for the classification, if given.
     pub reason: Option<String>,
+    /// Model confidence, 0..=1.
     #[serde(default)]
     pub confidence: Option<f32>,
 }
 
+/// Classifies an inbound reply into a `ReplyKind` via the LLM.
 #[derive(Debug)]
 pub struct ReplyClassifyTool {
     router: Arc<LlmRouter>,

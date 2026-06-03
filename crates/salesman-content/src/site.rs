@@ -60,11 +60,15 @@ const PAGE_TEMPLATE: &str = r#"<!doctype html>
 </html>
 "#;
 
+/// Static site config used when rendering pages.
 #[derive(Debug, Clone)]
 pub struct SiteConfig {
-    pub origin: String,      // https://plausiden.com
-    pub site_name: String,   // PlausiDen
-    pub footer_html: String, // appended to every page
+    /// Site origin URL (e.g. `https://plausiden.com`).
+    pub origin: String,
+    /// Human-readable site name (e.g. `PlausiDen`).
+    pub site_name: String,
+    /// HTML footer appended to every rendered page.
+    pub footer_html: String,
 }
 
 impl SiteConfig {
@@ -79,12 +83,18 @@ impl SiteConfig {
     }
 }
 
+/// Metadata about a page that was rendered to disk.
 #[derive(Debug, Clone)]
 pub struct RenderedPage {
+    /// URL slug of the page.
     pub slug: String,
+    /// Source markdown/template path.
     pub source_path: PathBuf,
+    /// Path the rendered HTML was written to.
     pub output_path: PathBuf,
+    /// Page title.
     pub title: String,
+    /// Page meta description.
     pub description: String,
 }
 
@@ -102,13 +112,15 @@ pub fn render_site(src_dir: &Path, dst_dir: &Path, cfg: &SiteConfig) -> Result<V
         if path.extension().and_then(|e| e.to_str()) != Some("md") {
             continue;
         }
-        let stem = path
+        // `path` is walked from the operator-configured `src_dir`, not
+        // from agent/network input — these are operator content files.
+        let stem = path // nosemgrep
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("untitled")
             .to_string();
         let slug = sanitise_slug(&stem);
-        let md = fs::read_to_string(path)?;
+        let md = fs::read_to_string(path)?; // nosemgrep
         let (title, description) = extract_title_and_description(&md);
         let html = render_markdown_to_html(&md);
         let canonical = format!("{}/{slug}", cfg.origin.trim_end_matches('/'));

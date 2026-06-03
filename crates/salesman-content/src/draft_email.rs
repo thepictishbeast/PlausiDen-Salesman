@@ -24,16 +24,24 @@ use tracing::warn;
 /// One template loaded from `templates/cold/*.toml`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ColdTemplate {
+    /// Machine identifier; must match the file stem.
     pub key: String,
+    /// One-line description for the operator.
     pub description: String,
+    /// Prospect segment this template targets (e.g. `security`).
     #[serde(default)]
     pub segment: Option<String>,
+    /// Sequencer delay hint, in days.
     #[serde(default)]
     pub delay_days: Option<u32>,
+    /// Example subject the LLM writes a similar one from.
     pub subject_seed: String,
+    /// Example body the LLM uses as tone + structure.
     pub body_seed: String,
+    /// Phrases the LLM MUST include verbatim (e.g. the opt-out line).
     #[serde(default)]
     pub mandatory_phrases: Vec<String>,
+    /// Phrases the LLM MUST NOT use (clichés to avoid).
     #[serde(default)]
     pub forbidden_phrases: Vec<String>,
 }
@@ -74,7 +82,9 @@ fn _toml_dep_visible() {
 /// What the LLM returns. Mirrors the JSON schema in the system prompt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColdEmailDraft {
+    /// Subject line of the draft.
     pub subject: String,
+    /// Body of the draft.
     pub body: String,
     /// Short ad-hoc note from the model on why it picked this angle.
     /// Surfaced to the operator in the review queue.
@@ -86,6 +96,7 @@ pub struct ColdEmailDraft {
     pub confidence: Option<f32>,
 }
 
+/// Drafts a personalized cold email for a prospect via the LLM.
 #[derive(Debug)]
 pub struct DraftColdEmailTool {
     router: Arc<LlmRouter>,

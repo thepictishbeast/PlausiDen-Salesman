@@ -26,11 +26,14 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use tracing::warn;
 
+/// Interests extracted from a prospect's public signals.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractedInterests {
+    /// The extracted interest tags.
     pub interests: Vec<String>,
 }
 
+/// Extracts prospect interests from supplied text via the LLM.
 #[derive(Debug)]
 pub struct InterestExtractTool {
     router: Arc<LlmRouter>,

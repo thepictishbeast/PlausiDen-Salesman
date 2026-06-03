@@ -9,21 +9,29 @@
 
 use serde::{Deserialize, Serialize};
 
+/// One competitor in the operator's competitor catalog.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CompetitorEntry {
+    /// Canonical competitor name.
     pub name: String,
+    /// Alternate names/spellings the detector also matches.
     #[serde(default)]
     pub aliases: Vec<String>,
+    /// How the competitor positions itself, if noted.
     #[serde(default)]
     pub positioning: Option<String>,
+    /// Honest points where we win against them.
     #[serde(default)]
     pub where_we_win: Vec<String>,
+    /// Honest points where they win against us.
     #[serde(default)]
     pub where_they_win: Vec<String>,
 }
 
+/// A catalog of competitors, loaded from operator config.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CompetitorCatalog {
+    /// The competitor entries.
     #[serde(default)]
     pub competitors: Vec<CompetitorEntry>,
 }

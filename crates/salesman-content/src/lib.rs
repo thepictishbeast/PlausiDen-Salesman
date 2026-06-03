@@ -8,6 +8,7 @@
 //! AwaitingApproval queue — they are never sent without an explicit
 //! operator approve. Anything that bypasses owner-review is a bug.
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 pub mod angle_picker;
 pub mod case_study;

@@ -27,18 +27,23 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use tracing::warn;
 
+/// A drafted reply awaiting operator review.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplyDraft {
+    /// Subject line of the reply.
     pub subject: String,
+    /// Body of the reply.
     pub body: String,
     /// What this draft is trying to do — "answer-question" /
     /// "handle-objection" / "advance-to-meeting" / "send-pricing".
     /// Operator sees this in the review queue.
     pub intent: String,
+    /// Model confidence in the draft, 0..=1.
     #[serde(default)]
     pub confidence: Option<f32>,
 }
 
+/// Drafts a contextual reply to an inbound message via the LLM.
 #[derive(Debug)]
 pub struct DraftReplyTool {
     router: Arc<LlmRouter>,
@@ -224,12 +229,19 @@ impl DraftReplyTool {
 /// thing to construct instead of passing six positional Options.
 #[derive(Debug, Clone, Copy)]
 pub struct ReplyDraftContext<'a> {
+    /// The prospect record (JSON) for personalization.
     pub prospect: &'a Value,
+    /// Prior thread messages (JSON array), if any.
     pub prior_thread: Option<&'a Value>,
+    /// Our last outbound subject, if any.
     pub outbound_subject: Option<&'a str>,
+    /// Our last outbound body, if any.
     pub outbound_body: Option<&'a str>,
+    /// The inbound message subject, if any.
     pub inbound_subject: Option<&'a str>,
+    /// The inbound message body being replied to.
     pub inbound_body: &'a str,
+    /// The classified kind of the inbound (e.g. `question`).
     pub inbound_kind: &'a str,
 }
 
@@ -491,6 +503,7 @@ impl Tool for DraftReplyTool {
 /// One entry in the operator's objection library.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ObjectionEntry {
+    /// Stable identifier for this objection entry.
     pub key: String,
     /// Lower-case substrings the matcher looks for in the inbound.
     /// Any match → this entry is the threaded objection.
@@ -504,8 +517,10 @@ pub struct ObjectionEntry {
     pub posture: Option<String>,
 }
 
+/// A collection of operator-curated objection-handling entries.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ObjectionLibrary {
+    /// The objection entries, matched in order.
     #[serde(default)]
     pub objections: Vec<ObjectionEntry>,
 }
@@ -545,7 +560,9 @@ pub fn load_objections_toml(text: &str) -> Result<ObjectionLibrary> {
 /// One offered meeting slot. Operator-curated.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MeetingSlot {
+    /// Slot start time (with timezone offset).
     pub start: chrono::DateTime<chrono::FixedOffset>,
+    /// Optional note shown with the offered slot.
     #[serde(default)]
     pub note: Option<String>,
 }
@@ -553,10 +570,14 @@ pub struct MeetingSlot {
 /// Operator-curated calendar config. Read from a TOML file.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MeetingCalendar {
+    /// Default meeting duration in minutes.
     #[serde(default = "default_duration_minutes")]
     pub duration_minutes: u32,
+    /// IANA timezone the slots are expressed in, if set.
     pub timezone: Option<String>,
+    /// Video-call link offered with a confirmed meeting, if set.
     pub zoom_link: Option<String>,
+    /// The offered meeting slots.
     #[serde(default)]
     pub slots: Vec<MeetingSlot>,
 }
