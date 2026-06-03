@@ -33,11 +33,29 @@ const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 /// [`LlmBackend`](crate::LlmBackend) implementation for Anthropic Claude.
-#[derive(Debug)]
+///
+/// SECURITY: the `api_key` is held in `Zeroizing<String>` and `Debug` is
+/// implemented manually to REDACT it. The derived `Debug` would print the
+/// key verbatim — `Zeroizing`'s `Debug` delegates to the inner `String` —
+/// and `LlmBackend` requires `Debug`, so a backend logged via `{:?}`
+/// (directly or inside a `Box<dyn LlmBackend>`) would leak the Anthropic
+/// key (CLAUDE.md: no secrets in logs).
 pub struct ClaudeBackend {
     model: String,
     api_key: Zeroizing<String>,
     http: reqwest::Client,
+}
+
+impl std::fmt::Debug for ClaudeBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Redact the key; list other fields explicitly (fail-safe — a
+        // field added later is omitted until consciously included).
+        f.debug_struct("ClaudeBackend")
+            .field("model", &self.model)
+            .field("api_key", &"<redacted>")
+            .field("http", &self.http)
+            .finish()
+    }
 }
 
 impl ClaudeBackend {
@@ -383,5 +401,18 @@ mod tests {
         assert_eq!(msgs[2]["role"], "user");
         assert_eq!(msgs[2]["content"][0]["type"], "tool_result");
         assert_eq!(msgs[2]["content"][0]["tool_use_id"], "tool_1");
+    }
+
+    #[test]
+    fn debug_redacts_the_api_key() {
+        let backend = ClaudeBackend::new("claude-opus-4-8", "sk-ant-secret-key-abc123");
+        let rendered = format!("{backend:?}");
+        assert!(
+            !rendered.contains("sk-ant-secret-key-abc123"),
+            "Debug must not leak the Anthropic API key: {rendered}"
+        );
+        assert!(rendered.contains("<redacted>"), "{rendered}");
+        // The model name is non-secret and useful in logs.
+        assert!(rendered.contains("claude-opus-4-8"), "{rendered}");
     }
 }

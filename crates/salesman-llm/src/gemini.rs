@@ -31,11 +31,29 @@ use zeroize::Zeroizing;
 const GEMINI_API_BASE: &str = "https://generativelanguage.googleapis.com/v1beta";
 
 /// [`LlmBackend`](crate::LlmBackend) implementation for Google Gemini.
-#[derive(Debug)]
+///
+/// SECURITY: the `api_key` is held in `Zeroizing<String>` and `Debug` is
+/// implemented manually to REDACT it. The derived `Debug` would print the
+/// key verbatim — `Zeroizing`'s `Debug` delegates to the inner `String` —
+/// and `LlmBackend` requires `Debug`, so a backend logged via `{:?}`
+/// (directly or inside a `Box<dyn LlmBackend>`) would leak the Gemini key
+/// (CLAUDE.md: no secrets in logs).
 pub struct GeminiBackend {
     model: String,
     api_key: Zeroizing<String>,
     http: reqwest::Client,
+}
+
+impl std::fmt::Debug for GeminiBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Redact the key; list other fields explicitly (fail-safe — a
+        // field added later is omitted until consciously included).
+        f.debug_struct("GeminiBackend")
+            .field("model", &self.model)
+            .field("api_key", &"<redacted>")
+            .field("http", &self.http)
+            .finish()
+    }
 }
 
 impl GeminiBackend {
@@ -413,5 +431,17 @@ mod tests {
         assert_eq!(contents[1]["role"], "model");
         assert_eq!(contents[1]["parts"][0]["functionCall"]["name"], "search");
         assert_eq!(contents[1]["parts"][0]["functionCall"]["args"]["q"], "hi");
+    }
+
+    #[test]
+    fn debug_redacts_the_api_key() {
+        let backend = GeminiBackend::new("gemini-2.5-pro", "AIza-secret-gemini-key-xyz");
+        let rendered = format!("{backend:?}");
+        assert!(
+            !rendered.contains("AIza-secret-gemini-key-xyz"),
+            "Debug must not leak the Gemini API key: {rendered}"
+        );
+        assert!(rendered.contains("<redacted>"), "{rendered}");
+        assert!(rendered.contains("gemini-2.5-pro"), "{rendered}");
     }
 }
