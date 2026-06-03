@@ -50,14 +50,23 @@ fn random_pick(keys: &[String], default_key: &str) -> String {
     keys[idx].clone()
 }
 
+/// A prospect joined with its company's enrichment facts, as consumed
+/// by the drafter tools.
 #[derive(Debug, Clone)]
 pub struct ProspectWithFacts {
+    /// The prospect id.
     pub prospect_id: ProspectId,
+    /// The prospect's company id.
     pub company_id: CompanyId,
+    /// Company display name.
     pub display_name: String,
+    /// Company homepage URL, if known.
     pub homepage: Option<String>,
+    /// Company industry, if known.
     pub industry: Option<String>,
+    /// Company description, if known.
     pub description: Option<String>,
+    /// Detected tech signals (JSONB array).
     pub tech_signals: serde_json::Value,
     /// Per-prospect tags JSONB (interests, notes, do-not-pitch
     /// list). `{}` for new prospects; accumulates via
@@ -85,28 +94,44 @@ impl ProspectWithFacts {
     }
 }
 
+/// One step in a campaign sequence definition.
 #[derive(Debug, Clone)]
 pub struct SequenceStepInput {
+    /// Channel for this step (e.g. `email`).
     pub channel: String,
+    /// Template key to draft from.
     pub template_key: String,
+    /// Delay before this step, in days.
     pub delay_days: u32,
 }
 
+/// A prospect whose next sequence step is due to be drafted.
 #[derive(Debug, Clone)]
 pub struct DueProspect {
+    /// The prospect id.
     pub prospect_id: ProspectId,
+    /// The sequence the prospect is enrolled in.
     pub sequence_id: uuid::Uuid,
+    /// The step index that is now due.
     pub current_step: u32,
+    /// Template key for the due step.
     pub template_key: String,
+    /// Channel for the due step.
     pub channel: String,
 }
 
+/// Per-template performance counters.
 #[derive(Debug, Clone)]
 pub struct TemplateStat {
+    /// The template key these stats are for.
     pub template_key: String,
+    /// Number of drafts produced from this template.
     pub drafted: i64,
+    /// Number sent.
     pub sent: i64,
+    /// Number that received any reply.
     pub replied: i64,
+    /// Number that received an engaged (positive) reply.
     pub engaged_replied: i64,
 }
 
@@ -129,13 +154,20 @@ impl TemplateStat {
     }
 }
 
+/// A campaign with its spend vs. cost cap.
 #[derive(Debug, Clone)]
 pub struct CampaignCostRow {
+    /// Campaign id.
     pub id: CampaignId,
+    /// Campaign name.
     pub name: String,
+    /// Campaign status (wire string).
     pub status: String,
+    /// Configured cost cap in micro-USD, if any.
     pub cost_cap_micro_usd: Option<i64>,
+    /// Total spent so far, in micro-USD.
     pub spent_micro_usd: i64,
+    /// Number of LLM calls attributed to the campaign.
     pub calls: i64,
 }
 
@@ -159,71 +191,124 @@ impl CampaignCostRow {
     }
 }
 
+/// One `llm_calls` row to persist (a single inference call).
 #[derive(Debug, Clone)]
 pub struct LlmCallRecord {
+    /// Backend that served the call.
     pub backend: String,
+    /// Model identifier.
     pub model: String,
+    /// Prompt token count.
     pub prompt_tokens: u32,
+    /// Output token count.
     pub output_tokens: u32,
+    /// Cache-hit token count.
     pub cache_hit_tokens: u32,
+    /// Call latency in milliseconds.
     pub latency_ms: u64,
+    /// Estimated cost in micro-USD.
     pub cost_micro_usd: u64,
+    /// What the call was for (e.g. `draft_cold`).
     pub purpose: String,
+    /// Related entity id (touch/prospect/etc.), if any.
     pub related_id: Option<uuid::Uuid>,
+    /// Kind of the related entity, if any.
     pub related_kind: Option<String>,
 }
 
+/// Aggregated LLM cost/usage grouped by backend + model.
 #[derive(Debug, Clone)]
 pub struct CostSummaryRow {
+    /// Backend.
     pub backend: String,
+    /// Model identifier.
     pub model: String,
+    /// Number of calls in the group.
     pub count: i64,
+    /// Total prompt tokens.
     pub prompt_tokens: i64,
+    /// Total output tokens.
     pub output_tokens: i64,
+    /// Total cache-hit tokens.
     pub cache_hit_tokens: i64,
+    /// Total cost in micro-USD.
     pub cost_micro_usd: i64,
+    /// Average latency in milliseconds.
     pub avg_latency_ms: i64,
+    /// 95th-percentile latency in milliseconds.
     pub p95_latency_ms: i64,
 }
 
+/// Aggregated LLM cost/usage grouped by call purpose.
 #[derive(Debug, Clone)]
 pub struct PurposeCostRow {
+    /// The call purpose this row aggregates.
     pub purpose: String,
+    /// Number of calls in the group.
     pub count: i64,
+    /// Total prompt tokens.
     pub prompt_tokens: i64,
+    /// Total output tokens.
     pub output_tokens: i64,
+    /// Total cache-hit tokens.
     pub cache_hit_tokens: i64,
+    /// Total cost in micro-USD.
     pub cost_micro_usd: i64,
+    /// Average latency in milliseconds.
     pub avg_latency_ms: i64,
+    /// 95th-percentile latency in milliseconds.
     pub p95_latency_ms: i64,
 }
 
+/// One entry on the suppression list.
 #[derive(Debug, Clone)]
 pub struct SuppressionRow {
+    /// Row id.
     pub id: uuid::Uuid,
+    /// The suppressed target (e.g. an email address or domain).
     pub target: String,
+    /// Kind of target (e.g. `email`, `domain`).
     pub target_kind: String,
+    /// Why the target was suppressed.
     pub reason: String,
+    /// What added it (e.g. `reply_optout`, `manual`).
     pub source: String,
+    /// When it was added.
     pub added_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// A snapshot of pipeline counts over a recent time window.
 #[derive(Debug, Clone)]
 pub struct PipelineSummary {
+    /// Total companies discovered.
     pub companies: i64,
+    /// Total prospects.
     pub prospects: i64,
+    /// Prospects in the `new` state.
     pub new_prospects: i64,
+    /// Prospects in the `contacted` state.
     pub contacted: i64,
+    /// Prospects in the `engaged` state.
     pub engaged: i64,
+    /// Prospects in the `won` state.
     pub won: i64,
+    /// Prospects in the `lost` state.
     pub lost: i64,
+    /// Prospects in the `suppressed` state.
     pub suppressed_prospects: i64,
+    /// Drafts awaiting operator approval.
     pub awaiting_approval: i64,
+    /// Sends within the window.
     pub sent_recent: i64,
+    /// Replies within the window.
     pub replies_recent: i64,
+    /// Opt-outs within the window.
     pub optout_recent: i64,
+    /// Total suppression-list size.
     pub suppressions: i64,
+    /// Receipts written within the window.
     pub receipts_recent: i64,
+    /// The window size, in hours.
     pub since_hours: i64,
 }
 
@@ -273,12 +358,18 @@ impl PipelineSummary {
     }
 }
 
+/// A stored inbound reply, in display form.
 #[derive(Debug, Clone)]
 pub struct ReplyRow {
+    /// Sender address.
     pub from_address: String,
+    /// Subject line, if any.
     pub subject: Option<String>,
+    /// Message body.
     pub body: String,
+    /// Classified reply kind (wire string).
     pub kind: String,
+    /// When the reply was received.
     pub received_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -289,23 +380,33 @@ pub struct ReplyRow {
 /// reply as if it's the first.
 #[derive(Debug, Clone)]
 pub struct ThreadTurn {
+    /// When this turn occurred.
     pub at: chrono::DateTime<chrono::Utc>,
     /// "outbound" for touches we sent; "reply" for inbound replies.
     pub role: String,
+    /// Subject line, if any.
     pub subject: Option<String>,
+    /// Message body.
     pub body: String,
     /// Only set on inbound replies — the classifier kind
     /// (engaged / question / objection / …).
     pub reply_kind: Option<String>,
 }
 
+/// An inbound reply that has not yet been classified.
 #[derive(Debug, Clone)]
 pub struct UnclassifiedReply {
+    /// The reply's id.
     pub reply_id: uuid::Uuid,
+    /// The prospect the reply belongs to.
     pub prospect_id: ProspectId,
+    /// The campaign the prospect is in.
     pub campaign_id: CampaignId,
+    /// Sender address.
     pub from_address: String,
+    /// Subject line, if any.
     pub subject: Option<String>,
+    /// Message body.
     pub body: String,
     /// Raw header bag persisted at insert_reply_threaded time.
     /// The classifier checks `Authentication-Results` here BEFORE
@@ -319,31 +420,48 @@ pub struct UnclassifiedReply {
 /// outbound that prompted it. Used by `salesman draft-replies`.
 #[derive(Debug, Clone)]
 pub struct ReplyNeedingResponse {
+    /// The reply's id.
     pub reply_id: uuid::Uuid,
+    /// The prospect the reply belongs to.
     pub prospect_id: ProspectId,
+    /// Sender address.
     pub from_address: String,
+    /// Inbound subject, if any.
     pub inbound_subject: Option<String>,
+    /// Inbound body being replied to.
     pub inbound_body: String,
+    /// Classified inbound kind (wire string).
     pub inbound_kind: String,
     /// The outbound that this reply is in response to, if threading
     /// matched. Often Some — IMAP threading via In-Reply-To /
     /// References lines up most of the time.
     pub outbound_subject: Option<String>,
+    /// Body of the matched outbound, if any.
     pub outbound_body: Option<String>,
     /// Prospect display fields the drafter uses for personalization.
     pub company_name: String,
+    /// Prospect company industry, if known.
     pub industry: Option<String>,
+    /// Prospect company description, if known.
     pub description: Option<String>,
 }
 
+/// A queued/awaiting-approval touch in display form.
 #[derive(Debug, Clone)]
 pub struct TouchSummary {
+    /// The touch id.
     pub touch_id: salesman_core::TouchId,
+    /// The prospect the touch targets.
     pub prospect_id: ProspectId,
+    /// Company display name.
     pub company: String,
+    /// Channel (e.g. `email`).
     pub channel: String,
+    /// Subject line, if any.
     pub subject: Option<String>,
+    /// Message body.
     pub body: String,
+    /// When the touch was queued.
     pub queued_at: chrono::DateTime<chrono::Utc>,
     /// Provenance JSONB { backend, model, via_fallback, purpose }.
     /// None for legacy touches drafted before migration 0005.
@@ -375,14 +493,23 @@ impl TouchSummary {
 /// drafter consumes these as personalization anchors.
 #[derive(Debug, Clone)]
 pub struct TriggerEventRow {
+    /// Trigger event id.
     pub id: uuid::Uuid,
+    /// The prospect this event is an anchor for.
     pub prospect_id: ProspectId,
+    /// Company display name.
     pub company: String,
+    /// Where the event came from (e.g. `recent_news`).
     pub source: String,
+    /// The event headline used as the outreach anchor.
     pub headline: String,
+    /// Source URL, if any.
     pub url: Option<String>,
+    /// Recency score in 0..=1.
     pub recency_score: f32,
+    /// Relevance score in 0..=1.
     pub relevance_score: f32,
+    /// When the event was recorded.
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -398,12 +525,19 @@ impl TriggerEventRow {
 /// fields so the public function stays under the seven-arg lint.
 #[derive(Debug, Clone)]
 pub struct TriggerEventInsert<'a> {
+    /// The prospect the event anchors to.
     pub prospect_id: ProspectId,
+    /// Where the event came from.
     pub source: &'a str,
+    /// The event headline.
     pub headline: &'a str,
+    /// Source URL, if any.
     pub url: Option<&'a str>,
+    /// Recency score in 0..=1.
     pub recency_score: f32,
+    /// Relevance score in 0..=1.
     pub relevance_score: f32,
+    /// Raw source payload (JSONB), retained for audit.
     pub raw: &'a serde_json::Value,
 }
 

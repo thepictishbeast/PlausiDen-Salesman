@@ -5,6 +5,7 @@
 //! handles `Db` errors by failing the operation, not by retrying
 //! inside the call.
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 use async_trait::async_trait;
 use salesman_core::{Error, Result};
