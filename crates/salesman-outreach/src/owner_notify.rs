@@ -13,6 +13,7 @@
 //! exact wording unit-testable without a mailbox or a database.
 
 use chrono::{DateTime, Utc};
+use salesman_core::sanitize_header_value;
 
 /// Everything needed to render an owner audit-notification for one
 /// outbound contact.
@@ -58,15 +59,36 @@ const SUBJECT_PREFIX: &str = "[Salesman] Reached out to";
 /// than being omitted, so the layout (and any log scraping over it) is
 /// stable across contacts.
 pub fn build_owner_notification(input: &OwnerNotifyInput) -> OwnerNotification {
-    let label = input.prospect_label.trim();
-    let label = if label.is_empty() { "(unknown)" } else { label };
+    // The subject is an email header and the Who/How/… lines are each a
+    // single body line. Prospect-derived values (label, address, channel)
+    // and the echoed sent-subject are untrusted (scraped/imported), so a
+    // raw CR/LF in any of them would inject headers or split the message
+    // (CWE-93). Sanitize every single-line field; the multi-line message
+    // body is the one place line breaks are intended, so it is left
+    // intact (only right-trimmed).
+    let label = sanitize_header_value(input.prospect_label);
+    let label = if label.is_empty() {
+        "(unknown)".to_string()
+    } else {
+        label
+    };
 
     let subject = format!("{SUBJECT_PREFIX} {label}");
 
-    let dash = "—";
-    let sent_subject = input.subject.map(str::trim).filter(|s| !s.is_empty());
-    let campaign = input.campaign.map(str::trim).filter(|s| !s.is_empty());
-    let receipt = input.receipt_id.map(str::trim).filter(|s| !s.is_empty());
+    let to = sanitize_header_value(input.to_address);
+    let how = sanitize_header_value(input.channel);
+    let sent_subject = input
+        .subject
+        .map(sanitize_header_value)
+        .filter(|s| !s.is_empty());
+    let campaign = input
+        .campaign
+        .map(sanitize_header_value)
+        .filter(|s| !s.is_empty());
+    let receipt = input
+        .receipt_id
+        .map(sanitize_header_value)
+        .filter(|s| !s.is_empty());
 
     let body = format!(
         "Salesman contacted a prospect on your behalf.\n\
@@ -81,12 +103,12 @@ pub fn build_owner_notification(input: &OwnerNotifyInput) -> OwnerNotification {
          --- message sent ---\n\
          {body}\n",
         label = label,
-        to = input.to_address.trim(),
-        how = input.channel.trim(),
+        to = to,
+        how = how,
         when = input.sent_at.to_rfc3339(),
-        campaign = campaign.unwrap_or(dash),
-        receipt = receipt.unwrap_or(dash),
-        subj = sent_subject.unwrap_or(dash),
+        campaign = campaign.unwrap_or_else(|| "—".to_string()),
+        receipt = receipt.unwrap_or_else(|| "—".to_string()),
+        subj = sent_subject.unwrap_or_else(|| "—".to_string()),
         body = input.body.trim_end(),
     );
 
@@ -171,19 +193,52 @@ mod tests {
         assert!(n.subject.contains("(unknown)"));
     }
 
+    #[test]
+    fn subject_resists_crlf_header_injection() {
+        // A scraped business name carrying a CRLF + an injected header.
+        let mut input = sample();
+        input.prospect_label = "Acme\r\nBcc: attacker@evil.example";
+        let n = build_owner_notification(&input);
+        // The subject is a header line — it must never contain a break.
+        assert!(!n.subject.contains('\r'), "subject: {:?}", n.subject);
+        assert!(!n.subject.contains('\n'), "subject: {:?}", n.subject);
+        // The injected text survives only as harmless flattened literal
+        // text on the subject line, not as a real header.
+        assert!(n.subject.contains("Acme Bcc: attacker@evil.example"));
+        // The Who: body line that echoes the label is likewise flattened.
+        let who = n.body.lines().find(|l| l.starts_with("Who:")).unwrap();
+        assert!(who.contains("Acme Bcc: attacker@evil.example"), "{who:?}");
+    }
+
+    #[test]
+    fn injected_address_and_channel_stay_single_line() {
+        let mut input = sample();
+        input.to_address = "x@y.z\r\nSubject: spoofed";
+        input.channel = "email\nX-Evil: 1";
+        let n = build_owner_notification(&input);
+        // Each labelled body line stays exactly one physical line.
+        let who = n.body.lines().find(|l| l.starts_with("Who:")).unwrap();
+        let how = n.body.lines().find(|l| l.starts_with("How:")).unwrap();
+        assert!(who.contains("x@y.z Subject: spoofed"), "{who:?}");
+        assert!(how.contains("email X-Evil: 1"), "{how:?}");
+    }
+
     proptest::proptest! {
-        /// The formatter is fed prospect-derived strings, so it must
-        /// never panic on arbitrary input, and the subject must always
-        /// identify the prospect — the trimmed label, or "(unknown)"
-        /// when the label is blank (so a contact is always findable).
+        /// The formatter is fed prospect-derived strings — including, in
+        /// the wild, ones with embedded control characters. It must never
+        /// panic, the subject (an email header) must never carry a line
+        /// break, and the contact must stay findable: the sanitized label
+        /// (or the "(unknown)" fallback) appears in the subject.
         #[test]
-        fn never_panics_and_subject_identifies_prospect(
-            label in ".{0,40}",
+        fn subject_is_single_line_and_identifies_prospect(
+            label_chars in proptest::collection::vec(proptest::char::any(), 0..40),
             to in ".{0,40}",
             channel in ".{0,12}",
             subject in proptest::option::of(".{0,40}"),
-            body in ".{0,200}",
+            body_chars in proptest::collection::vec(proptest::char::any(), 0..200),
         ) {
+            let label: String = label_chars.into_iter().collect();
+            let body: String = body_chars.into_iter().collect();
             let input = OwnerNotifyInput {
                 prospect_label: &label,
                 to_address: &to,
@@ -195,10 +250,16 @@ mod tests {
                 campaign: None,
             };
             let n = build_owner_notification(&input);
-            let trimmed = label.trim();
-            let expected = if trimmed.is_empty() { "(unknown)" } else { trimmed };
+            proptest::prop_assert!(!n.subject.contains('\r'), "subject: {:?}", n.subject);
+            proptest::prop_assert!(!n.subject.contains('\n'), "subject: {:?}", n.subject);
+            let sanitized = sanitize_header_value(&label);
+            let expected = if sanitized.is_empty() {
+                "(unknown)".to_string()
+            } else {
+                sanitized
+            };
             proptest::prop_assert!(
-                n.subject.contains(expected),
+                n.subject.contains(&expected),
                 "subject {:?} must contain {:?}", n.subject, expected
             );
         }

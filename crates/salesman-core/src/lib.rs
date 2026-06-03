@@ -8,6 +8,7 @@
 
 pub mod email_match;
 pub mod error;
+pub mod header;
 pub mod ids;
 pub mod model;
 pub mod redact;
@@ -15,6 +16,7 @@ pub mod tool;
 
 pub use email_match::{email_match_candidates, mask_email, normalize_email_for_match};
 pub use error::{Error, Result};
+pub use header::sanitize_header_value;
 pub use redact::Redacted;
 
 #[cfg(test)]
