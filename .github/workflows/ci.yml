@@ -126,6 +126,39 @@ jobs:
           ./target/debug/salesman queue-clear --help
           ./target/debug/salesman approve-batch --help
 
+  integration:
+    name: DB integration test (ephemeral Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: salesman
+          POSTGRES_PASSWORD: salesman
+          POSTGRES_DB: salesman_test
+        ports:
+          - 5432:5432
+        # Wait until Postgres is actually accepting connections before
+        # the job's steps run.
+        options: >-
+          --health-cmd "pg_isready -U salesman"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      # Exercises the gated state integration test (full_round_trip):
+      # connect() auto-runs every migration (0001..) on this FRESH,
+      # EPHEMERAL CI database — never the live VPS Postgres — then the
+      # test drives discover -> campaign -> draft -> approve -> receipt
+      # -> send-mark -> owner-notification -> suppression + region
+      # round-trip. The bootstrap `salesman` superuser can CREATE
+      # EXTENSION citext/pgcrypto, which migration 0001 needs.
+      - name: Run gated state integration test
+        env:
+          TEST_DATABASE_URL: postgres://salesman:salesman@localhost:5432/salesman_test
+        run: cargo test -p salesman-state --test integration -- --ignored
+
   supply_chain:
     name: supply-chain (cargo deny)
     runs-on: ubuntu-latest
