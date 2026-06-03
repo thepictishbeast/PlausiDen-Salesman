@@ -116,6 +116,7 @@ jobs:
           ./target/debug/salesman preflight --help
           ./target/debug/salesman send-pending --help
           ./target/debug/salesman costs --help
+          ./target/debug/salesman owner-notifications --help
           ./target/debug/salesman suppressions --help
           ./target/debug/salesman suppressions list --help
           ./target/debug/salesman suppressions add --help

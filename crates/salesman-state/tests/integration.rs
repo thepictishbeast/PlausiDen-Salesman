@@ -213,3 +213,82 @@ async fn full_round_trip() {
         ProspectId::new(),
     );
 }
+
+/// Compliance-critical: an opt-out is matched against the broadened
+/// candidate set (plus-addressing, Gmail dot-stripping, googlemail
+/// alias, case) — and an *email* opt-out must NOT over-block the whole
+/// domain. Exercises add_suppression's canonicalization + is_suppressed's
+/// candidate matching end-to-end against Postgres.
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing at a writable Postgres"]
+async fn suppression_broadening_round_trip() {
+    let url = std::env::var("TEST_DATABASE_URL")
+        .expect("set TEST_DATABASE_URL to a writable postgres URL");
+    let state = State::connect(&url).await.expect("connect");
+
+    // Unique per-run mailbox base (lowercase + digits, no dots/plus) so
+    // concurrent/repeat runs don't collide.
+    let n = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let base = format!("supptest{n}");
+    let canonical = format!("{base}@gmail.com");
+
+    // Opt out a mixed-case, plus-suffixed form; it canonicalizes on insert.
+    state
+        .add_suppression(
+            &format!("{base}+Sales@Gmail.com"),
+            "email",
+            "test opt-out",
+            "test",
+        )
+        .await
+        .expect("add_suppression email");
+
+    // The bare canonical mailbox is suppressed.
+    assert!(
+        state.is_suppressed(&canonical).await.unwrap(),
+        "canonical gmail mailbox must be suppressed"
+    );
+    // A dotted + plus-suffixed googlemail.com variant of the SAME mailbox
+    // is also suppressed (Gmail ignores dots; googlemail aliases gmail).
+    let dotted = format!("{}.{}+promo@googlemail.com", &base[..1], &base[1..]);
+    assert!(
+        state.is_suppressed(&dotted).await.unwrap(),
+        "dotted/plus/googlemail variant `{dotted}` must be suppressed"
+    );
+    // But a DIFFERENT mailbox at the same domain must NOT be suppressed —
+    // an email opt-out must never over-block the whole gmail.com domain.
+    assert!(
+        !state
+            .is_suppressed(&format!("different{n}@gmail.com"))
+            .await
+            .unwrap(),
+        "an email opt-out must not over-block other mailboxes at the domain"
+    );
+
+    // Domain suppression blocks every address at that domain.
+    let dom = format!("blocked{n}.example");
+    state
+        .add_suppression(&dom, "domain", "test domain block", "test")
+        .await
+        .expect("add_suppression domain");
+    assert!(
+        state.is_suppressed(&format!("anyone@{dom}")).await.unwrap(),
+        "domain suppression must block any address at the domain"
+    );
+
+    // Cleanup.
+    let pool = state.pool();
+    sqlx::query("DELETE FROM suppressions WHERE target = $1")
+        .bind(&canonical)
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM suppressions WHERE target = $1")
+        .bind(&dom)
+        .execute(pool)
+        .await
+        .ok();
+}
