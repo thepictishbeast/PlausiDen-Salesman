@@ -157,6 +157,10 @@ impl Tool for AnglePickerTool {
             serde_json::to_string_pretty(&prospect).unwrap_or_default(),
             serde_json::to_string_pretty(&catalog_v).unwrap_or_default(),
         );
+        // PII-redaction boundary (CLAUDE.md): the prospect facts are a
+        // SaaS-model input. Redact any email before the call; rehydrate the
+        // output before parsing. (Catalog is product data, no PII.)
+        let redaction = salesman_core::redact::redact(&user, &[]);
 
         let req = ChatRequest {
             messages: vec![
@@ -168,7 +172,7 @@ impl Tool for AnglePickerTool {
                 },
                 Message {
                     role: Role::User,
-                    content: user,
+                    content: redaction.text().to_string(),
                     tool_calls: vec![],
                     tool_results: vec![],
                 },
@@ -183,7 +187,8 @@ impl Tool for AnglePickerTool {
             .router
             .chat_for(RouteHint::Reasoning, "angle_picker", req)
             .await?;
-        let pick = parse_pick(&resp.message.content).map_err(|e| Error::Tool {
+        let rehydrated = redaction.rehydrate(&resp.message.content);
+        let pick = parse_pick(&rehydrated).map_err(|e| Error::Tool {
             tool: "content.angle_picker".into(),
             message: format!("parse: {e}"),
         })?;
