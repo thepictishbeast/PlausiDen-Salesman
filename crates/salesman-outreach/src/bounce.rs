@@ -20,30 +20,45 @@
 
 use std::fmt;
 
+/// A parsed classification of an SMTP send failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SmtpFailure {
     /// 5xx + a subcode that is unambiguously about the RECIPIENT
     /// being undeliverable. Caller should mark the recipient
     /// suppressed with source="bounce".
     HardBounce {
+        /// Basic SMTP reply code (5xx).
         basic: u16,
+        /// RFC 3463 enhanced status code (X.Y.Z), if present.
         enhanced: Option<String>,
+        /// The raw failure message.
         message: String,
     },
     /// 5xx that is NOT about the recipient (rate limit on sender,
     /// content rejection, policy block). Do NOT auto-suppress; the
     /// owner needs to investigate.
     PermanentOther {
+        /// Basic SMTP reply code (5xx).
         basic: u16,
+        /// RFC 3463 enhanced status code (X.Y.Z), if present.
         enhanced: Option<String>,
+        /// The raw failure message.
         message: String,
     },
     /// 4xx — try later. Caller should leave the touch in
     /// `awaiting_send` for a retry.
-    Transient { basic: u16, message: String },
+    Transient {
+        /// Basic SMTP reply code (4xx).
+        basic: u16,
+        /// The raw failure message.
+        message: String,
+    },
     /// Couldn't extract a code at all. Treat like a network/transport
     /// failure — log + retry, but don't suppress.
-    Unstructured { message: String },
+    Unstructured {
+        /// The raw failure message.
+        message: String,
+    },
 }
 
 impl fmt::Display for SmtpFailure {

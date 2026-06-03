@@ -13,6 +13,7 @@
 //!
 //! SECURITY: SMTP password held in `Zeroizing<String>`.
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 pub mod bounce;
 pub mod unsubscribe;
@@ -31,15 +32,20 @@ use zeroize::Zeroizing;
 /// SMTP connection + identity config. Read once at startup.
 #[derive(Debug, Clone)]
 pub struct SmtpConfig {
+    /// SMTP relay hostname.
     pub host: String,
+    /// SMTP relay port (e.g. 587 for STARTTLS submission).
     pub port: u16,
     /// SASL username. None when relaying via a local / cluster-
     /// internal MTA that allowlists the sender by IP (no AUTH
     /// required). The two are coupled — must be either both Some
     /// or both None.
     pub username: Option<String>,
+    /// SASL password, paired with `username` (see above). Zeroized on drop.
     pub password: Option<Zeroizing<String>>,
+    /// Display name used in the From header.
     pub from_name: String,
+    /// Envelope/From email address.
     pub from_email: String,
     /// Optional Reply-To if different from From.
     pub reply_to: Option<String>,
@@ -107,6 +113,8 @@ impl SmtpConfig {
     }
 }
 
+/// An SMTP sender: an [`SmtpConfig`] plus a built transport, used to
+/// send a single email and produce a [`SendOutcome`].
 #[derive(Debug)]
 pub struct SmtpSender {
     config: SmtpConfig,
@@ -221,13 +229,21 @@ impl SmtpSender {
     }
 }
 
+/// The result of a successful send, carrying the data needed to build
+/// a receipt and update the touch record.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendOutcome {
+    /// Queue/message id parsed from the SMTP response, if the server gave one.
     pub smtp_message_id: Option<String>,
+    /// The SMTP response code (e.g. `250`).
     pub smtp_response_code: String,
+    /// When the send completed.
     pub sent_at: chrono::DateTime<chrono::Utc>,
+    /// The From address used.
     pub from: String,
+    /// The recipient address.
     pub to: String,
+    /// The subject line sent.
     pub subject: String,
 }
 
