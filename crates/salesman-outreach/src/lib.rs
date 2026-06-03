@@ -32,7 +32,11 @@ use std::str::FromStr;
 use zeroize::Zeroizing;
 
 /// SMTP connection + identity config. Read once at startup.
-#[derive(Debug, Clone)]
+///
+/// `Debug` is implemented manually to REDACT the password — the derived
+/// impl would print it (Zeroizing<String>'s Debug delegates to String),
+/// leaking the secret on any `{:?}` of this or `SmtpSender`.
+#[derive(Clone)]
 pub struct SmtpConfig {
     /// SMTP relay hostname.
     pub host: String,
@@ -64,6 +68,24 @@ pub struct SmtpConfig {
     /// `List-Unsubscribe-Post` headers, and appends the URL to the
     /// compliance footer in plain text for older mail clients.
     pub unsubscribe_tokens: Option<UnsubscribeTokens>,
+}
+
+impl std::fmt::Debug for SmtpConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Redact the password; everything else is safe to show.
+        f.debug_struct("SmtpConfig")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .field("from_name", &self.from_name)
+            .field("from_email", &self.from_email)
+            .field("reply_to", &self.reply_to)
+            .field("compliance_footer", &self.compliance_footer)
+            .field("list_unsubscribe", &self.list_unsubscribe)
+            .field("unsubscribe_tokens", &self.unsubscribe_tokens)
+            .finish()
+    }
 }
 
 impl SmtpConfig {
@@ -322,6 +344,30 @@ fn escape_html(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn debug_redacts_the_smtp_password() {
+        let cfg = SmtpConfig {
+            host: "smtp.example.com".into(),
+            port: 587,
+            username: Some("user".into()),
+            password: Some(zeroize::Zeroizing::new("hunter2-supersecret".to_string())),
+            from_name: "Sender".into(),
+            from_email: "s@example.com".into(),
+            reply_to: None,
+            compliance_footer: "footer".into(),
+            list_unsubscribe: None,
+            unsubscribe_tokens: None,
+        };
+        let dbg = format!("{cfg:?}");
+        assert!(
+            !dbg.contains("hunter2-supersecret"),
+            "Debug must not leak the SMTP password: {dbg}"
+        );
+        assert!(dbg.contains("<redacted>"), "password should be marked redacted");
+        // Non-secret fields remain visible for debuggability.
+        assert!(dbg.contains("smtp.example.com"));
+    }
 
     #[test]
     fn pair_credentials_accepts_both_set() {
