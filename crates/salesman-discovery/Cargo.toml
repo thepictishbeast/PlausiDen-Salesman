@@ -23,3 +23,8 @@ csv = "1.3"
 # (Html::parse_document / Selector::parse / .select / .text).
 scraper = "0.27"
 zeroize = { workspace = true }
+
+[dev-dependencies]
+# Property tests for the pure ranking logic (locality). Same major
+# version already locked via salesman-core / salesman-outreach.
+proptest = "1"

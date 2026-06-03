@@ -170,4 +170,37 @@ mod tests {
         let n = build_owner_notification(&input);
         assert!(n.subject.contains("(unknown)"));
     }
+
+    proptest::proptest! {
+        /// The formatter is fed prospect-derived strings, so it must
+        /// never panic on arbitrary input, and the subject must always
+        /// identify the prospect — the trimmed label, or "(unknown)"
+        /// when the label is blank (so a contact is always findable).
+        #[test]
+        fn never_panics_and_subject_identifies_prospect(
+            label in ".{0,40}",
+            to in ".{0,40}",
+            channel in ".{0,12}",
+            subject in proptest::option::of(".{0,40}"),
+            body in ".{0,200}",
+        ) {
+            let input = OwnerNotifyInput {
+                prospect_label: &label,
+                to_address: &to,
+                channel: &channel,
+                sent_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+                subject: subject.as_deref(),
+                body: &body,
+                receipt_id: None,
+                campaign: None,
+            };
+            let n = build_owner_notification(&input);
+            let trimmed = label.trim();
+            let expected = if trimmed.is_empty() { "(unknown)" } else { trimmed };
+            proptest::prop_assert!(
+                n.subject.contains(expected),
+                "subject {:?} must contain {:?}", n.subject, expected
+            );
+        }
+    }
 }

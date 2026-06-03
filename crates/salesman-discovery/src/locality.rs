@@ -167,6 +167,69 @@ mod tests {
         assert_eq!(rank_local_first(&regions, &[]), vec![0, 1, 2]);
     }
 
+    use proptest::prelude::*;
+
+    proptest! {
+        /// The score is a probability-like value: always within [0, 1],
+        /// for any region + any set of target terms.
+        #[test]
+        fn score_always_in_unit_interval(
+            region in ".{0,40}",
+            targets in proptest::collection::vec(".{0,20}", 0..5),
+        ) {
+            let target_refs: Vec<&str> = targets.iter().map(|s| s.as_str()).collect();
+            let s = locality_score(Some(&region), &target_refs);
+            prop_assert!((0.0..=1.0).contains(&s), "score {s} out of [0,1]");
+        }
+
+        /// Normalization is idempotent: normalizing an already-normalized
+        /// region changes nothing (so stored canonical forms are stable).
+        #[test]
+        fn normalize_is_idempotent(s in ".{0,60}") {
+            let once = normalize_region(&s);
+            let twice = normalize_region(&once);
+            prop_assert_eq!(once, twice);
+        }
+
+        /// rank_local_first returns a permutation of 0..n — every input
+        /// index appears exactly once, nothing is dropped or duplicated.
+        #[test]
+        fn rank_is_a_permutation(
+            regions in proptest::collection::vec(
+                proptest::option::of(".{0,20}"), 0..12),
+            targets in proptest::collection::vec(".{0,15}", 0..4),
+        ) {
+            let region_refs: Vec<Option<&str>> =
+                regions.iter().map(|o| o.as_deref()).collect();
+            let target_refs: Vec<&str> = targets.iter().map(|s| s.as_str()).collect();
+            let order = rank_local_first(&region_refs, &target_refs);
+            prop_assert_eq!(order.len(), region_refs.len());
+            let mut seen = order.clone();
+            seen.sort_unstable();
+            let expected: Vec<usize> = (0..region_refs.len()).collect();
+            prop_assert_eq!(seen, expected);
+        }
+
+        /// rank_local_first never ranks a strictly-lower-scoring region
+        /// ahead of a strictly-higher-scoring one.
+        #[test]
+        fn rank_orders_by_descending_score(
+            regions in proptest::collection::vec(
+                proptest::option::of(".{0,20}"), 0..12),
+            targets in proptest::collection::vec(".{0,15}", 0..4),
+        ) {
+            let region_refs: Vec<Option<&str>> =
+                regions.iter().map(|o| o.as_deref()).collect();
+            let target_refs: Vec<&str> = targets.iter().map(|s| s.as_str()).collect();
+            let order = rank_local_first(&region_refs, &target_refs);
+            for w in order.windows(2) {
+                let a = locality_score(region_refs[w[0]], &target_refs);
+                let b = locality_score(region_refs[w[1]], &target_refs);
+                prop_assert!(a >= b, "score went up across the ranking: {a} then {b}");
+            }
+        }
+    }
+
     #[test]
     fn is_local_respects_threshold() {
         // City-only match = 0.5; local at threshold 0.5, not at 0.75.
