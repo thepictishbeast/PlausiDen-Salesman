@@ -122,6 +122,7 @@ $SALESMAN classify-replies --batch 50
 
 # --------------------------------------------- 9. draft replies for queue
 section "[9/12] draft-replies — auto-draft responses to engaged/question/objection"
+# shellcheck disable=SC2046  # intentional word-splitting: each $(...) yields 0 or 2 args
 $SALESMAN draft-replies --batch 25 \
   $( [[ -f samples/pricing.toml      ]] && echo "--pricing-catalog samples/pricing.toml" ) \
   $( [[ -f samples/meeting-slots.toml ]] && echo "--meeting-slots samples/meeting-slots.toml" ) \

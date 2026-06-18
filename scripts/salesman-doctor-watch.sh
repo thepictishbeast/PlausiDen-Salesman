@@ -46,6 +46,7 @@ if [[ "$last" != "$current" && "$current" == "GREEN" ]]; then
   msg="salesman doctor is now GREEN (was $last). First real send is unblocked. Re-run \`salesman doctor\` to verify, then \`salesman send-pending --campaign foo --for-real --confirm-typed\`."
   echo "$msg"
   if [[ -n "$WEBHOOK" ]]; then
+    # shellcheck disable=SC2001  # sed escapes embedded quotes for JSON; clear and correct
     payload=$(printf '{"text":"%s"}' "$(echo "$msg" | sed 's/"/\\"/g')")
     curl -sS --max-time 10 -X POST -H 'Content-Type: application/json' \
       -d "$payload" "$WEBHOOK" >/dev/null || echo "(webhook post failed)"

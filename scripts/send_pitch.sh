@@ -1,4 +1,4 @@
-#!/usr/bin/env zsh
+#!/usr/bin/env bash
 # Send the layman's-pitch email to william@plausiden.com via the
 # plausiden mail server on submission port 587 (STARTTLS).
 #
@@ -32,7 +32,7 @@ fi
 # Strip any From:/To:/Subject: headers from the body file — we set them
 # explicitly via swaks so we don't double up.
 TMP_BODY=$(mktemp)
-trap "rm -f $TMP_BODY" EXIT
+trap 'rm -f "$TMP_BODY"' EXIT
 awk 'BEGIN{header=1} /^$/{if(header){header=0; next}} {if(!header)print}' "$BODY_FILE" > "$TMP_BODY"
 if [[ ! -s "$TMP_BODY" ]]; then
   # No header block detected — pipe the file through unchanged.

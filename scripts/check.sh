@@ -14,7 +14,7 @@
 set -uo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$REPO_DIR"
+cd "$REPO_DIR" || exit 1
 
 fail=0
 
