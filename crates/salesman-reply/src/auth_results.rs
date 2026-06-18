@@ -135,10 +135,7 @@ impl AuthResults {
         }
         // The first segment may include a version number after the
         // authserv-id (`mx.example.com 1`); strip it.
-        let authserv_id = authserv_id
-            .split_whitespace()
-            .next()?
-            .to_string();
+        let authserv_id = authserv_id.split_whitespace().next()?.to_string();
 
         let rest = parts.next().unwrap_or("");
         let methods = rest
@@ -429,7 +426,10 @@ mod tests {
         assert!(r.is_from_authenticated("mail.example.org"));
         // Negatives: suffix-confusion lookalikes that share trailing text
         // but cross no real label boundary.
-        assert!(!r.is_from_authenticated("notexample.org"), "no label boundary");
+        assert!(
+            !r.is_from_authenticated("notexample.org"),
+            "no label boundary"
+        );
         assert!(!r.is_from_authenticated("xexample.org"), "glued label");
         assert!(!r.is_from_authenticated("evilexample.org"), "glued label");
         assert!(
@@ -447,7 +447,10 @@ mod tests {
         // domain / its subdomains — never the look-alike example.org.
         let raw = "mx.x.com; spf=pass smtp.mailfrom=bounce@example.org.evil.com";
         let r = AuthResults::parse(raw).unwrap();
-        assert!(!r.is_from_authenticated("example.org"), "envelope is a different org");
+        assert!(
+            !r.is_from_authenticated("example.org"),
+            "envelope is a different org"
+        );
         assert!(r.is_from_authenticated("example.org.evil.com"));
         assert!(r.is_from_authenticated("mx.example.org.evil.com"));
     }

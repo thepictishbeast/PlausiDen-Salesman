@@ -20,9 +20,9 @@ pub use header::sanitize_header_value;
 pub use redact::Redacted;
 
 #[cfg(test)]
-mod transition_props;
-#[cfg(test)]
 mod reply_kind_props;
+#[cfg(test)]
+mod transition_props;
 pub use ids::{CampaignId, CompanyId, ContactId, ProspectId, ReceiptId, TouchId};
 pub use model::{
     Campaign, CampaignStatus, Company, Contact, ContactKind, FunnelState, Prospect, Reply,

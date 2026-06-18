@@ -64,7 +64,12 @@ pub async fn campaigns_json(
 /// across all campaigns (company + subject are HTML-escaped).
 pub async fn drafts_html(State(app): State<Arc<AppState>>) -> Result<Html<String>, ApiError> {
     let drafts = app.state.list_all_drafts_awaiting_approval().await?;
-    let rows: Vec<(uuid::Uuid, String, Option<String>, chrono::DateTime<chrono::Utc>)> = drafts
+    let rows: Vec<(
+        uuid::Uuid,
+        String,
+        Option<String>,
+        chrono::DateTime<chrono::Utc>,
+    )> = drafts
         .into_iter()
         .map(|d| (d.touch_id.0, d.company, d.subject, d.queued_at))
         .collect();
@@ -294,8 +299,9 @@ mod tests {
         let url = std::env::var("TEST_DATABASE_URL")
             .expect("set TEST_DATABASE_URL to a writable postgres URL");
         let state = State::connect(&url).await.expect("connect");
-        let tokens = UnsubscribeTokens::new(vec![7u8; 32], "https://outreach.plausiden.com/unsubscribe")
-            .expect("tokens");
+        let tokens =
+            UnsubscribeTokens::new(vec![7u8; 32], "https://outreach.plausiden.com/unsubscribe")
+                .expect("tokens");
         Arc::new(AppState {
             state,
             signing_key_id: "test".into(),
@@ -323,11 +329,7 @@ mod tests {
         // 1) Valid POST → 200 and the address is now suppressed.
         let email = format!("unsub{n}@example.com");
         let token = tokens.token_for(&email);
-        let resp = unsubscribe_post(
-            State(app.clone()),
-            Query(UnsubQuery { t: Some(token) }),
-        )
-        .await;
+        let resp = unsubscribe_post(State(app.clone()), Query(UnsubQuery { t: Some(token) })).await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert!(app.state.is_suppressed(&email).await.unwrap());
 
@@ -335,11 +337,8 @@ mod tests {
         //    address (else anyone could opt out our whole prospect list).
         let email2 = format!("unsub{n}b@example.com");
         let forged = format!("{}A", tokens.token_for(&email2)); // corrupt the MAC
-        let resp = unsubscribe_post(
-            State(app.clone()),
-            Query(UnsubQuery { t: Some(forged) }),
-        )
-        .await;
+        let resp =
+            unsubscribe_post(State(app.clone()), Query(UnsubQuery { t: Some(forged) })).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         assert!(
             !app.state.is_suppressed(&email2).await.unwrap(),
@@ -350,11 +349,7 @@ mod tests {
         //    prefetchers hit GET; only the POST button suppresses).
         let email3 = format!("unsub{n}c@example.com");
         let token3 = tokens.token_for(&email3);
-        let resp = unsubscribe_get(
-            State(app.clone()),
-            Query(UnsubQuery { t: Some(token3) }),
-        )
-        .await;
+        let resp = unsubscribe_get(State(app.clone()), Query(UnsubQuery { t: Some(token3) })).await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert!(
             !app.state.is_suppressed(&email3).await.unwrap(),
@@ -362,8 +357,7 @@ mod tests {
         );
 
         // 4) Missing token → 400.
-        let resp =
-            unsubscribe_post(State(app.clone()), Query(UnsubQuery { t: None })).await;
+        let resp = unsubscribe_post(State(app.clone()), Query(UnsubQuery { t: None })).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
         // cleanup (canonical form; normalize is idempotent).
@@ -466,7 +460,10 @@ mod tests {
             .await
             .expect("approve");
         assert!(resp.status().is_redirection(), "approve should redirect");
-        assert!(!awaiting(approve_touch).await, "approved touch must leave awaiting");
+        assert!(
+            !awaiting(approve_touch).await,
+            "approved touch must leave awaiting"
+        );
 
         // Re-approving the same touch → 404 (one-shot).
         let resp = draft_approve(State(app.clone()), Path(approve_touch.0))
@@ -479,7 +476,10 @@ mod tests {
             .await
             .expect("reject");
         assert!(resp.status().is_redirection(), "reject should redirect");
-        assert!(!awaiting(reject_touch).await, "rejected touch must leave awaiting");
+        assert!(
+            !awaiting(reject_touch).await,
+            "rejected touch must leave awaiting"
+        );
         let resp = draft_reject(State(app.clone()), Path(reject_touch.0))
             .await
             .expect("re-reject");

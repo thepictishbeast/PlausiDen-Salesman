@@ -190,41 +190,41 @@ impl ReplyClassifyTool {
             "legal obligation to",
             "violation of law",
             // === DE === (German law uses very specific terms)
-            "abmahnung",                   // formal cease-and-desist letter
-            "unterlassungserklärung",      // declaration of discontinuance
-            "anwalt",                      // attorney/lawyer
-            "rechtsanwalt",                // attorney-at-law
-            "rechtsbeistand",              // legal counsel
-            "anzeige erstatten",           // file criminal complaint
-            "datenschutzbeauftragten",     // data protection officer
-            "datenschutzbehörde",          // data protection authority
-            "bundesdatenschutz",           // federal data-protection (BDSG)
-            "dsgvo verstoß",               // GDPR violation (DE acronym)
-            "auskunftsersuchen",           // subject access request
-            "löschung meiner daten",       // deletion of my data
+            "abmahnung",               // formal cease-and-desist letter
+            "unterlassungserklärung",  // declaration of discontinuance
+            "anwalt",                  // attorney/lawyer
+            "rechtsanwalt",            // attorney-at-law
+            "rechtsbeistand",          // legal counsel
+            "anzeige erstatten",       // file criminal complaint
+            "datenschutzbeauftragten", // data protection officer
+            "datenschutzbehörde",      // data protection authority
+            "bundesdatenschutz",       // federal data-protection (BDSG)
+            "dsgvo verstoß",           // GDPR violation (DE acronym)
+            "auskunftsersuchen",       // subject access request
+            "löschung meiner daten",   // deletion of my data
             // === FR ===
-            "mise en demeure",             // formal notice / cease-and-desist
-            "huissier",                    // bailiff
-            "mon avocat",                  // my lawyer
-            "notre avocat",                // our lawyer
-            "conseil juridique",           // legal counsel
-            "porter plainte",              // file complaint
-            "saisir la cnil",              // file with the French DPA
-            "rgpd article 17",             // GDPR Art. 17 (FR acronym)
-            "droit à l'effacement",        // right to erasure
-            "droit à l'oubli",             // right to be forgotten
-            "supprimer mes données",       // delete my data
+            "mise en demeure",       // formal notice / cease-and-desist
+            "huissier",              // bailiff
+            "mon avocat",            // my lawyer
+            "notre avocat",          // our lawyer
+            "conseil juridique",     // legal counsel
+            "porter plainte",        // file complaint
+            "saisir la cnil",        // file with the French DPA
+            "rgpd article 17",       // GDPR Art. 17 (FR acronym)
+            "droit à l'effacement",  // right to erasure
+            "droit à l'oubli",       // right to be forgotten
+            "supprimer mes données", // delete my data
             // === ES ===
-            "burofax",                     // certified legal letter
-            "requerimiento legal",         // legal demand
-            "mi abogado",                  // my lawyer
-            "nuestro abogado",             // our lawyer
-            "denuncia formal",             // formal complaint
-            "agencia de protección de datos",  // Spanish DPA (AEPD)
-            "rgpd artículo 17",            // GDPR Art. 17 (ES acronym)
-            "derecho al olvido",           // right to be forgotten
-            "derecho de supresión",        // right to erasure
-            "eliminar mis datos",          // delete my data
+            "burofax",                        // certified legal letter
+            "requerimiento legal",            // legal demand
+            "mi abogado",                     // my lawyer
+            "nuestro abogado",                // our lawyer
+            "denuncia formal",                // formal complaint
+            "agencia de protección de datos", // Spanish DPA (AEPD)
+            "rgpd artículo 17",               // GDPR Art. 17 (ES acronym)
+            "derecho al olvido",              // right to be forgotten
+            "derecho de supresión",           // right to erasure
+            "eliminar mis datos",             // delete my data
             // === IT ===
             "diffida legale",              // legal cease-and-desist
             "il mio avvocato",             // my lawyer
@@ -236,15 +236,15 @@ impl ReplyClassifyTool {
             "diritto all'oblio",           // right to be forgotten
             "cancellazione dei miei dati", // delete my data
             // === PT-BR ===
-            "notificação extrajudicial",   // formal extra-judicial notice
-            "meu advogado",                // my lawyer
-            "nosso advogado",              // our lawyer
-            "ação judicial",               // legal action
-            "processo judicial",           // judicial process
-            "lgpd artigo 18",              // LGPD Art. 18 (BR data-prot.)
-            "anpd",                        // Brazilian DPA acronym
-            "direito ao esquecimento",     // right to be forgotten
-            "excluir meus dados",          // delete my data
+            "notificação extrajudicial", // formal extra-judicial notice
+            "meu advogado",              // my lawyer
+            "nosso advogado",            // our lawyer
+            "ação judicial",             // legal action
+            "processo judicial",         // judicial process
+            "lgpd artigo 18",            // LGPD Art. 18 (BR data-prot.)
+            "anpd",                      // Brazilian DPA acronym
+            "direito ao esquecimento",   // right to be forgotten
+            "excluir meus dados",        // delete my data
         ];
         KEYWORDS.iter().any(|k| s.contains(k))
     }

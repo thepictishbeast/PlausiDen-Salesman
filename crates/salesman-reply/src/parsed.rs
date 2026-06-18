@@ -95,7 +95,11 @@ impl ParsedReply {
                 return Some(true);
             }
         }
-        if saw_trusted_header { Some(false) } else { None }
+        if saw_trusted_header {
+            Some(false)
+        } else {
+            None
+        }
     }
 }
 

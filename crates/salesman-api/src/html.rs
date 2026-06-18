@@ -49,12 +49,14 @@ fn page(title: &str, body: &str) -> String {
 /// `rows` is (touch_id, company, subject, queued_at). Company and
 /// subject originate from scraped/LLM data, so both are HTML-escaped.
 pub fn drafts_index(
-    rows: &[(uuid::Uuid, String, Option<String>, chrono::DateTime<chrono::Utc>)],
+    rows: &[(
+        uuid::Uuid,
+        String,
+        Option<String>,
+        chrono::DateTime<chrono::Utc>,
+    )],
 ) -> String {
-    let mut body = format!(
-        "<h1>Drafts awaiting approval ({n})</h1>\n",
-        n = rows.len(),
-    );
+    let mut body = format!("<h1>Drafts awaiting approval ({n})</h1>\n", n = rows.len(),);
     if rows.is_empty() {
         body.push_str("<p class=\"small\">No drafts awaiting approval.</p>\n");
     } else {

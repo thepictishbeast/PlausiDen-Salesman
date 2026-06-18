@@ -30,8 +30,8 @@ pub mod tools;
 
 pub use brave_search::{BraveSearch, BraveSearchTool, SearchHit};
 pub use csv_seed::CsvSeed;
-pub use import_root::{IMPORT_DIR_ENV, ImportRoot};
 pub use email_pattern::{EmailPatternGuesser, EmailPatternTool, GuessedEmail};
 pub use homepage::{HomepageFacts, HomepageFetcher};
+pub use import_root::{IMPORT_DIR_ENV, ImportRoot};
 pub use team_scraper::{BuyerCandidate, TeamScraper};
 pub use tools::{CsvSeedTool, HomepageFetchTool};

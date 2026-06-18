@@ -42,9 +42,8 @@ fn display_emits_snake_case() {
 #[test]
 fn from_str_parses_snake_case() {
     for (variant, wire) in PAIRS {
-        let parsed = ReplyKind::from_str(wire).unwrap_or_else(|e| {
-            panic!("ReplyKind::from_str(`{wire}`) failed: {e:?}")
-        });
+        let parsed = ReplyKind::from_str(wire)
+            .unwrap_or_else(|e| panic!("ReplyKind::from_str(`{wire}`) failed: {e:?}"));
         assert_eq!(parsed, *variant);
     }
 }
@@ -54,9 +53,14 @@ fn serde_round_trips_snake_case() {
     for (variant, wire) in PAIRS {
         let s = serde_json::to_string(variant).unwrap();
         // serde_json wraps the string in quotes.
-        assert_eq!(s, format!("\"{wire}\""),
+        assert_eq!(
+            s,
+            format!("\"{wire}\""),
             "ReplyKind::{:?} serializes to `{}`, expected `\"{}\"`",
-            variant, s, wire);
+            variant,
+            s,
+            wire
+        );
         let back: ReplyKind = serde_json::from_str(&s).unwrap();
         assert_eq!(back, *variant);
     }

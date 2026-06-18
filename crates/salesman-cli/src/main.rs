@@ -1620,32 +1620,34 @@ async fn main() -> Result<()> {
                 .trim_start_matches("```")
                 .trim_end_matches("```")
                 .trim();
-            let candidates: Vec<LlmCompany> =
-                match serde_json::from_str::<LlmResponse>(stripped) {
-                    Ok(r) => r.companies,
-                    Err(e) => {
-                        // Try to find a JSON object inside the response.
-                        match (stripped.find('{'), stripped.rfind('}')) {
-                            (Some(s), Some(e2)) if e2 > s => {
-                                match serde_json::from_str::<LlmResponse>(&stripped[s..=e2]) {
-                                    Ok(r) => r.companies,
-                                    Err(e3) => anyhow::bail!(
-                                        "LLM output not parseable as JSON: {e3}. \
+            let candidates: Vec<LlmCompany> = match serde_json::from_str::<LlmResponse>(stripped) {
+                Ok(r) => r.companies,
+                Err(e) => {
+                    // Try to find a JSON object inside the response.
+                    match (stripped.find('{'), stripped.rfind('}')) {
+                        (Some(s), Some(e2)) if e2 > s => {
+                            match serde_json::from_str::<LlmResponse>(&stripped[s..=e2]) {
+                                Ok(r) => r.companies,
+                                Err(e3) => anyhow::bail!(
+                                    "LLM output not parseable as JSON: {e3}. \
                                          First 200 chars: {}",
-                                        stripped.chars().take(200).collect::<String>()
-                                    ),
-                                }
+                                    stripped.chars().take(200).collect::<String>()
+                                ),
                             }
-                            _ => anyhow::bail!(
-                                "LLM output not parseable as JSON: {e}. \
-                                 First 200 chars: {}",
-                                stripped.chars().take(200).collect::<String>()
-                            ),
                         }
+                        _ => anyhow::bail!(
+                            "LLM output not parseable as JSON: {e}. \
+                                 First 200 chars: {}",
+                            stripped.chars().take(200).collect::<String>()
+                        ),
                     }
-                };
+                }
+            };
 
-            println!("  LLM proposed {} candidate(s); validating homepages...", candidates.len());
+            println!(
+                "  LLM proposed {} candidate(s); validating homepages...",
+                candidates.len()
+            );
 
             // Validate each homepage by HTTP fetch. Drop hallucinated
             // / dead / parked. Concurrency-capped at 8 — we're being
@@ -1663,7 +1665,10 @@ async fn main() -> Result<()> {
                     if !matches!(url.scheme(), "http" | "https") {
                         return None;
                     }
-                    let host = url.host_str()?.trim_start_matches("www.").to_ascii_lowercase();
+                    let host = url
+                        .host_str()?
+                        .trim_start_matches("www.")
+                        .to_ascii_lowercase();
                     if host.is_empty() {
                         return None;
                     }
@@ -1689,8 +1694,7 @@ async fn main() -> Result<()> {
             }
 
             // Dedup by host — LLM sometimes lists subsidiary + parent.
-            let mut seen: std::collections::BTreeSet<String> =
-                std::collections::BTreeSet::new();
+            let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
             survivors.retain(|(_, _, h)| seen.insert(h.clone()));
 
             // Truncate to the requested top after validation.
@@ -1975,14 +1979,62 @@ async fn main() -> Result<()> {
             // so the (campaign, company) UNIQUE constraint never
             // collides on repeat runs.
             const STUBS: &[(&str, &str, &str, salesman_core::model::SizeBand, &str)] = &[
-                ("Acme Logging Co",     "https://acme-logging.example",     "B2B SaaS",     salesman_core::model::SizeBand::Small,      "Self-hosted log aggregation for security teams"),
-                ("Beta Devops",         "https://beta-devops.example",      "Devtools",     salesman_core::model::SizeBand::Mid,        "CI/CD platform for monorepos"),
-                ("Gamma Industrial",    "https://gamma-industrial.example", "Manufacturing",salesman_core::model::SizeBand::Enterprise, "IoT telemetry + edge compute"),
-                ("Delta Cyber",         "https://delta-cyber.example",      "Security",     salesman_core::model::SizeBand::Small,      "Threat-intel platform for MSSPs"),
-                ("Epsilon Health",      "https://epsilonhealth.example",    "Healthtech",   salesman_core::model::SizeBand::Mid,        "GDPR-first patient-data analytics"),
-                ("Zeta Mobility",       "https://zeta-mobility.example",    "Logistics",    salesman_core::model::SizeBand::Mid,        "Fleet routing + driver-app platform"),
-                ("Eta Climate",         "https://etaclimate.example",       "ClimateTech",  salesman_core::model::SizeBand::Small,      "Carbon-accounting for mid-market"),
-                ("Theta Finserv",       "https://thetafinserv.example",     "FinTech",      salesman_core::model::SizeBand::Mid,        "Compliance-first payments rails"),
+                (
+                    "Acme Logging Co",
+                    "https://acme-logging.example",
+                    "B2B SaaS",
+                    salesman_core::model::SizeBand::Small,
+                    "Self-hosted log aggregation for security teams",
+                ),
+                (
+                    "Beta Devops",
+                    "https://beta-devops.example",
+                    "Devtools",
+                    salesman_core::model::SizeBand::Mid,
+                    "CI/CD platform for monorepos",
+                ),
+                (
+                    "Gamma Industrial",
+                    "https://gamma-industrial.example",
+                    "Manufacturing",
+                    salesman_core::model::SizeBand::Enterprise,
+                    "IoT telemetry + edge compute",
+                ),
+                (
+                    "Delta Cyber",
+                    "https://delta-cyber.example",
+                    "Security",
+                    salesman_core::model::SizeBand::Small,
+                    "Threat-intel platform for MSSPs",
+                ),
+                (
+                    "Epsilon Health",
+                    "https://epsilonhealth.example",
+                    "Healthtech",
+                    salesman_core::model::SizeBand::Mid,
+                    "GDPR-first patient-data analytics",
+                ),
+                (
+                    "Zeta Mobility",
+                    "https://zeta-mobility.example",
+                    "Logistics",
+                    salesman_core::model::SizeBand::Mid,
+                    "Fleet routing + driver-app platform",
+                ),
+                (
+                    "Eta Climate",
+                    "https://etaclimate.example",
+                    "ClimateTech",
+                    salesman_core::model::SizeBand::Small,
+                    "Carbon-accounting for mid-market",
+                ),
+                (
+                    "Theta Finserv",
+                    "https://thetafinserv.example",
+                    "FinTech",
+                    salesman_core::model::SizeBand::Mid,
+                    "Compliance-first payments rails",
+                ),
             ];
 
             let state = require_state(cli.database_url.as_deref()).await?;
@@ -1993,8 +2045,7 @@ async fn main() -> Result<()> {
             let suffix = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
             let mut companies: Vec<salesman_core::Company> = Vec::with_capacity(count);
             for i in 0..count {
-                let (name, homepage, industry, size_band, description) =
-                    STUBS[i % STUBS.len()];
+                let (name, homepage, industry, size_band, description) = STUBS[i % STUBS.len()];
                 // Disambiguator so re-running quick-stub doesn't
                 // collide on the (campaign, company) UNIQUE.
                 let display_name = format!("{name} #{suffix}-{i}");
@@ -3173,11 +3224,7 @@ async fn main() -> Result<()> {
                              review; suppression-list NOT modified."
                         );
                         if let Err(e) = state
-                            .set_reply_tag(
-                                r.reply_id,
-                                "auth_failed",
-                                &serde_json::json!(true),
-                            )
+                            .set_reply_tag(r.reply_id, "auth_failed", &serde_json::json!(true))
                             .await
                         {
                             tracing::warn!(reply = %r.reply_id, "%e" = %e, "set_reply_tag failed");
@@ -3189,10 +3236,7 @@ async fn main() -> Result<()> {
                         // conservative bucket — operator reviews the
                         // auth_failed tag in `salesman inbox`.
                         if let Err(e) = state
-                            .update_reply_kind(
-                                r.reply_id,
-                                salesman_core::model::ReplyKind::Spam,
-                            )
+                            .update_reply_kind(r.reply_id, salesman_core::model::ReplyKind::Spam)
                             .await
                         {
                             tracing::warn!(reply = %r.reply_id, "%e" = %e, "update_reply_kind failed");
@@ -3664,9 +3708,11 @@ async fn main() -> Result<()> {
                         r.subject.as_deref().unwrap_or("(no subject)"),
                     );
                 }
-                println!("  → senders auto-suppressed; in-flight touches rejected; \
+                println!(
+                    "  → senders auto-suppressed; in-flight touches rejected; \
                           drafter REFUSED to compose. Run `salesman thread <prospect>` \
-                          to read context, then respond manually.\n");
+                          to read context, then respond manually.\n"
+                );
             }
             println!(
                 "=== positive replies ({}): engaged + question ===",
@@ -6681,7 +6727,11 @@ fn order_local_first_with_terms(
         prospects.drain(..).map(Some).collect();
     order
         .into_iter()
-        .map(|i| slots[i].take().expect("rank_local_first yields each index once"))
+        .map(|i| {
+            slots[i]
+                .take()
+                .expect("rank_local_first yields each index once")
+        })
         .collect()
 }
 

@@ -75,7 +75,10 @@ mod tests {
     #[test]
     fn passes_clean_values_through() {
         assert_eq!(sanitize_header_value("Acme Inc"), "Acme Inc");
-        assert_eq!(sanitize_header_value("José's Café & Co."), "José's Café & Co.");
+        assert_eq!(
+            sanitize_header_value("José's Café & Co."),
+            "José's Café & Co."
+        );
         assert_eq!(sanitize_header_value(""), "");
     }
 

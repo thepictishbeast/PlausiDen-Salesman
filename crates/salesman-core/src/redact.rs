@@ -246,7 +246,10 @@ mod tests {
         assert!(r.text().contains("[[REDACTED_1]]"));
         assert_eq!(r.redacted_count(), 1);
         // round-trip on the redacted text
-        assert_eq!(r.rehydrate(r.text()), "please contact jane.doe@acme.com today");
+        assert_eq!(
+            r.rehydrate(r.text()),
+            "please contact jane.doe@acme.com today"
+        );
     }
 
     #[test]
@@ -341,7 +344,10 @@ mod tests {
         let r = redact("no pii here", &[]);
         // rehydrate must not invent replacements for placeholders it
         // didn't create.
-        assert_eq!(r.rehydrate("model said [[REDACTED_9]]"), "model said [[REDACTED_9]]");
+        assert_eq!(
+            r.rehydrate("model said [[REDACTED_9]]"),
+            "model said [[REDACTED_9]]"
+        );
     }
 
     use proptest::prelude::*;

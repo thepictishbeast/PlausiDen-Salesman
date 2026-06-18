@@ -367,7 +367,10 @@ async fn apply_reply_to_prospect_round_trip() {
         .fetch_one(pool)
         .await
         .expect("prospect state");
-    assert_eq!(pstate, "suppressed", "optout must move prospect to suppressed");
+    assert_eq!(
+        pstate, "suppressed",
+        "optout must move prospect to suppressed"
+    );
     // in-flight touch suppressed
     let outcome: String = sqlx::query_scalar("SELECT outcome FROM touches WHERE id = $1")
         .bind(touch_id.0)
@@ -638,7 +641,10 @@ async fn rate_cap_per_domain_aggregates_mailboxes() {
     let window = 24;
     // Aggregates both mailboxes at the domain.
     assert_eq!(
-        state.count_touches_to_domain_since(&dom, window).await.unwrap(),
+        state
+            .count_touches_to_domain_since(&dom, window)
+            .await
+            .unwrap(),
         2
     );
     // Case-insensitive on the domain.

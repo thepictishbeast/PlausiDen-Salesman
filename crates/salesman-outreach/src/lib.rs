@@ -156,10 +156,9 @@ impl SmtpSender {
         // relay (web-01 trusts openclaw's IP via mynetworks) skips
         // AUTH entirely; lettre's `relay` builder issues no AUTH
         // command in that case.
-        let mut builder =
-            AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.host)
-                .map_err(|e| Error::Config(format!("smtp transport: {e}")))?
-                .port(config.port);
+        let mut builder = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.host)
+            .map_err(|e| Error::Config(format!("smtp transport: {e}")))?
+            .port(config.port);
         if let (Some(u), Some(p)) = (config.username.as_ref(), config.password.as_ref()) {
             builder = builder.credentials(Credentials::new(u.clone(), (**p).clone()));
         }
@@ -364,7 +363,10 @@ mod tests {
             !dbg.contains("hunter2-supersecret"),
             "Debug must not leak the SMTP password: {dbg}"
         );
-        assert!(dbg.contains("<redacted>"), "password should be marked redacted");
+        assert!(
+            dbg.contains("<redacted>"),
+            "password should be marked redacted"
+        );
         // Non-secret fields remain visible for debuggability.
         assert!(dbg.contains("smtp.example.com"));
     }

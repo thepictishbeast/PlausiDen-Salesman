@@ -408,8 +408,12 @@ mod tests {
         // this pins that assumption. created_at is not hashed, so only the
         // payload bytes matter here.
         let s = tmp_signer();
-        let r1 = s.sign_event("e", json!({"a":1, "b":2}), &zero_hash()).unwrap();
-        let r2 = s.sign_event("e", json!({"b":2, "a":1}), &zero_hash()).unwrap();
+        let r1 = s
+            .sign_event("e", json!({"a":1, "b":2}), &zero_hash())
+            .unwrap();
+        let r2 = s
+            .sign_event("e", json!({"b":2, "a":1}), &zero_hash())
+            .unwrap();
         assert_eq!(
             r1.hash, r2.hash,
             "hash must not depend on payload key insertion order"

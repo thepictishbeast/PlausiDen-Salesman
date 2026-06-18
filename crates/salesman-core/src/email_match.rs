@@ -199,7 +199,10 @@ mod tests {
     fn normalize_handles_empty_and_whitespace() {
         assert_eq!(normalize_email_for_match(""), "");
         assert_eq!(normalize_email_for_match("   "), "");
-        assert_eq!(normalize_email_for_match("  john@acme.com  "), "john@acme.com");
+        assert_eq!(
+            normalize_email_for_match("  john@acme.com  "),
+            "john@acme.com"
+        );
     }
 
     #[test]

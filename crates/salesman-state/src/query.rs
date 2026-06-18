@@ -1241,7 +1241,8 @@ impl State {
             .map(|r| OwnerNotificationRow {
                 id: r.try_get("id").unwrap_or_else(|_| uuid::Uuid::nil()),
                 prospect_id: ProspectId(
-                    r.try_get("prospect_id").unwrap_or_else(|_| uuid::Uuid::nil()),
+                    r.try_get("prospect_id")
+                        .unwrap_or_else(|_| uuid::Uuid::nil()),
                 ),
                 prospect_label: r.try_get("prospect_label").unwrap_or_default(),
                 to_address: r.try_get("to_address").unwrap_or_default(),
@@ -2209,7 +2210,9 @@ impl State {
             ReplyKind::OutOfOffice => Some("auto: reply classified out_of_office"),
             ReplyKind::Optout => Some("auto: reply classified optout"),
             ReplyKind::Bounce => Some("auto: reply classified bounce"),
-            ReplyKind::LegalThreat => Some("auto: reply classified legal_threat — operator must handle"),
+            ReplyKind::LegalThreat => {
+                Some("auto: reply classified legal_threat — operator must handle")
+            }
             _ => None,
         };
         if let Some(reason) = pause_reason {
