@@ -19,19 +19,25 @@ use salesman_tools::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+/// A guessed email address with the pattern + prior that produced it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GuessedEmail {
+    /// The guessed email address.
     pub email: String,
+    /// The pattern that produced it (e.g. `first.last`).
     pub pattern: String,
     /// Prior probability, 0..1. Multiply by deliverability evidence
     /// (when verifier is wired in) to get a posterior.
     pub prior: f32,
 }
 
+/// Guesses likely email addresses from a name + domain using common
+/// corporate patterns, each with a prior probability.
 #[derive(Debug, Default)]
 pub struct EmailPatternGuesser;
 
 impl EmailPatternGuesser {
+    /// Build an email-pattern guesser.
     pub fn new() -> Self {
         Self
     }
@@ -76,12 +82,14 @@ impl EmailPatternGuesser {
     }
 }
 
+/// [`EmailPatternGuesser`] exposed as an agent-callable [`Tool`].
 #[derive(Debug, Default)]
 pub struct EmailPatternTool {
     guesser: EmailPatternGuesser,
 }
 
 impl EmailPatternTool {
+    /// Build the email-pattern-guessing discovery [`Tool`].
     pub fn new() -> Self {
         Self::default()
     }

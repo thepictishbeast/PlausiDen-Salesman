@@ -14,7 +14,9 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 HOST="openclaw"
+# shellcheck disable=SC2034  # readable config; the remote heredoc uses literal paths
 REMOTE_BUILD="/opt/salesman/build/PlausiDen-Salesman"
+# shellcheck disable=SC2034  # readable config; the remote heredoc uses literal paths
 REMOTE_BIN="/opt/salesman/bin/salesman"
 
 echo "==> packaging source"

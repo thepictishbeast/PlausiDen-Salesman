@@ -1,4 +1,5 @@
 //! salesman-api binary — read + low-risk-write HTTP server.
+#![deny(missing_docs)]
 
 mod handlers;
 mod html;
@@ -14,15 +15,23 @@ use salesman_state::State;
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
+/// Shared application state handed to every request handler.
 #[derive(Clone, Debug)]
 pub struct AppState {
+    /// Database/persistence handle.
     pub state: State,
+    /// Key id used to look up the signing-receipt chain head.
     pub signing_key_id: String,
     /// Per-recipient one-click unsubscribe verifier. None disables the
     /// `/unsubscribe` routes (they 503 with a config-error message).
     pub unsubscribe_tokens: Option<UnsubscribeTokens>,
 }
 
+/// Build the full Axum router: the operator routes (`/healthz`,
+/// `/pipeline/summary`, `/campaigns`, `/drafts`, `/drafts/:id/approve` +
+/// `/reject`, `/receipts`) behind optional HTTP Basic auth, merged with the
+/// always-public RFC 8058 `/unsubscribe` routes (which authenticate via
+/// their own HMAC token, not credentials).
 pub fn build_router(app_state: AppState, basic_auth: Option<String>) -> Router {
     // Unsubscribe routes are mounted on a sub-router that bypasses
     // basic auth — RFC 8058 one-click MUST work without credentials,

@@ -1,3 +1,5 @@
+//! Load companies from an operator-supplied CSV file.
+
 use chrono::Utc;
 use salesman_core::model::{Company, DiscoverySource, SizeBand};
 use salesman_core::{CompanyId, Error, Result};
@@ -19,10 +21,12 @@ struct Row {
     size_band: Option<String>,
 }
 
+/// Reads operator-supplied CSV files into [`Company`] records.
 #[derive(Debug, Default)]
 pub struct CsvSeed;
 
 impl CsvSeed {
+    /// Build a CSV-seed loader.
     pub fn new() -> Self {
         Self
     }

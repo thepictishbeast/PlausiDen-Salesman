@@ -33,6 +33,8 @@ type HmacSha256 = Hmac<Sha256>;
 /// the HMAC-SHA256 block-size floor recommended by RFC 4868.
 pub const MIN_SECRET_BYTES: usize = 32;
 
+/// Mints + verifies per-recipient RFC 8058 one-click unsubscribe URLs,
+/// authenticated with an HMAC-SHA256 over the recipient address.
 #[derive(Clone)]
 pub struct UnsubscribeTokens {
     secret: Zeroizing<Vec<u8>>,
@@ -79,6 +81,8 @@ impl UnsubscribeTokens {
         Self::new(secret, base_url)
     }
 
+    /// The public base URL one-click unsubscribe links are minted
+    /// against (e.g. `https://outreach.plausiden.com/unsubscribe`).
     pub fn base_url(&self) -> &str {
         &self.base_url
     }

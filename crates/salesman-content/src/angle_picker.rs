@@ -25,7 +25,9 @@ use std::sync::Arc;
 /// One row of the product catalog.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProductEntry {
+    /// Product name.
     pub name: String,
+    /// One-line pitch.
     pub one_liner: String,
     /// Free-form description of who this is for. The picker uses
     /// this to match against the prospect's industry / description.
@@ -39,13 +41,18 @@ pub struct ProductEntry {
 /// What the picker returns.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnglePick {
+    /// Name of the product the picker chose.
     pub picked_product: String,
+    /// The angle the picker chose (verbatim or a riff).
     pub picked_angle: String,
+    /// Why the picker chose this product + angle.
     pub rationale: String,
+    /// Model confidence, 0..=1.
     #[serde(default)]
     pub confidence: Option<f32>,
 }
 
+/// Picks the best product + outreach angle for a prospect via the LLM.
 #[derive(Debug)]
 pub struct AnglePickerTool {
     router: Arc<LlmRouter>,
@@ -53,6 +60,8 @@ pub struct AnglePickerTool {
 }
 
 impl AnglePickerTool {
+    /// Build the angle-picker tool over the LLM `router`, choosing outreach
+    /// angles on behalf of `sender_company`.
     pub fn new(router: Arc<LlmRouter>, sender_company: impl Into<String>) -> Self {
         Self {
             router,
@@ -148,6 +157,13 @@ impl Tool for AnglePickerTool {
             serde_json::to_string_pretty(&prospect).unwrap_or_default(),
             serde_json::to_string_pretty(&catalog_v).unwrap_or_default(),
         );
+        // PII-redaction boundary (CLAUDE.md "No PII to third parties"): the
+        // prospect facts are a SaaS-model input. Redact emails, phones, and the
+        // known company name + homepage before the call; rehydrate the output
+        // before parsing. (Catalog is product data, no PII.)
+        let red_terms = crate::prospect_pii_terms(&prospect);
+        let red_refs: Vec<&str> = red_terms.iter().map(String::as_str).collect();
+        let redaction = salesman_core::redact::redact(&user, &red_refs);
 
         let req = ChatRequest {
             messages: vec![
@@ -159,7 +175,7 @@ impl Tool for AnglePickerTool {
                 },
                 Message {
                     role: Role::User,
-                    content: user,
+                    content: redaction.text().to_string(),
                     tool_calls: vec![],
                     tool_results: vec![],
                 },
@@ -174,7 +190,8 @@ impl Tool for AnglePickerTool {
             .router
             .chat_for(RouteHint::Reasoning, "angle_picker", req)
             .await?;
-        let pick = parse_pick(&resp.message.content).map_err(|e| Error::Tool {
+        let rehydrated = redaction.rehydrate(&resp.message.content);
+        let pick = parse_pick(&rehydrated).map_err(|e| Error::Tool {
             tool: "content.angle_picker".into(),
             message: format!("parse: {e}"),
         })?;

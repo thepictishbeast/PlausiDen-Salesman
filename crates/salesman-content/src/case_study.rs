@@ -12,6 +12,7 @@ use salesman_tools::Tool;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
+/// Drafts a markdown case study from operator-supplied facts via the LLM.
 #[derive(Debug)]
 pub struct CaseStudyDraftTool {
     router: Arc<LlmRouter>,
@@ -19,6 +20,8 @@ pub struct CaseStudyDraftTool {
 }
 
 impl CaseStudyDraftTool {
+    /// Build the case-study draft tool over the LLM `router`, writing on
+    /// behalf of `sender_company`.
     pub fn new(router: Arc<LlmRouter>, sender_company: impl Into<String>) -> Self {
         Self {
             router,

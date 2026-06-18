@@ -24,12 +24,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
+/// A "generative engine optimization" probe: does an LLM mention the
+/// brand when asked a category query?
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeoReport {
+    /// The query posed to the model.
     pub query: String,
+    /// The brand we're checking for.
     pub brand: String,
     /// "claude" / "gemini" / "lfi"
     pub backend: String,
+    /// The model identifier that answered.
     pub model: String,
     /// The full raw response from the LLM. Operator audits this.
     pub raw_response: String,
@@ -46,12 +51,14 @@ pub struct GeoReport {
     pub recommendations: Vec<String>,
 }
 
+/// Runs a [`GeoReport`] probe against an LLM via the router.
 #[derive(Debug)]
 pub struct GeoTool {
     router: Arc<LlmRouter>,
 }
 
 impl GeoTool {
+    /// Build the GEO (generative-engine-optimization) tool over the LLM `router`.
     pub fn new(router: Arc<LlmRouter>) -> Self {
         Self { router }
     }

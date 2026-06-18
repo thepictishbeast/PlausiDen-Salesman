@@ -13,10 +13,13 @@
 //!
 //! SECURITY: SMTP password held in `Zeroizing<String>`.
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 pub mod bounce;
+pub mod owner_notify;
 pub mod unsubscribe;
 pub use bounce::{SmtpFailure, classify as classify_smtp_failure};
+pub use owner_notify::{OwnerNotification, OwnerNotifyInput, build_owner_notification};
 pub use unsubscribe::UnsubscribeTokens;
 
 use lettre::message::header::{Header, HeaderName, HeaderValue};
@@ -29,17 +32,26 @@ use std::str::FromStr;
 use zeroize::Zeroizing;
 
 /// SMTP connection + identity config. Read once at startup.
-#[derive(Debug, Clone)]
+///
+/// `Debug` is implemented manually to REDACT the password — the derived
+/// impl would print it (Zeroizing<String>'s Debug delegates to String),
+/// leaking the secret on any `{:?}` of this or `SmtpSender`.
+#[derive(Clone)]
 pub struct SmtpConfig {
+    /// SMTP relay hostname.
     pub host: String,
+    /// SMTP relay port (e.g. 587 for STARTTLS submission).
     pub port: u16,
     /// SASL username. None when relaying via a local / cluster-
     /// internal MTA that allowlists the sender by IP (no AUTH
     /// required). The two are coupled — must be either both Some
     /// or both None.
     pub username: Option<String>,
+    /// SASL password, paired with `username` (see above). Zeroized on drop.
     pub password: Option<Zeroizing<String>>,
+    /// Display name used in the From header.
     pub from_name: String,
+    /// Envelope/From email address.
     pub from_email: String,
     /// Optional Reply-To if different from From.
     pub reply_to: Option<String>,
@@ -58,7 +70,30 @@ pub struct SmtpConfig {
     pub unsubscribe_tokens: Option<UnsubscribeTokens>,
 }
 
+impl std::fmt::Debug for SmtpConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Redact the password; everything else is safe to show.
+        f.debug_struct("SmtpConfig")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .field("from_name", &self.from_name)
+            .field("from_email", &self.from_email)
+            .field("reply_to", &self.reply_to)
+            .field("compliance_footer", &self.compliance_footer)
+            .field("list_unsubscribe", &self.list_unsubscribe)
+            .field("unsubscribe_tokens", &self.unsubscribe_tokens)
+            .finish()
+    }
+}
+
 impl SmtpConfig {
+    /// Build an [`SmtpConfig`] from the `SALESMAN_SMTP_*` env vars. The
+    /// RFC 8058 unsubscribe minter is best-effort: if its env vars are
+    /// missing, sends fall back to a static List-Unsubscribe and
+    /// `salesman doctor` flags it as a deliverability warning rather than
+    /// erroring here.
     pub fn from_env() -> Result<Self> {
         let env = |k: &str| std::env::var(k).map_err(|_| Error::Config(format!("env {k} not set")));
         // The minter is best-effort: if either env var is missing we
@@ -77,24 +112,10 @@ impl SmtpConfig {
         // Mailgun) or both unset (cluster-internal relay where the
         // upstream MTA allowlists the sender by IP and skips AUTH).
         // Mixed half-set state is a config error — fail loud.
-        let username = std::env::var("SALESMAN_SMTP_USERNAME").ok();
-        let password = std::env::var("SALESMAN_SMTP_PASSWORD").ok();
-        let (username, password) = match (username, password) {
-            (Some(u), Some(p)) => (Some(u), Some(Zeroizing::new(p))),
-            (None, None) => (None, None),
-            (Some(_), None) => {
-                return Err(Error::Config(
-                    "SALESMAN_SMTP_USERNAME set but SALESMAN_SMTP_PASSWORD missing — \
-                     SASL credentials must be both set or both unset".into(),
-                ));
-            }
-            (None, Some(_)) => {
-                return Err(Error::Config(
-                    "SALESMAN_SMTP_PASSWORD set but SALESMAN_SMTP_USERNAME missing — \
-                     SASL credentials must be both set or both unset".into(),
-                ));
-            }
-        };
+        let (username, password) = pair_credentials(
+            std::env::var("SALESMAN_SMTP_USERNAME").ok(),
+            std::env::var("SALESMAN_SMTP_PASSWORD").ok(),
+        )?;
         Ok(Self {
             host: env("SALESMAN_SMTP_HOST")?,
             port: env("SALESMAN_SMTP_PORT")?
@@ -116,6 +137,8 @@ impl SmtpConfig {
     }
 }
 
+/// An SMTP sender: an [`SmtpConfig`] plus a built transport, used to
+/// send a single email and produce a [`SendOutcome`].
 #[derive(Debug)]
 pub struct SmtpSender {
     config: SmtpConfig,
@@ -123,16 +146,19 @@ pub struct SmtpSender {
 }
 
 impl SmtpSender {
+    /// Build a STARTTLS SMTP sender from `config`. SASL AUTH is added
+    /// only when credentials are configured; a cluster-internal relay
+    /// (IP-trusted via `mynetworks`) sends without AUTH. Errors if the
+    /// transport cannot be constructed.
     pub fn new(config: SmtpConfig) -> Result<Self> {
         // Build the transport once. AUTH is added only when the
         // operator configured SASL credentials. Cluster-internal
         // relay (web-01 trusts openclaw's IP via mynetworks) skips
         // AUTH entirely; lettre's `relay` builder issues no AUTH
         // command in that case.
-        let mut builder =
-            AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.host)
-                .map_err(|e| Error::Config(format!("smtp transport: {e}")))?
-                .port(config.port);
+        let mut builder = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.host)
+            .map_err(|e| Error::Config(format!("smtp transport: {e}")))?
+            .port(config.port);
         if let (Some(u), Some(p)) = (config.username.as_ref(), config.password.as_ref()) {
             builder = builder.credentials(Credentials::new(u.clone(), (**p).clone()));
         }
@@ -140,6 +166,7 @@ impl SmtpSender {
         Ok(Self { config, transport })
     }
 
+    /// The configured envelope / From address used for outbound mail.
     pub fn from_email(&self) -> &str {
         &self.config.from_email
     }
@@ -225,13 +252,21 @@ impl SmtpSender {
     }
 }
 
+/// The result of a successful send, carrying the data needed to build
+/// a receipt and update the touch record.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendOutcome {
+    /// Queue/message id parsed from the SMTP response, if the server gave one.
     pub smtp_message_id: Option<String>,
+    /// The SMTP response code (e.g. `250`).
     pub smtp_response_code: String,
+    /// When the send completed.
     pub sent_at: chrono::DateTime<chrono::Utc>,
+    /// The From address used.
     pub from: String,
+    /// The recipient address.
     pub to: String,
+    /// The subject line sent.
     pub subject: String,
 }
 
@@ -267,6 +302,33 @@ impl Header for ListUnsubscribePost {
     }
 }
 
+/// Validate the SASL credential pair: username + password must be BOTH
+/// set (authenticated relay, e.g. SendGrid/Mailgun) or BOTH unset
+/// (IP-trusted internal relay that skips AUTH). A half-set pair is a
+/// configuration error and fails loud.
+///
+/// Extracted from [`SmtpConfig::from_env`] so this safety invariant is
+/// unit-testable without mutating the process environment.
+fn pair_credentials(
+    username: Option<String>,
+    password: Option<String>,
+) -> Result<(Option<String>, Option<Zeroizing<String>>)> {
+    match (username, password) {
+        (Some(u), Some(p)) => Ok((Some(u), Some(Zeroizing::new(p)))),
+        (None, None) => Ok((None, None)),
+        (Some(_), None) => Err(Error::Config(
+            "SALESMAN_SMTP_USERNAME set but SALESMAN_SMTP_PASSWORD missing — \
+             SASL credentials must be both set or both unset"
+                .into(),
+        )),
+        (None, Some(_)) => Err(Error::Config(
+            "SALESMAN_SMTP_PASSWORD set but SALESMAN_SMTP_USERNAME missing — \
+             SASL credentials must be both set or both unset"
+                .into(),
+        )),
+    }
+}
+
 fn extract_message_id(s: &str) -> Option<String> {
     // Some servers echo the queue id in the 250 response: "250 2.0.0 Ok: queued as ABC123".
     s.split_whitespace().last().map(str::to_string)
@@ -276,4 +338,80 @@ fn escape_html(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_redacts_the_smtp_password() {
+        let cfg = SmtpConfig {
+            host: "smtp.example.com".into(),
+            port: 587,
+            username: Some("user".into()),
+            password: Some(zeroize::Zeroizing::new("hunter2-supersecret".to_string())),
+            from_name: "Sender".into(),
+            from_email: "s@example.com".into(),
+            reply_to: None,
+            compliance_footer: "footer".into(),
+            list_unsubscribe: None,
+            unsubscribe_tokens: None,
+        };
+        let dbg = format!("{cfg:?}");
+        assert!(
+            !dbg.contains("hunter2-supersecret"),
+            "Debug must not leak the SMTP password: {dbg}"
+        );
+        assert!(
+            dbg.contains("<redacted>"),
+            "password should be marked redacted"
+        );
+        // Non-secret fields remain visible for debuggability.
+        assert!(dbg.contains("smtp.example.com"));
+    }
+
+    #[test]
+    fn pair_credentials_accepts_both_set() {
+        let (u, p) = pair_credentials(Some("user".into()), Some("pw".into())).unwrap();
+        assert_eq!(u.as_deref(), Some("user"));
+        assert_eq!(p.unwrap().as_str(), "pw");
+    }
+
+    #[test]
+    fn pair_credentials_accepts_both_unset() {
+        let (u, p) = pair_credentials(None, None).unwrap();
+        assert!(u.is_none() && p.is_none());
+    }
+
+    #[test]
+    fn pair_credentials_rejects_username_without_password() {
+        let err = pair_credentials(Some("user".into()), None).unwrap_err();
+        assert!(format!("{err}").contains("both set or both unset"));
+    }
+
+    #[test]
+    fn pair_credentials_rejects_password_without_username() {
+        let err = pair_credentials(None, Some("pw".into())).unwrap_err();
+        assert!(format!("{err}").contains("both set or both unset"));
+    }
+
+    #[test]
+    fn escape_html_escapes_ampersand_before_angle_brackets() {
+        assert_eq!(escape_html("a & b < c > d"), "a &amp; b &lt; c &gt; d");
+        // Ampersand must be escaped first: `<` becomes `&lt;`, and if `&`
+        // were escaped afterwards it would double-escape into `&amp;lt;`.
+        assert_eq!(escape_html("<&>"), "&lt;&amp;&gt;");
+        assert_eq!(escape_html("no special chars"), "no special chars");
+    }
+
+    #[test]
+    fn extract_message_id_takes_trailing_token() {
+        assert_eq!(
+            extract_message_id("250 2.0.0 Ok: queued as ABC123").as_deref(),
+            Some("ABC123")
+        );
+        assert_eq!(extract_message_id("").as_deref(), None);
+        assert_eq!(extract_message_id("250").as_deref(), Some("250"));
+    }
 }

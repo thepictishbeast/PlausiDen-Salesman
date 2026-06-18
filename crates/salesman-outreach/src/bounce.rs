@@ -20,30 +20,45 @@
 
 use std::fmt;
 
+/// A parsed classification of an SMTP send failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SmtpFailure {
     /// 5xx + a subcode that is unambiguously about the RECIPIENT
     /// being undeliverable. Caller should mark the recipient
     /// suppressed with source="bounce".
     HardBounce {
+        /// Basic SMTP reply code (5xx).
         basic: u16,
+        /// RFC 3463 enhanced status code (X.Y.Z), if present.
         enhanced: Option<String>,
+        /// The raw failure message.
         message: String,
     },
     /// 5xx that is NOT about the recipient (rate limit on sender,
     /// content rejection, policy block). Do NOT auto-suppress; the
     /// owner needs to investigate.
     PermanentOther {
+        /// Basic SMTP reply code (5xx).
         basic: u16,
+        /// RFC 3463 enhanced status code (X.Y.Z), if present.
         enhanced: Option<String>,
+        /// The raw failure message.
         message: String,
     },
     /// 4xx — try later. Caller should leave the touch in
     /// `awaiting_send` for a retry.
-    Transient { basic: u16, message: String },
+    Transient {
+        /// Basic SMTP reply code (4xx).
+        basic: u16,
+        /// The raw failure message.
+        message: String,
+    },
     /// Couldn't extract a code at all. Treat like a network/transport
     /// failure — log + retry, but don't suppress.
-    Unstructured { message: String },
+    Unstructured {
+        /// The raw failure message.
+        message: String,
+    },
 }
 
 impl fmt::Display for SmtpFailure {
@@ -119,6 +134,9 @@ const PERMANENT_NON_RECIPIENT_PREFIXES: &[&str] = &[
     "5.7.26", // multiple auth checks failed (Gmail)
 ];
 
+/// Classify an SMTP error / DSN string into an [`SmtpFailure`] from its
+/// enhanced status code (e.g. `5.1.1` hard bounce vs a `4.x` transient
+/// failure) plus message text, so the caller can decide suppress-vs-retry.
 pub fn classify(error_text: &str) -> SmtpFailure {
     let basic = find_basic_code(error_text);
     let enhanced = find_enhanced_code(error_text);
@@ -167,7 +185,10 @@ fn find_basic_code(s: &str) -> Option<u16> {
     // followed by a space or '-' (SMTP continuation marker).
     let bytes = s.as_bytes();
     let mut i = 0;
-    while i + 4 < bytes.len() {
+    // Only bytes[i..=i+3] are read, so i+3 must be in bounds. (Using
+    // i+4 here would miss a code whose separator is the final char,
+    // e.g. a DSN ending in "550 ".)
+    while i + 3 < bytes.len() {
         let c0 = bytes[i];
         let c1 = bytes[i + 1];
         let c2 = bytes[i + 2];
@@ -313,6 +334,42 @@ mod tests {
     fn suppression_source_is_bounce() {
         let f = classify("550 5.1.1 user unknown");
         assert_eq!(f.suppression_source(), "bounce");
+    }
+
+    #[test]
+    fn null_mx_multidigit_detail_is_hard_bounce() {
+        // 5.1.10 (null MX) has a two-digit detail; the enhanced-code
+        // parser must capture it whole, and it's in the hard list.
+        let f = classify("550 5.1.10 recipient address has null MX");
+        match &f {
+            SmtpFailure::HardBounce { enhanced, .. } => {
+                assert_eq!(enhanced.as_deref(), Some("5.1.10"));
+            }
+            other => panic!("expected HardBounce, got {other:?}"),
+        }
+        assert!(f.should_auto_suppress());
+    }
+
+    #[test]
+    fn spf_5_7_27_is_hard_bounce() {
+        // 5.7.27 is in the hard list (recipient-side rejection of our
+        // mail with no deliverable path) and must be matched whole even
+        // though 5.7.x prefixes are otherwise permanent-non-recipient.
+        let f = classify("550 5.7.27 no acceptable destination");
+        assert!(matches!(f, SmtpFailure::HardBounce { .. }));
+        assert!(f.should_auto_suppress());
+    }
+
+    #[test]
+    fn basic_code_at_very_end_is_found() {
+        // Regression for the i+3 bound fix: a code whose separator is
+        // the final character must still be parsed (not dropped to
+        // Unstructured), so the basic code is captured for the ledger.
+        let f = classify("host rejected: 550 ");
+        match f {
+            SmtpFailure::PermanentOther { basic, .. } => assert_eq!(basic, 550),
+            other => panic!("expected PermanentOther with basic 550, got {other:?}"),
+        }
     }
 
     // ------------------------------------------------------------------

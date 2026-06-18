@@ -42,9 +42,8 @@ fn display_emits_snake_case() {
 #[test]
 fn from_str_parses_snake_case() {
     for (variant, wire) in PAIRS {
-        let parsed = ReplyKind::from_str(wire).unwrap_or_else(|e| {
-            panic!("ReplyKind::from_str(`{wire}`) failed: {e:?}")
-        });
+        let parsed = ReplyKind::from_str(wire)
+            .unwrap_or_else(|e| panic!("ReplyKind::from_str(`{wire}`) failed: {e:?}"));
         assert_eq!(parsed, *variant);
     }
 }
@@ -54,9 +53,14 @@ fn serde_round_trips_snake_case() {
     for (variant, wire) in PAIRS {
         let s = serde_json::to_string(variant).unwrap();
         // serde_json wraps the string in quotes.
-        assert_eq!(s, format!("\"{wire}\""),
+        assert_eq!(
+            s,
+            format!("\"{wire}\""),
             "ReplyKind::{:?} serializes to `{}`, expected `\"{}\"`",
-            variant, s, wire);
+            variant,
+            s,
+            wire
+        );
         let back: ReplyKind = serde_json::from_str(&s).unwrap();
         assert_eq!(back, *variant);
     }
@@ -74,4 +78,79 @@ fn legal_threat_is_distinct_from_optout() {
         ReplyKind::Optout.to_string()
     );
     assert_ne!(ReplyKind::LegalThreat, ReplyKind::Optout);
+}
+
+/// Every ReplyKind variant — keep in sync with the enum.
+const ALL_KINDS: &[ReplyKind] = &[
+    ReplyKind::Engaged,
+    ReplyKind::Question,
+    ReplyKind::Objection,
+    ReplyKind::Optout,
+    ReplyKind::OutOfOffice,
+    ReplyKind::Bounce,
+    ReplyKind::Spam,
+    ReplyKind::Unclassified,
+    ReplyKind::LegalThreat,
+];
+
+#[test]
+fn funnel_state_label_pins_reply_to_funnel_policy() {
+    // The compliance-critical mapping from a classified reply to the
+    // prospect's funnel state. Pinned so a refactor cannot silently
+    // re-route — e.g. stop suppressing opt-outs, or start advancing a
+    // bounce. (Used by salesman-state::apply_reply_to_prospect.)
+    assert_eq!(ReplyKind::Engaged.funnel_state_label(), Some("engaged"));
+    assert_eq!(ReplyKind::Question.funnel_state_label(), Some("engaged"));
+    assert_eq!(ReplyKind::Optout.funnel_state_label(), Some("suppressed"));
+    assert_eq!(
+        ReplyKind::LegalThreat.funnel_state_label(),
+        Some("suppressed")
+    );
+    assert_eq!(ReplyKind::Bounce.funnel_state_label(), Some("lost"));
+    // Ambiguous kinds leave the funnel untouched for operator judgement.
+    assert_eq!(ReplyKind::Objection.funnel_state_label(), None);
+    assert_eq!(ReplyKind::OutOfOffice.funnel_state_label(), None);
+    assert_eq!(ReplyKind::Spam.funnel_state_label(), None);
+    assert_eq!(ReplyKind::Unclassified.funnel_state_label(), None);
+}
+
+#[test]
+fn suppression_trigger_is_exactly_optout_and_legal_threat() {
+    for &k in ALL_KINDS {
+        let expected = matches!(k, ReplyKind::Optout | ReplyKind::LegalThreat);
+        assert_eq!(
+            k.is_suppression_trigger(),
+            expected,
+            "is_suppression_trigger() wrong for {k:?} — this is the consent/legal gate"
+        );
+    }
+}
+
+#[test]
+fn every_suppression_trigger_routes_prospect_to_suppressed() {
+    // The two gates must agree: anything that suppresses the sender must
+    // also move the prospect's funnel state to "suppressed".
+    for &k in ALL_KINDS {
+        if k.is_suppression_trigger() {
+            assert_eq!(
+                k.funnel_state_label(),
+                Some("suppressed"),
+                "{k:?} suppresses the sender but does not route the prospect to suppressed"
+            );
+        }
+    }
+}
+
+#[test]
+fn funnel_state_labels_are_known_states() {
+    // Guard against a typo'd label that would write a bogus
+    // prospects.state value the transition graph doesn't recognise.
+    for &k in ALL_KINDS {
+        if let Some(label) = k.funnel_state_label() {
+            assert!(
+                matches!(label, "engaged" | "lost" | "suppressed"),
+                "unexpected funnel label {label:?} for {k:?}"
+            );
+        }
+    }
 }

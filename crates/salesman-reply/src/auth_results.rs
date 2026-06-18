@@ -43,12 +43,19 @@ use std::collections::HashMap;
 /// Outcomes per RFC 8601 §2.7.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthResult {
+    /// Authentication passed.
     Pass,
+    /// Authentication failed.
     Fail,
+    /// Soft failure (SPF `~all`).
     SoftFail,
+    /// Neutral — no assertion.
     Neutral,
+    /// No authentication was performed / no policy.
     None,
+    /// Temporary error during evaluation.
     TempError,
+    /// Permanent error during evaluation.
     PermError,
     /// Anything we don't recognize — treat as untrusted by default.
     Other,
@@ -68,6 +75,8 @@ impl AuthResult {
         }
     }
 
+    /// True only for an explicit `pass` result — never for
+    /// none / fail / softfail / temperror / permerror / other.
     pub fn is_pass(self) -> bool {
         matches!(self, Self::Pass)
     }
@@ -78,6 +87,7 @@ impl AuthResult {
 pub struct MethodResult {
     /// Method name lowercased: "spf" / "dkim" / "dmarc" / "arc" / etc.
     pub method: String,
+    /// The result this method reported.
     pub result: AuthResult,
     /// Property bag from the header — e.g. "smtp.mailfrom" → "alice@x.com",
     /// "header.from" → "alice@x.com", "header.d" → "x.com". Keys are
@@ -125,10 +135,7 @@ impl AuthResults {
         }
         // The first segment may include a version number after the
         // authserv-id (`mx.example.com 1`); strip it.
-        let authserv_id = authserv_id
-            .split_whitespace()
-            .next()?
-            .to_string();
+        let authserv_id = authserv_id.split_whitespace().next()?.to_string();
 
         let rest = parts.next().unwrap_or("");
         let methods = rest
@@ -401,5 +408,71 @@ mod tests {
         let r = AuthResults::parse(raw).unwrap();
         assert!(r.is_from_authenticated("mail.example.org"));
         assert!(!r.is_from_authenticated("example.org"));
+    }
+
+    #[test]
+    fn dkim_alignment_rejects_suffix_confusion() {
+        // header.d=example.org must authenticate ONLY example.org and its
+        // true subdomains — never a domain that merely shares the suffix
+        // as a substring. A naive `ends_with` (no label boundary) would
+        // wrongly pass all of the negatives below; the leading-dot check
+        // in domain_matches must reject them. This is the regression
+        // guard against an authentication BYPASS, so the negatives matter
+        // more than the positives.
+        let raw = "mx.x.com; dkim=pass header.d=example.org";
+        let r = AuthResults::parse(raw).unwrap();
+        // Positives: exact + a genuine subdomain.
+        assert!(r.is_from_authenticated("example.org"));
+        assert!(r.is_from_authenticated("mail.example.org"));
+        // Negatives: suffix-confusion lookalikes that share trailing text
+        // but cross no real label boundary.
+        assert!(
+            !r.is_from_authenticated("notexample.org"),
+            "no label boundary"
+        );
+        assert!(!r.is_from_authenticated("xexample.org"), "glued label");
+        assert!(!r.is_from_authenticated("evilexample.org"), "glued label");
+        assert!(
+            !r.is_from_authenticated("example.org.evil.com"),
+            "from-domain is a SUBdomain of an attacker domain, not example.org"
+        );
+        // A bare "org" public-suffix-ish parent must not back-match either.
+        assert!(!r.is_from_authenticated("org"));
+    }
+
+    #[test]
+    fn spf_alignment_rejects_lookalike_envelope_domain() {
+        // SPF passes for an envelope-from the attacker controls
+        // (bounce@example.org.evil.com). That must authenticate only that
+        // domain / its subdomains — never the look-alike example.org.
+        let raw = "mx.x.com; spf=pass smtp.mailfrom=bounce@example.org.evil.com";
+        let r = AuthResults::parse(raw).unwrap();
+        assert!(
+            !r.is_from_authenticated("example.org"),
+            "envelope is a different org"
+        );
+        assert!(r.is_from_authenticated("example.org.evil.com"));
+        assert!(r.is_from_authenticated("mx.example.org.evil.com"));
+    }
+
+    proptest::proptest! {
+        // The Authentication-Results header value is attacker-controlled, so
+        // parse() is a trust boundary: it must never panic — only Some/None.
+        #[test]
+        fn parse_never_panics(raw in "[\\x09\\x20-\\x7e]{0,1000}") {
+            let _ = AuthResults::parse(&raw);
+        }
+
+        // parse() + querying with an arbitrary from-domain must both be
+        // panic-free, and a garbage header must never spuriously authenticate.
+        #[test]
+        fn parse_and_query_never_panic(
+            raw in "[\\x09\\x20-\\x7e]{0,1000}",
+            dom in "[a-zA-Z0-9.-]{0,80}"
+        ) {
+            if let Some(ar) = AuthResults::parse(&raw) {
+                let _ = ar.is_from_authenticated(&dom);
+            }
+        }
     }
 }

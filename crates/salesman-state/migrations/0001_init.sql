@@ -3,6 +3,10 @@
 -- sort by creation time. We do not generate uuids server-side here.
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+-- `citext` backs the case-insensitive email columns below (e.g.
+-- contacts.email). Idempotent: a no-op if it already exists, so this
+-- is safe to (re-)run against any database.
+CREATE EXTENSION IF NOT EXISTS citext;
 
 -- Companies discovered through any source. Source-of-truth for
 -- "this company exists in our world".

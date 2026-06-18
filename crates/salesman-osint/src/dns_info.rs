@@ -16,22 +16,31 @@ use salesman_tools::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+/// Resolved DNS records for a domain.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DnsInfo {
+    /// A (IPv4 address) records.
     pub a: Vec<String>,
+    /// MX (mail exchanger) records.
     pub mx: Vec<String>,
+    /// TXT records (SPF/DMARC/verification, etc.).
     pub txt: Vec<String>,
+    /// NS (nameserver) records.
     pub ns: Vec<String>,
 }
 
+/// Resolves DNS records via the system resolver + `dig`.
 #[derive(Debug, Default)]
 pub struct DnsInfoClient;
 
 impl DnsInfoClient {
+    /// Build a DNS-info client.
     pub fn new() -> Self {
         Self
     }
 
+    /// Resolve `domain` into [`DnsInfo`] (A records, etc.) via the tokio
+    /// resolver. Errors on resolver failure.
     pub async fn lookup(&self, domain: &str) -> Result<DnsInfo> {
         // A records via tokio resolver
         let a = match tokio::net::lookup_host(format!("{domain}:0")).await {
@@ -67,12 +76,14 @@ async fn dig_query(domain: &str, qtype: &str) -> Result<Vec<String>> {
         .collect())
 }
 
+/// [`DnsInfoClient`] exposed as an agent-callable [`Tool`].
 #[derive(Debug)]
 pub struct DnsInfoTool {
     inner: std::sync::Arc<DnsInfoClient>,
 }
 
 impl DnsInfoTool {
+    /// Wrap a shared [`DnsInfoClient`] as an OSINT [`Tool`].
     pub fn new(inner: std::sync::Arc<DnsInfoClient>) -> Self {
         Self { inner }
     }

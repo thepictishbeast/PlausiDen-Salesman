@@ -23,10 +23,14 @@ use zeroize::Zeroizing;
 const BRAVE_SEARCH_URL: &str = "https://api.search.brave.com/res/v1/web/search";
 const SELF_THROTTLE: Duration = Duration::from_millis(1100);
 
+/// A single search result returned by [`BraveSearch`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchHit {
+    /// Result title.
     pub title: String,
+    /// Result URL.
     pub url: String,
+    /// Result snippet/description.
     pub description: String,
     /// Some hits are FAQs / videos / news; for B2B prospect discovery
     /// we typically want `web` results only, but we surface this so
@@ -34,14 +38,33 @@ pub struct SearchHit {
     pub kind: String,
 }
 
-#[derive(Debug)]
+/// Client for the Brave Search API, with built-in self-throttling.
+///
+/// SECURITY: the `api_key` is held in `Zeroizing<String>` and `Debug` is
+/// implemented manually to REDACT it. The derived `Debug` would print the
+/// key verbatim — `Zeroizing`'s `Debug` delegates to the inner `String` —
+/// leaking the Brave subscription token into any `{:?}` log line
+/// (CLAUDE.md: no secrets in logs).
 pub struct BraveSearch {
     api_key: Zeroizing<String>,
     http: reqwest::Client,
     last_request: Mutex<Option<std::time::Instant>>,
 }
 
+impl std::fmt::Debug for BraveSearch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Redact the key; list other fields explicitly (fail-safe — a
+        // field added later is omitted until consciously included).
+        f.debug_struct("BraveSearch")
+            .field("api_key", &"<redacted>")
+            .field("http", &self.http)
+            .field("last_request", &self.last_request)
+            .finish()
+    }
+}
+
 impl BraveSearch {
+    /// Build a Brave Search client with the given API key.
     pub fn new(api_key: impl Into<String>) -> Self {
         Self {
             api_key: Zeroizing::new(api_key.into()),
@@ -54,6 +77,8 @@ impl BraveSearch {
         }
     }
 
+    /// Build a Brave Search client, reading the key from
+    /// `BRAVE_SEARCH_API_KEY` (errors if unset).
     pub fn from_env() -> Result<Self> {
         let key = std::env::var("BRAVE_SEARCH_API_KEY")
             .map_err(|_| Error::Config("BRAVE_SEARCH_API_KEY not set".into()))?;
@@ -118,12 +143,14 @@ impl BraveSearch {
     }
 }
 
+/// [`BraveSearch`] exposed as an agent-callable [`Tool`].
 #[derive(Debug)]
 pub struct BraveSearchTool {
     inner: std::sync::Arc<BraveSearch>,
 }
 
 impl BraveSearchTool {
+    /// Wrap a shared [`BraveSearch`] client as a discovery [`Tool`].
     pub fn new(inner: std::sync::Arc<BraveSearch>) -> Self {
         Self { inner }
     }
@@ -222,5 +249,16 @@ mod tests {
         assert_eq!(strip_html("<strong>hi</strong> there"), "hi there");
         assert_eq!(strip_html("plain text"), "plain text");
         assert_eq!(strip_html("<a href=\"x\">link</a>"), "link");
+    }
+
+    #[test]
+    fn debug_redacts_the_api_key() {
+        let client = BraveSearch::new("brave-secret-subscription-token");
+        let rendered = format!("{client:?}");
+        assert!(
+            !rendered.contains("brave-secret-subscription-token"),
+            "Debug must not leak the Brave API key: {rendered}"
+        );
+        assert!(rendered.contains("<redacted>"), "{rendered}");
     }
 }

@@ -14,13 +14,18 @@ use std::time::Duration;
 const URL: &str = "https://archive.org/wayback/available";
 const UA: &str = "PlausiDenSalesman/0.0 (+https://plausiden.com/bots; civic-research)";
 
+/// A Wayback Machine snapshot reference.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WaybackSnapshot {
+    /// URL of the archived snapshot.
     pub url: String,
+    /// Snapshot timestamp (YYYYMMDDhhmmss).
     pub timestamp: String,
+    /// Whether the snapshot is available.
     pub available: bool,
 }
 
+/// Client for the Internet Archive Wayback availability API.
 #[derive(Debug)]
 pub struct WaybackClient {
     http: reqwest::Client,
@@ -33,6 +38,7 @@ impl Default for WaybackClient {
 }
 
 impl WaybackClient {
+    /// Build a Wayback Machine (web.archive.org) client.
     pub fn new() -> Self {
         Self {
             // SAFETY: reqwest::Client::builder().build() only fails on
@@ -86,12 +92,14 @@ impl WaybackClient {
     }
 }
 
+/// [`WaybackClient`] exposed as an agent-callable [`Tool`].
 #[derive(Debug)]
 pub struct WaybackTool {
     inner: std::sync::Arc<WaybackClient>,
 }
 
 impl WaybackTool {
+    /// Wrap a shared [`WaybackClient`] as an OSINT [`Tool`].
     pub fn new(inner: std::sync::Arc<WaybackClient>) -> Self {
         Self { inner }
     }

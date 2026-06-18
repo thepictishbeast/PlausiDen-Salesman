@@ -1,5 +1,13 @@
 # Email deliverability runbook
 
+> ⚠️ **STALE INFRASTRUCTURE FACTS — verify on-box before trusting.**
+> The OpenClaw VPS was re-provisioned 2026-05-31; the IP `45.77.217.37`
+> used in the SPF / PTR / DNS examples below is **DEAD**. The real current
+> sending IP is **unverified** (`HANDOFF.md` → "RECONCILE ON-BOX" also
+> flags that the true sender may be a different host than this doc assumes).
+> Do NOT publish any IP / SPF / PTR record from this runbook until you have
+> re-derived it from the live box. (Intentionally not replaced with a guess.)
+
 This is the operator playbook for getting cold-outreach mail from
 the Salesman VPS to land in the recipient's **inbox** rather than
 spam. Follow it in order before turning on Salesman's send path.

@@ -13,12 +13,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
+/// Generated SEO metadata for a page.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SeoMeta {
+    /// `<title>` text.
     pub title: String,
+    /// `<meta name="description">` text.
     pub description: String,
 }
 
+/// Generates [`SeoMeta`] for a page via the LLM.
 #[derive(Debug)]
 pub struct SeoMetaTool {
     router: Arc<LlmRouter>,
@@ -27,6 +31,8 @@ pub struct SeoMetaTool {
 }
 
 impl SeoMetaTool {
+    /// Build the SEO-metadata tool over the LLM `router` for the site
+    /// `site_name` at `site_origin`.
     pub fn new(
         router: Arc<LlmRouter>,
         site_name: impl Into<String>,

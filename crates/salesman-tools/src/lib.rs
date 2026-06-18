@@ -15,6 +15,7 @@
 //! not synchronize concurrent calls into a single tool — implementors
 //! own their concurrency.
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 use async_trait::async_trait;
 use salesman_core::{Result, ToolArgs, ToolCall, ToolResult};
@@ -22,32 +23,48 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
+/// An action the agent loop is allowed to invoke. Each tool declares a
+/// name + description + JSON input schema (advertised to the LLM as the
+/// available surface), validates its args, performs the action, and
+/// returns a JSON result. Implementors own their own concurrency.
 #[async_trait]
 pub trait Tool: Send + Sync + std::fmt::Debug {
+    /// Stable identifier the LLM uses to call this tool; also the
+    /// registry key, so it must be unique within a `ToolRegistry`.
     fn name(&self) -> &str;
+    /// One-line, human/LLM-facing description of what the tool does.
     fn description(&self) -> &str;
+    /// JSON Schema describing the tool's arguments, advertised to the LLM.
     fn input_schema(&self) -> serde_json::Value;
+    /// Run the tool against `args`, returning its JSON output — or an
+    /// error, which the registry converts into a failed `ToolResult`.
     async fn invoke(&self, args: ToolArgs) -> Result<serde_json::Value>;
 }
 
+/// The set of tools the orchestrator can dispatch to, keyed by name.
 #[derive(Debug, Default)]
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
 }
 
 impl ToolRegistry {
+    /// Create an empty registry.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Register a tool under its `name()`. A later registration with the
+    /// same name overwrites the earlier one.
     pub fn register(&mut self, tool: Arc<dyn Tool>) {
         self.tools.insert(tool.name().to_string(), tool);
     }
 
+    /// Look up a registered tool by name, cloning the `Arc` handle.
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
         self.tools.get(name).cloned()
     }
 
+    /// The names of all registered tools (unordered).
     pub fn names(&self) -> Vec<String> {
         self.tools.keys().cloned().collect()
     }
@@ -67,6 +84,9 @@ impl ToolRegistry {
             .collect()
     }
 
+    /// Dispatch a `ToolCall` to the named tool and return a `ToolResult`.
+    /// An unknown tool name or a tool error both yield `ok: false` (never
+    /// a panic); `duration_ms` is always recorded.
     pub async fn invoke(&self, call: ToolCall) -> ToolResult {
         let start = Instant::now();
         let tool = match self.get(&call.tool) {

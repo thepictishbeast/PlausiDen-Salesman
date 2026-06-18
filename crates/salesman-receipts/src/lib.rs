@@ -22,6 +22,7 @@
 //! - The seed is held in-memory wrapped in `Zeroizing` so it's wiped
 //!   on drop.
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signature, Signer as _, SigningKey, Verifier, VerifyingKey};
@@ -35,7 +36,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
+/// Length in bytes of a SHA-256 chain hash.
 pub const HASH_LEN: usize = 32;
+/// Length in bytes of an Ed25519 signature.
 pub const SIG_LEN: usize = 64;
 
 /// One link in the chain. Hashes and signature are kept as `Vec<u8>`
@@ -44,8 +47,11 @@ pub const SIG_LEN: usize = 64;
 /// invariants enforced by constructors.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Receipt {
+    /// Stable identifier for this receipt.
     pub id: ReceiptId,
+    /// The kind of event recorded (e.g. `send.email`, `suppression`).
     pub event_kind: String,
+    /// The event payload that was signed.
     pub event_payload: serde_json::Value,
     /// 32-byte hash of the previous receipt. Zeros for genesis.
     pub prev_hash: Vec<u8>,
@@ -53,10 +59,13 @@ pub struct Receipt {
     pub hash: Vec<u8>,
     /// 64-byte Ed25519 signature over `hash`.
     pub signature: Vec<u8>,
+    /// The id of the signing key that produced `signature`.
     pub signing_key_id: String,
+    /// When this receipt was created.
     pub created_at: DateTime<Utc>,
 }
 
+/// Holds an Ed25519 signing key and signs receipts onto its chain.
 #[derive(Debug)]
 pub struct Signer {
     signing_key: SigningKey,
@@ -69,7 +78,9 @@ impl Signer {
     pub fn load_or_generate(seed_path: &Path, key_id: impl Into<String>) -> Result<Self> {
         let key_id = key_id.into();
         if seed_path.exists() {
-            let bytes = fs::read(seed_path).map_err(Error::Io)?;
+            // seed_path is operator-controlled config (a fixed signing-seed
+            // location, mode 0600), never agent/network input. nosemgrep
+            let bytes = fs::read(seed_path).map_err(Error::Io)?; // nosemgrep
             if bytes.len() != 32 {
                 return Err(Error::Config(format!(
                     "signing seed file `{}` must be exactly 32 bytes (was {})",
@@ -104,7 +115,8 @@ impl Signer {
             use std::os::unix::fs::OpenOptionsExt;
             opts.mode(0o600);
         }
-        let mut f = opts.open(seed_path).map_err(Error::Io)?;
+        // seed_path is operator-controlled config (see note above). nosemgrep
+        let mut f = opts.open(seed_path).map_err(Error::Io)?; // nosemgrep
         f.write_all(seed.as_ref()).map_err(Error::Io)?;
         f.sync_all().map_err(Error::Io)?;
         tracing::info!(path = %seed_path.display(), %key_id, "generated new signing key");
@@ -115,10 +127,14 @@ impl Signer {
         })
     }
 
+    /// The key id stamped onto every receipt this signer produces
+    /// (`Receipt::signing_key_id`); chains are verified per key id.
     pub fn key_id(&self) -> &str {
         &self.key_id
     }
 
+    /// The public verifying key for this signer — hand to
+    /// [`verify_receipt`] / [`verify_chain`] to check signatures offline.
     pub fn verifying_key(&self) -> VerifyingKey {
         self.signing_key.verifying_key()
     }
@@ -210,18 +226,24 @@ fn canonical_json(v: &serde_json::Value) -> Vec<u8> {
     serde_json::to_vec(v).unwrap_or_default()
 }
 
+/// The all-zero 32-byte hash used as the genesis receipt's `prev_hash`.
 pub fn zero_hash() -> Vec<u8> {
     vec![0u8; HASH_LEN]
 }
 
+/// Hex-encode a hash / `prev_hash` for display, logging, or storage.
 pub fn hash_to_hex(h: &[u8]) -> String {
     hex::encode(h)
 }
 
+/// Decode a hex string (the inverse of [`hash_to_hex`]) back into raw
+/// bytes. Errors if the input is not valid hex.
 pub fn hex_to_hash(s: &str) -> Result<Vec<u8>> {
     hex::decode(s).map_err(|e| Error::Validation(format!("hex: {e}")))
 }
 
+/// Default on-disk location of the Ed25519 signing seed (mode 0600).
+/// Callers may override this; see [`Signer::load_or_generate`].
 pub fn default_seed_path() -> PathBuf {
     PathBuf::from("/opt/salesman/config/signing.seed")
 }
@@ -289,5 +311,112 @@ mod tests {
         r2.prev_hash = zero_hash();
         let vk = s.verifying_key();
         assert!(verify_chain(&[r1, r2, r3], &vk, &zero_hash()).is_err());
+    }
+
+    #[test]
+    fn detects_signature_tampering() {
+        let s = tmp_signer();
+        let mut r = s.sign_event("x", json!({"v":1}), &zero_hash()).unwrap();
+        // Flip one bit in the signature; the length stays SIG_LEN so the
+        // mutated receipt reaches the ed25519 verify (not the length
+        // guard) and must be rejected there.
+        r.signature[0] ^= 0x01;
+        assert_eq!(r.signature.len(), SIG_LEN);
+        assert!(verify_receipt(&r, &s.verifying_key()).is_err());
+    }
+
+    #[test]
+    fn rejects_a_different_signers_key() {
+        let s = tmp_signer();
+        let other = tmp_signer();
+        let r = s.sign_event("x", json!({"v":1}), &zero_hash()).unwrap();
+        // The same receipt under the wrong public key must not verify...
+        assert!(verify_receipt(&r, &other.verifying_key()).is_err());
+        // ...but the matching key still does (sanity).
+        verify_receipt(&r, &s.verifying_key()).unwrap();
+    }
+
+    #[test]
+    fn rejects_malformed_field_lengths() {
+        let s = tmp_signer();
+        let vk = s.verifying_key();
+
+        // Signature too short → length guard, before ed25519.
+        let mut r = s.sign_event("x", json!({"v":1}), &zero_hash()).unwrap();
+        r.signature.truncate(SIG_LEN - 1);
+        assert!(verify_receipt(&r, &vk).is_err());
+
+        // Hash wrong length.
+        let mut r = s.sign_event("x", json!({"v":1}), &zero_hash()).unwrap();
+        r.hash.push(0);
+        assert!(verify_receipt(&r, &vk).is_err());
+
+        // prev_hash wrong length.
+        let mut r = s.sign_event("x", json!({"v":1}), &zero_hash()).unwrap();
+        r.prev_hash.pop();
+        assert!(verify_receipt(&r, &vk).is_err());
+    }
+
+    #[test]
+    fn verify_chain_detects_tampered_middle_receipt() {
+        let s = tmp_signer();
+        let r1 = s.sign_event("a", json!({"v":1}), &zero_hash()).unwrap();
+        let mut r2 = s.sign_event("b", json!({"v":2}), &r1.hash).unwrap();
+        let r3 = s.sign_event("c", json!({"v":3}), &r2.hash).unwrap();
+        // Tamper r2's payload but leave its hash/prev_hash intact: the
+        // chain LINKAGE still appears valid, yet r2's hash no longer
+        // matches its payload — verify_chain must still reject it, proving
+        // it validates content per-receipt, not just linkage.
+        r2.event_payload = json!({"v":99});
+        let vk = s.verifying_key();
+        assert!(verify_chain(&[r1, r2, r3], &vk, &zero_hash()).is_err());
+    }
+
+    #[test]
+    fn verify_chain_rejects_wrong_initial_prev() {
+        let s = tmp_signer();
+        let r1 = s.sign_event("a", json!({"v":1}), &zero_hash()).unwrap();
+        let vk = s.verifying_key();
+        // Genesis receipt was signed against zero_hash; asserting a
+        // non-zero initial_prev must fail the index-0 linkage check.
+        let mut wrong = zero_hash();
+        wrong[0] = 1;
+        assert!(verify_chain(&[r1], &vk, &wrong).is_err());
+    }
+
+    #[test]
+    fn verify_chain_rejects_bad_initial_prev_length() {
+        let s = tmp_signer();
+        let r1 = s.sign_event("a", json!({"v":1}), &zero_hash()).unwrap();
+        let vk = s.verifying_key();
+        assert!(verify_chain(&[r1], &vk, &[0u8; 8]).is_err());
+    }
+
+    #[test]
+    fn verify_chain_empty_is_ok() {
+        let s = tmp_signer();
+        // No receipts → vacuously valid (documents the edge).
+        verify_chain(&[], &s.verifying_key(), &zero_hash()).unwrap();
+    }
+
+    #[test]
+    fn canonical_json_hash_is_key_order_independent() {
+        // The provenance hash must be stable regardless of the order in
+        // which a payload's keys were constructed — otherwise two parties
+        // replaying the same logical event would derive different hashes.
+        // serde_json::Value sorts map keys (no `preserve_order` feature);
+        // this pins that assumption. created_at is not hashed, so only the
+        // payload bytes matter here.
+        let s = tmp_signer();
+        let r1 = s
+            .sign_event("e", json!({"a":1, "b":2}), &zero_hash())
+            .unwrap();
+        let r2 = s
+            .sign_event("e", json!({"b":2, "a":1}), &zero_hash())
+            .unwrap();
+        assert_eq!(
+            r1.hash, r2.hash,
+            "hash must not depend on payload key insertion order"
+        );
     }
 }

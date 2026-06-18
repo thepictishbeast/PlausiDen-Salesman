@@ -23,21 +23,28 @@
 //! Bigger lists tend to overfit to specific LLM versions and become
 //! easier to evade. Keep this list to high-precision tells.
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 use serde::{Deserialize, Serialize};
 
 /// Score in [0.0, 1.0]. 0 = no tells. 1 = strong AI tells.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RiskScore {
+    /// Overall risk in `0.0..=1.0` (weighted max of the signal hits).
     pub score: f32,
+    /// The individual signals that fired, for explainability.
     pub hits: Vec<SignalHit>,
 }
 
 impl RiskScore {
+    /// True if the AI-tell score is strictly below `threshold` — i.e. the
+    /// draft is human-enough to pass the gate at that threshold.
     pub fn passes(&self, threshold: f32) -> bool {
         self.score < threshold
     }
 
+    /// Human-readable explanation lines, one per signal hit, formatted as
+    /// `[name/weight] evidence` — surfaced to the operator at review.
     pub fn reasons(&self) -> Vec<String> {
         self.hits
             .iter()
@@ -46,10 +53,14 @@ impl RiskScore {
     }
 }
 
+/// A single AI-tell signal that fired against a draft.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignalHit {
+    /// Signal identifier (e.g. `fabricated_numeric_claim`).
     pub name: String,
+    /// This signal's weight / contribution to the overall score.
     pub weight: f32,
+    /// The matched text or reason, surfaced to the operator.
     pub evidence: String,
 }
 

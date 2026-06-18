@@ -13,6 +13,7 @@
 //! same orchestrator instance — caller spawns one orchestrator per
 //! campaign worker.
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 use salesman_core::Result;
 use salesman_llm::{ChatRequest, ChatResponse, LlmRouter, Message, Role, RouteHint};
@@ -20,6 +21,9 @@ use salesman_tools::ToolRegistry;
 use std::sync::Arc;
 use tracing::{debug, info};
 
+/// The agentic loop: drives an LLM conversation, dispatching tool calls
+/// through the registry until the model returns a terminal answer or the
+/// step cap is reached.
 #[derive(Debug)]
 pub struct Orchestrator {
     router: Arc<LlmRouter>,
@@ -28,6 +32,8 @@ pub struct Orchestrator {
 }
 
 impl Orchestrator {
+    /// Build an orchestrator over an LLM router + tool registry, defaulting
+    /// to a 16-step cap per run.
     pub fn new(router: Arc<LlmRouter>, tools: Arc<ToolRegistry>) -> Self {
         Self {
             router,
@@ -36,6 +42,7 @@ impl Orchestrator {
         }
     }
 
+    /// Override the maximum number of LLM turns per run (builder style).
     pub fn with_max_steps(mut self, max_steps: u32) -> Self {
         self.max_steps = max_steps;
         self

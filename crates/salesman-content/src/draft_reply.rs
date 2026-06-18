@@ -27,18 +27,23 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use tracing::warn;
 
+/// A drafted reply awaiting operator review.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplyDraft {
+    /// Subject line of the reply.
     pub subject: String,
+    /// Body of the reply.
     pub body: String,
     /// What this draft is trying to do — "answer-question" /
     /// "handle-objection" / "advance-to-meeting" / "send-pricing".
     /// Operator sees this in the review queue.
     pub intent: String,
+    /// Model confidence in the draft, 0..=1.
     #[serde(default)]
     pub confidence: Option<f32>,
 }
 
+/// Drafts a contextual reply to an inbound message via the LLM.
 #[derive(Debug)]
 pub struct DraftReplyTool {
     router: Arc<LlmRouter>,
@@ -48,6 +53,8 @@ pub struct DraftReplyTool {
 }
 
 impl DraftReplyTool {
+    /// Build the reply-drafting tool over the LLM `router`, signing as
+    /// `sender_name` at `sender_company` with the `sender_one_liner` pitch.
     pub fn new(
         router: Arc<LlmRouter>,
         sender_name: impl Into<String>,
@@ -222,12 +229,19 @@ impl DraftReplyTool {
 /// thing to construct instead of passing six positional Options.
 #[derive(Debug, Clone, Copy)]
 pub struct ReplyDraftContext<'a> {
+    /// The prospect record (JSON) for personalization.
     pub prospect: &'a Value,
+    /// Prior thread messages (JSON array), if any.
     pub prior_thread: Option<&'a Value>,
+    /// Our last outbound subject, if any.
     pub outbound_subject: Option<&'a str>,
+    /// Our last outbound body, if any.
     pub outbound_body: Option<&'a str>,
+    /// The inbound message subject, if any.
     pub inbound_subject: Option<&'a str>,
+    /// The inbound message body being replied to.
     pub inbound_body: &'a str,
+    /// The classified kind of the inbound (e.g. `question`).
     pub inbound_kind: &'a str,
 }
 
@@ -372,8 +386,7 @@ impl Tool for DraftReplyTool {
         // suppressed optout/bounce; spam shouldn't get a reply.
         // legal_threat is treated even more strictly — operator MUST
         // handle it personally, never auto-draft a response.
-        const TERMINAL: &[&str] =
-            &["optout", "bounce", "spam", "out_of_office", "legal_threat"];
+        const TERMINAL: &[&str] = &["optout", "bounce", "spam", "out_of_office", "legal_threat"];
         if TERMINAL
             .iter()
             .any(|t| t.eq_ignore_ascii_case(&inbound_kind))
@@ -421,6 +434,14 @@ impl Tool for DraftReplyTool {
             inbound_body: &inbound_body,
             inbound_kind: &inbound_kind,
         });
+        // PII-redaction boundary (CLAUDE.md "No PII to third parties"): this
+        // path sends prospect context to a SaaS model, so redact emails, phones,
+        // and the known company name + homepage from the prompt, then rehydrate
+        // them back into the model's output afterward — strictly reduces PII
+        // exposure; rehydrate restores the real values for the final reply.
+        let red_terms = crate::prospect_pii_terms(&prospect);
+        let red_refs: Vec<&str> = red_terms.iter().map(String::as_str).collect();
+        let redaction = salesman_core::redact::redact(&user, &red_refs);
 
         let req = ChatRequest {
             messages: vec![
@@ -432,7 +453,7 @@ impl Tool for DraftReplyTool {
                 },
                 Message {
                     role: Role::User,
-                    content: user,
+                    content: redaction.text().to_string(),
                     tool_calls: vec![],
                     tool_results: vec![],
                 },
@@ -447,7 +468,9 @@ impl Tool for DraftReplyTool {
             .router
             .chat_for(RouteHint::Reasoning, "draft_reply", req)
             .await?;
-        let draft = parse_reply(&resp.message.content).map_err(|e| Error::Tool {
+        // Restore the real PII before parsing + scoring the model's output.
+        let rehydrated = redaction.rehydrate(&resp.message.content);
+        let draft = parse_reply(&rehydrated).map_err(|e| Error::Tool {
             tool: "content.draft_reply".into(),
             message: format!("parse: {e}"),
         })?;
@@ -489,6 +512,7 @@ impl Tool for DraftReplyTool {
 /// One entry in the operator's objection library.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ObjectionEntry {
+    /// Stable identifier for this objection entry.
     pub key: String,
     /// Lower-case substrings the matcher looks for in the inbound.
     /// Any match → this entry is the threaded objection.
@@ -502,8 +526,10 @@ pub struct ObjectionEntry {
     pub posture: Option<String>,
 }
 
+/// A collection of operator-curated objection-handling entries.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ObjectionLibrary {
+    /// The objection entries, matched in order.
     #[serde(default)]
     pub objections: Vec<ObjectionEntry>,
 }
@@ -543,7 +569,9 @@ pub fn load_objections_toml(text: &str) -> Result<ObjectionLibrary> {
 /// One offered meeting slot. Operator-curated.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MeetingSlot {
+    /// Slot start time (with timezone offset).
     pub start: chrono::DateTime<chrono::FixedOffset>,
+    /// Optional note shown with the offered slot.
     #[serde(default)]
     pub note: Option<String>,
 }
@@ -551,10 +579,14 @@ pub struct MeetingSlot {
 /// Operator-curated calendar config. Read from a TOML file.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MeetingCalendar {
+    /// Default meeting duration in minutes.
     #[serde(default = "default_duration_minutes")]
     pub duration_minutes: u32,
+    /// IANA timezone the slots are expressed in, if set.
     pub timezone: Option<String>,
+    /// Video-call link offered with a confirmed meeting, if set.
     pub zoom_link: Option<String>,
+    /// The offered meeting slots.
     #[serde(default)]
     pub slots: Vec<MeetingSlot>,
 }
@@ -674,6 +706,43 @@ fn parse_reply(raw: &str) -> std::result::Result<ReplyDraft, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn user_prompt_redaction_strips_raw_emails() {
+        // The draft path sends the assembled user prompt to a SaaS model;
+        // after redaction it must carry no raw email (e.g. one in the
+        // prospect's inbound signature), and rehydration round-trips.
+        let tool = DraftReplyTool::new(
+            std::sync::Arc::new(salesman_llm::LlmRouter::new()),
+            "Sender",
+            "PlausiDen",
+            "one-liner",
+        );
+        let prospect = serde_json::json!({ "display_name": "Acme" });
+        let user = tool.user_prompt(ReplyDraftContext {
+            prospect: &prospect,
+            prior_thread: None,
+            outbound_subject: None,
+            outbound_body: None,
+            inbound_subject: None,
+            inbound_body: "thanks — reach me at jane.doe@acme.com going forward",
+            inbound_kind: "question",
+        });
+        assert!(
+            user.contains("jane.doe@acme.com"),
+            "sanity: the assembled prompt includes the inbound body"
+        );
+        let red = salesman_core::redact::redact(&user, &[]);
+        assert!(
+            !red.text().contains("jane.doe@acme.com"),
+            "the prompt sent to the model must not contain the raw email"
+        );
+        assert_eq!(
+            red.rehydrate(red.text()),
+            user,
+            "rehydration must round-trip"
+        );
+    }
 
     #[test]
     fn parse_clean_json() {

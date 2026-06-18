@@ -8,6 +8,7 @@
 //!   halt         kill switch (stub)
 //!   tools        list registered tools (incl. discovery tools)
 //!   backends     list registered LLM backends + models
+#![deny(missing_docs)]
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -166,7 +167,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use url::Url;
 
-const DEFAULT_CLAUDE_MODEL: &str = "claude-sonnet-4-6";
+// Owner directive: default to the latest Claude (Opus 4.8). Single
+// source of truth — override per-run with --claude-model / env
+// SALESMAN_CLAUDE_MODEL. Cost tracking for this model lives in
+// salesman-llm::rates::RATES.
+const DEFAULT_CLAUDE_MODEL: &str = "claude-opus-4-8";
 const DEFAULT_GEMINI_MODEL: &str = "gemini-1.5-flash";
 
 #[derive(Parser, Debug)]
@@ -718,6 +723,14 @@ enum Cmd {
         /// `mail.plausiden.com`). Required when --sender-ip is set.
         #[arg(long)]
         expected_ptr: Option<String>,
+    },
+    /// List the pending owner audit-notifications (one per outbound
+    /// contact, still undelivered). Each shows who / how / what so you
+    /// can find a contact a prospect phoned you about. Read-only.
+    OwnerNotifications {
+        /// Maximum number of pending notifications to show (oldest first).
+        #[arg(long, default_value_t = 50)]
+        limit: i64,
     },
     /// Manage the global do-not-contact list. Subcommands: list,
     /// add, remove, export, import, count. Required for GDPR
@@ -1607,32 +1620,34 @@ async fn main() -> Result<()> {
                 .trim_start_matches("```")
                 .trim_end_matches("```")
                 .trim();
-            let candidates: Vec<LlmCompany> =
-                match serde_json::from_str::<LlmResponse>(stripped) {
-                    Ok(r) => r.companies,
-                    Err(e) => {
-                        // Try to find a JSON object inside the response.
-                        match (stripped.find('{'), stripped.rfind('}')) {
-                            (Some(s), Some(e2)) if e2 > s => {
-                                match serde_json::from_str::<LlmResponse>(&stripped[s..=e2]) {
-                                    Ok(r) => r.companies,
-                                    Err(e3) => anyhow::bail!(
-                                        "LLM output not parseable as JSON: {e3}. \
+            let candidates: Vec<LlmCompany> = match serde_json::from_str::<LlmResponse>(stripped) {
+                Ok(r) => r.companies,
+                Err(e) => {
+                    // Try to find a JSON object inside the response.
+                    match (stripped.find('{'), stripped.rfind('}')) {
+                        (Some(s), Some(e2)) if e2 > s => {
+                            match serde_json::from_str::<LlmResponse>(&stripped[s..=e2]) {
+                                Ok(r) => r.companies,
+                                Err(e3) => anyhow::bail!(
+                                    "LLM output not parseable as JSON: {e3}. \
                                          First 200 chars: {}",
-                                        stripped.chars().take(200).collect::<String>()
-                                    ),
-                                }
+                                    stripped.chars().take(200).collect::<String>()
+                                ),
                             }
-                            _ => anyhow::bail!(
-                                "LLM output not parseable as JSON: {e}. \
-                                 First 200 chars: {}",
-                                stripped.chars().take(200).collect::<String>()
-                            ),
                         }
+                        _ => anyhow::bail!(
+                            "LLM output not parseable as JSON: {e}. \
+                                 First 200 chars: {}",
+                            stripped.chars().take(200).collect::<String>()
+                        ),
                     }
-                };
+                }
+            };
 
-            println!("  LLM proposed {} candidate(s); validating homepages...", candidates.len());
+            println!(
+                "  LLM proposed {} candidate(s); validating homepages...",
+                candidates.len()
+            );
 
             // Validate each homepage by HTTP fetch. Drop hallucinated
             // / dead / parked. Concurrency-capped at 8 — we're being
@@ -1650,7 +1665,10 @@ async fn main() -> Result<()> {
                     if !matches!(url.scheme(), "http" | "https") {
                         return None;
                     }
-                    let host = url.host_str()?.trim_start_matches("www.").to_ascii_lowercase();
+                    let host = url
+                        .host_str()?
+                        .trim_start_matches("www.")
+                        .to_ascii_lowercase();
                     if host.is_empty() {
                         return None;
                     }
@@ -1676,8 +1694,7 @@ async fn main() -> Result<()> {
             }
 
             // Dedup by host — LLM sometimes lists subsidiary + parent.
-            let mut seen: std::collections::BTreeSet<String> =
-                std::collections::BTreeSet::new();
+            let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
             survivors.retain(|(_, _, h)| seen.insert(h.clone()));
 
             // Truncate to the requested top after validation.
@@ -1847,6 +1864,11 @@ async fn main() -> Result<()> {
             let prospects = state
                 .list_prospects_with_facts_for_campaign(campaign_id)
                 .await?;
+            // Local-first: draft for prospects matching SALESMAN_TARGET_LOCALITY
+            // first (no-op when unset).
+            let loc_terms = target_locality_terms();
+            let loc_refs: Vec<&str> = loc_terms.iter().map(|s| s.as_str()).collect();
+            let prospects = order_local_first_with_terms(prospects, &loc_refs);
             let existing = state.list_drafts_awaiting_approval(campaign_id).await?;
             let existing_ids: std::collections::HashSet<_> =
                 existing.iter().map(|t| t.prospect_id).collect();
@@ -1957,14 +1979,62 @@ async fn main() -> Result<()> {
             // so the (campaign, company) UNIQUE constraint never
             // collides on repeat runs.
             const STUBS: &[(&str, &str, &str, salesman_core::model::SizeBand, &str)] = &[
-                ("Acme Logging Co",     "https://acme-logging.example",     "B2B SaaS",     salesman_core::model::SizeBand::Small,      "Self-hosted log aggregation for security teams"),
-                ("Beta Devops",         "https://beta-devops.example",      "Devtools",     salesman_core::model::SizeBand::Mid,        "CI/CD platform for monorepos"),
-                ("Gamma Industrial",    "https://gamma-industrial.example", "Manufacturing",salesman_core::model::SizeBand::Enterprise, "IoT telemetry + edge compute"),
-                ("Delta Cyber",         "https://delta-cyber.example",      "Security",     salesman_core::model::SizeBand::Small,      "Threat-intel platform for MSSPs"),
-                ("Epsilon Health",      "https://epsilonhealth.example",    "Healthtech",   salesman_core::model::SizeBand::Mid,        "GDPR-first patient-data analytics"),
-                ("Zeta Mobility",       "https://zeta-mobility.example",    "Logistics",    salesman_core::model::SizeBand::Mid,        "Fleet routing + driver-app platform"),
-                ("Eta Climate",         "https://etaclimate.example",       "ClimateTech",  salesman_core::model::SizeBand::Small,      "Carbon-accounting for mid-market"),
-                ("Theta Finserv",       "https://thetafinserv.example",     "FinTech",      salesman_core::model::SizeBand::Mid,        "Compliance-first payments rails"),
+                (
+                    "Acme Logging Co",
+                    "https://acme-logging.example",
+                    "B2B SaaS",
+                    salesman_core::model::SizeBand::Small,
+                    "Self-hosted log aggregation for security teams",
+                ),
+                (
+                    "Beta Devops",
+                    "https://beta-devops.example",
+                    "Devtools",
+                    salesman_core::model::SizeBand::Mid,
+                    "CI/CD platform for monorepos",
+                ),
+                (
+                    "Gamma Industrial",
+                    "https://gamma-industrial.example",
+                    "Manufacturing",
+                    salesman_core::model::SizeBand::Enterprise,
+                    "IoT telemetry + edge compute",
+                ),
+                (
+                    "Delta Cyber",
+                    "https://delta-cyber.example",
+                    "Security",
+                    salesman_core::model::SizeBand::Small,
+                    "Threat-intel platform for MSSPs",
+                ),
+                (
+                    "Epsilon Health",
+                    "https://epsilonhealth.example",
+                    "Healthtech",
+                    salesman_core::model::SizeBand::Mid,
+                    "GDPR-first patient-data analytics",
+                ),
+                (
+                    "Zeta Mobility",
+                    "https://zeta-mobility.example",
+                    "Logistics",
+                    salesman_core::model::SizeBand::Mid,
+                    "Fleet routing + driver-app platform",
+                ),
+                (
+                    "Eta Climate",
+                    "https://etaclimate.example",
+                    "ClimateTech",
+                    salesman_core::model::SizeBand::Small,
+                    "Carbon-accounting for mid-market",
+                ),
+                (
+                    "Theta Finserv",
+                    "https://thetafinserv.example",
+                    "FinTech",
+                    salesman_core::model::SizeBand::Mid,
+                    "Compliance-first payments rails",
+                ),
             ];
 
             let state = require_state(cli.database_url.as_deref()).await?;
@@ -1975,8 +2045,7 @@ async fn main() -> Result<()> {
             let suffix = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
             let mut companies: Vec<salesman_core::Company> = Vec::with_capacity(count);
             for i in 0..count {
-                let (name, homepage, industry, size_band, description) =
-                    STUBS[i % STUBS.len()];
+                let (name, homepage, industry, size_band, description) = STUBS[i % STUBS.len()];
                 // Disambiguator so re-running quick-stub doesn't
                 // collide on the (campaign, company) UNIQUE.
                 let display_name = format!("{name} #{suffix}-{i}");
@@ -2798,7 +2867,7 @@ async fn main() -> Result<()> {
                 };
                 if state.is_suppressed(&to).await? {
                     blocked_supp += 1;
-                    tracing::warn!(to=%to, "suppressed — skipping");
+                    tracing::warn!(to = %salesman_core::mask_email(&to), "suppressed — skipping");
                     continue;
                 }
                 let n_recipient = state
@@ -2806,7 +2875,7 @@ async fn main() -> Result<()> {
                     .await?;
                 if n_recipient >= per_recipient_max {
                     blocked_rate += 1;
-                    tracing::warn!(to=%to, n=%n_recipient, "per-recipient cap hit — skipping");
+                    tracing::warn!(to = %salesman_core::mask_email(&to), n = %n_recipient, "per-recipient cap hit — skipping");
                     continue;
                 }
                 let domain = to
@@ -2924,6 +2993,13 @@ async fn main() -> Result<()> {
                     .await?;
                 if n == 1 {
                     sent += 1;
+                    // Queue the owner audit-notification (who/how/what was
+                    // sent) so the operator has a durable record. Best-effort:
+                    // the send already happened, so an enqueue failure must
+                    // not fail the run — just warn.
+                    if let Err(e) = state.enqueue_owner_notification_for_touch(t.touch_id).await {
+                        tracing::warn!(touch = %t.touch_id, error = %e, "owner-notification enqueue failed");
+                    }
                     let pb_tag = match (t.via_fallback(), t.produced_by_short()) {
                         (true, Some(s)) => format!(" produced_by={s} (FALLBACK)"),
                         (false, Some(s)) => format!(" produced_by={s}"),
@@ -3019,7 +3095,7 @@ async fn main() -> Result<()> {
                                 .await
                             {
                                 Ok(Some(id)) => {
-                                    tracing::info!(reply_id = %id, from = %reply.from_address, "persisted");
+                                    tracing::info!(reply_id = %id, from = %salesman_core::mask_email(&reply.from_address), "persisted");
                                 }
                                 Ok(None) => {} // already warned
                                 Err(e) => {
@@ -3148,11 +3224,7 @@ async fn main() -> Result<()> {
                              review; suppression-list NOT modified."
                         );
                         if let Err(e) = state
-                            .set_reply_tag(
-                                r.reply_id,
-                                "auth_failed",
-                                &serde_json::json!(true),
-                            )
+                            .set_reply_tag(r.reply_id, "auth_failed", &serde_json::json!(true))
                             .await
                         {
                             tracing::warn!(reply = %r.reply_id, "%e" = %e, "set_reply_tag failed");
@@ -3164,10 +3236,7 @@ async fn main() -> Result<()> {
                         // conservative bucket — operator reviews the
                         // auth_failed tag in `salesman inbox`.
                         if let Err(e) = state
-                            .update_reply_kind(
-                                r.reply_id,
-                                salesman_core::model::ReplyKind::Spam,
-                            )
+                            .update_reply_kind(r.reply_id, salesman_core::model::ReplyKind::Spam)
                             .await
                         {
                             tracing::warn!(reply = %r.reply_id, "%e" = %e, "update_reply_kind failed");
@@ -3639,9 +3708,11 @@ async fn main() -> Result<()> {
                         r.subject.as_deref().unwrap_or("(no subject)"),
                     );
                 }
-                println!("  → senders auto-suppressed; in-flight touches rejected; \
+                println!(
+                    "  → senders auto-suppressed; in-flight touches rejected; \
                           drafter REFUSED to compose. Run `salesman thread <prospect>` \
-                          to read context, then respond manually.\n");
+                          to read context, then respond manually.\n"
+                );
             }
             println!(
                 "=== positive replies ({}): engaged + question ===",
@@ -5364,9 +5435,14 @@ async fn main() -> Result<()> {
             let campaign_id = state
                 .ensure_campaign(&campaign, "(pick-angle)", "(unspecified)")
                 .await?;
-            let mut prospects = state
+            let prospects = state
                 .list_prospects_with_facts_for_campaign(campaign_id)
                 .await?;
+            // Local-first BEFORE truncate, so a limited batch targets local
+            // prospects first (no-op when SALESMAN_TARGET_LOCALITY unset).
+            let loc_terms = target_locality_terms();
+            let loc_refs: Vec<&str> = loc_terms.iter().map(|s| s.as_str()).collect();
+            let mut prospects = order_local_first_with_terms(prospects, &loc_refs);
             prospects.truncate(max);
             if prospects.is_empty() {
                 println!("(no prospects in `{campaign}` to score)");
@@ -5996,6 +6072,49 @@ async fn main() -> Result<()> {
             }
         }
 
+        Cmd::OwnerNotifications { limit } => {
+            let state = require_state(cli.database_url.as_deref()).await?;
+            let pending = state
+                .list_pending_owner_notifications(limit)
+                .await
+                .unwrap_or_default();
+            if cli.json {
+                let v = serde_json::json!({
+                    "count": pending.len(),
+                    "pending": pending.iter().map(|n| serde_json::json!({
+                        "id": n.id.to_string(),
+                        "prospect_label": n.prospect_label,
+                        "to_address": n.to_address,
+                        "channel": n.channel,
+                        "sent_at": n.sent_at.to_rfc3339(),
+                        "subject": n.subject,
+                        "campaign": n.campaign,
+                        "receipt_id": n.receipt_id.map(|r| r.to_string()),
+                        "queued_at": n.queued_at.to_rfc3339(),
+                    })).collect::<Vec<_>>(),
+                });
+                println!("{}", serde_json::to_string_pretty(&v)?);
+                return Ok(());
+            }
+            println!(
+                "salesman owner-notifications — {} pending (undelivered)\n",
+                pending.len()
+            );
+            for n in &pending {
+                println!(
+                    "  {} | {} <{}> | {} | {}",
+                    n.sent_at.format("%Y-%m-%d %H:%M:%SZ"),
+                    n.prospect_label,
+                    n.to_address,
+                    n.channel,
+                    n.subject.as_deref().unwrap_or("(no subject)"),
+                );
+            }
+            if pending.is_empty() {
+                println!("  (nothing pending — notifications appear here as contacts are made)");
+            }
+        }
+
         Cmd::Suppressions { action } => {
             let state = require_state(cli.database_url.as_deref()).await?;
             match action {
@@ -6578,9 +6697,85 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Operator-configured target localities from `SALESMAN_TARGET_LOCALITY`
+/// (comma-separated, e.g. `"Edinburgh, Scotland, UK"`). Empty/unset means
+/// no local-first preference.
+fn target_locality_terms() -> Vec<String> {
+    std::env::var("SALESMAN_TARGET_LOCALITY")
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Reorder a campaign's prospects local-first (highest locality match to
+/// `terms` first; stable otherwise). A no-op when `terms` is empty, so
+/// default behavior is unchanged unless the operator opts in. Pure
+/// reordering of already-fetched rows — does not change what is
+/// discovered.
+fn order_local_first_with_terms(
+    mut prospects: Vec<salesman_state::query::ProspectWithFacts>,
+    terms: &[&str],
+) -> Vec<salesman_state::query::ProspectWithFacts> {
+    if terms.is_empty() {
+        return prospects;
+    }
+    let regions: Vec<Option<&str>> = prospects.iter().map(|p| p.region.as_deref()).collect();
+    let order = salesman_discovery::locality::rank_local_first(&regions, terms);
+    let mut slots: Vec<Option<salesman_state::query::ProspectWithFacts>> =
+        prospects.drain(..).map(Some).collect();
+    order
+        .into_iter()
+        .map(|i| {
+            slots[i]
+                .take()
+                .expect("rank_local_first yields each index once")
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn prospect_in(region: Option<&str>) -> salesman_state::query::ProspectWithFacts {
+        salesman_state::query::ProspectWithFacts {
+            prospect_id: salesman_core::ProspectId::new(),
+            company_id: salesman_core::CompanyId::new(),
+            display_name: region.unwrap_or("nowhere").to_string(),
+            homepage: None,
+            industry: None,
+            description: None,
+            region: region.map(str::to_string),
+            tech_signals: serde_json::Value::Array(vec![]),
+            tags: serde_json::Value::Object(serde_json::Map::new()),
+        }
+    }
+
+    #[test]
+    fn order_local_first_puts_matching_regions_first() {
+        let ps = vec![
+            prospect_in(Some("Tokyo, JP")),
+            prospect_in(Some("Edinburgh, Scotland")),
+            prospect_in(None),
+            prospect_in(Some("Glasgow, Scotland")),
+        ];
+        let out = order_local_first_with_terms(ps, &["scotland"]);
+        // Both Scotland rows come first (stable: Edinburgh before Glasgow),
+        // then the non-matching rows in original order.
+        assert_eq!(out[0].region.as_deref(), Some("Edinburgh, Scotland"));
+        assert_eq!(out[1].region.as_deref(), Some("Glasgow, Scotland"));
+        assert_eq!(out.len(), 4);
+    }
+
+    #[test]
+    fn order_local_first_empty_terms_is_noop() {
+        let ps = vec![prospect_in(Some("Tokyo")), prospect_in(Some("Edinburgh"))];
+        let out = order_local_first_with_terms(ps, &[]);
+        assert_eq!(out[0].region.as_deref(), Some("Tokyo"));
+        assert_eq!(out[1].region.as_deref(), Some("Edinburgh"));
+    }
 
     #[test]
     fn csv_quote_wraps_and_escapes() {

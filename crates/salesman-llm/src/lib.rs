@@ -11,6 +11,7 @@
 //! so they're zeroed on drop. Never log a key; never include one in
 //! an error.
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 pub mod claude;
 pub mod gemini;
@@ -36,7 +37,10 @@ use salesman_core::Result;
 /// - reporting usage metrics on every call.
 #[async_trait]
 pub trait LlmBackend: Send + Sync + std::fmt::Debug {
+    /// Which backend this is.
     fn kind(&self) -> BackendKind;
+    /// The model identifier this backend calls.
     fn model(&self) -> &str;
+    /// Run one chat completion, mapping to/from the unified types.
     async fn chat(&self, req: ChatRequest) -> Result<ChatResponse>;
 }

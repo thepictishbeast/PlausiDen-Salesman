@@ -1,5 +1,12 @@
 # DEPLOYMENT_GUIDE.md — owner walkthrough, zero to first send
 
+> ⚠️ **STALE INFRASTRUCTURE FACTS — verify on-box before trusting.**
+> The OpenClaw VPS was re-provisioned 2026-05-31; the IP `45.77.217.37`
+> referenced below is **DEAD**. The real current sending IP is
+> **unverified** — see `HANDOFF.md` → "RECONCILE ON-BOX". Do NOT copy any
+> IP / SPF / PTR / DMARC value from this guide into DNS; re-derive them
+> from the live box first. (Intentionally not replaced with a guessed IP.)
+
 **Audience:** the owner / operator running PlausiDen-Salesman in production.
 **Goal:** get from a freshly-deployed binary on the VPS to a successful
 first 25-prospect warm-up send, without spam-binning the domain.

@@ -4,6 +4,10 @@ use axum::http::{HeaderValue, Request, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::Response;
 
+/// Axum middleware enforcing HTTP Basic auth against `expected`
+/// ("user:pass"), using a constant-time credential compare. `/healthz`
+/// bypasses auth; a missing or incorrect credential yields 401 with a
+/// `WWW-Authenticate` challenge.
 pub async fn basic_auth(expected: String, req: Request<axum::body::Body>, next: Next) -> Response {
     // /healthz bypass — load balancers shouldn't need creds for liveness.
     if req.uri().path() == "/healthz" {

@@ -15,17 +15,20 @@ use salesman_core::{Error, Result};
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
-use tokio_util::compat::{Compat, TokioAsyncReadCompatExt};
 use tracing::{debug, info, warn};
 
-type ImapStream = Compat<tokio_rustls::client::TlsStream<TcpStream>>;
+type ImapStream = tokio_rustls::client::TlsStream<TcpStream>;
 
+/// Polls a configured IMAP mailbox for unseen replies and hands each
+/// parsed message to a caller-supplied callback.
 #[derive(Debug)]
 pub struct ImapPoller {
     config: ImapConfig,
 }
 
 impl ImapPoller {
+    /// Build a poller bound to `config`. The TLS connection is opened
+    /// lazily per [`Self::poll_once`], not here.
     pub fn new(config: ImapConfig) -> Self {
         Self { config }
     }
@@ -90,7 +93,7 @@ impl ImapPoller {
                         continue;
                     }
                 };
-                debug!(uid, from = %parsed.from_address, "handing to callback");
+                debug!(uid, from = %salesman_core::mask_email(&parsed.from_address), "handing to callback");
                 on_reply(parsed).await?;
                 // mark \Seen
                 let _ = session
@@ -128,10 +131,9 @@ impl ImapPoller {
                 message: format!("{e}"),
             })?;
 
-        // async-imap wants futures::Async{Read,Write}; tokio-rustls
-        // gives us tokio::AsyncRead/Write. Bridge with the compat
-        // layer.
-        let client = async_imap::Client::new(tls.compat());
+        // async-imap is built with `runtime-tokio`, so it consumes the
+        // tokio-rustls stream directly — no futures<->tokio compat shim.
+        let client = async_imap::Client::new(tls);
         let session = client
             .login(&self.config.username, &*self.config.password)
             .await

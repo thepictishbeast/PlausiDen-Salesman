@@ -30,14 +30,34 @@ use zeroize::Zeroizing;
 
 const GEMINI_API_BASE: &str = "https://generativelanguage.googleapis.com/v1beta";
 
-#[derive(Debug)]
+/// [`LlmBackend`](crate::LlmBackend) implementation for Google Gemini.
+///
+/// SECURITY: the `api_key` is held in `Zeroizing<String>` and `Debug` is
+/// implemented manually to REDACT it. The derived `Debug` would print the
+/// key verbatim — `Zeroizing`'s `Debug` delegates to the inner `String` —
+/// and `LlmBackend` requires `Debug`, so a backend logged via `{:?}`
+/// (directly or inside a `Box<dyn LlmBackend>`) would leak the Gemini key
+/// (CLAUDE.md: no secrets in logs).
 pub struct GeminiBackend {
     model: String,
     api_key: Zeroizing<String>,
     http: reqwest::Client,
 }
 
+impl std::fmt::Debug for GeminiBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Redact the key; list other fields explicitly (fail-safe — a
+        // field added later is omitted until consciously included).
+        f.debug_struct("GeminiBackend")
+            .field("model", &self.model)
+            .field("api_key", &"<redacted>")
+            .field("http", &self.http)
+            .finish()
+    }
+}
+
 impl GeminiBackend {
+    /// Build a Gemini backend for `model` with an explicit API key.
     pub fn new(model: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
             model: model.into(),
@@ -51,6 +71,8 @@ impl GeminiBackend {
         }
     }
 
+    /// Build a Gemini backend, reading the key from `GEMINI_API_KEY`
+    /// (errors if unset).
     pub fn from_env(model: &str) -> Result<Self> {
         let key = std::env::var("GEMINI_API_KEY")
             .map_err(|_| Error::Config("GEMINI_API_KEY not set".into()))?;
@@ -409,5 +431,17 @@ mod tests {
         assert_eq!(contents[1]["role"], "model");
         assert_eq!(contents[1]["parts"][0]["functionCall"]["name"], "search");
         assert_eq!(contents[1]["parts"][0]["functionCall"]["args"]["q"], "hi");
+    }
+
+    #[test]
+    fn debug_redacts_the_api_key() {
+        let backend = GeminiBackend::new("gemini-2.5-pro", "AIza-secret-gemini-key-xyz");
+        let rendered = format!("{backend:?}");
+        assert!(
+            !rendered.contains("AIza-secret-gemini-key-xyz"),
+            "Debug must not leak the Gemini API key: {rendered}"
+        );
+        assert!(rendered.contains("<redacted>"), "{rendered}");
+        assert!(rendered.contains("gemini-2.5-pro"), "{rendered}");
     }
 }

@@ -1,3 +1,5 @@
+//! Parsing inbound RFC 5322 messages into a normalised [`ParsedReply`].
+
 use chrono::{DateTime, Utc};
 use mail_parser::MessageParser;
 use serde::{Deserialize, Serialize};
@@ -8,15 +10,25 @@ use std::collections::BTreeMap;
 /// can correlate by Message-Id / In-Reply-To / References.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsedReply {
+    /// Sender email address (From).
     pub from_address: String,
+    /// Sender display name, if present.
     pub from_name: Option<String>,
+    /// Subject line, if present.
     pub subject: Option<String>,
+    /// Plain-text body (empty string if none).
     pub body_plain: String,
+    /// HTML body, if present.
     pub body_html: Option<String>,
+    /// Date the message was sent (falls back to now if unparseable).
     pub received_at: DateTime<Utc>,
+    /// `Message-Id` header, if present.
     pub message_id: Option<String>,
+    /// `In-Reply-To` header, if present.
     pub in_reply_to: Option<String>,
+    /// `References` header values, for thread correlation.
     pub references: Vec<String>,
+    /// All headers, collapsed to one value each.
     pub raw_headers: BTreeMap<String, String>,
     /// Raw `Authentication-Results:` header values, in the order
     /// they appeared in the message. A message can have several (one
@@ -83,7 +95,11 @@ impl ParsedReply {
                 return Some(true);
             }
         }
-        if saw_trusted_header { Some(false) } else { None }
+        if saw_trusted_header {
+            Some(false)
+        } else {
+            None
+        }
     }
 }
 
@@ -260,5 +276,30 @@ mod tests {
         let p = ParsedReply::from_rfc5322(raw).unwrap();
         assert_eq!(p.is_from_authenticated(""), None);
         assert_eq!(p.is_from_authenticated("   "), None);
+    }
+
+    proptest::proptest! {
+        // An inbound reply is fully attacker-controlled, so from_rfc5322 is a
+        // trust boundary: it must NEVER panic — only ever return Some/None.
+        #[test]
+        fn from_rfc5322_never_panics_on_arbitrary_bytes(
+            bytes in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..4096)
+        ) {
+            let _ = ParsedReply::from_rfc5322(&bytes);
+        }
+
+        // Header-shaped fuzz: tabs/CR/LF/colons + printable ASCII exercise the
+        // header-splitting paths specifically.
+        #[test]
+        fn from_rfc5322_never_panics_on_headerish_text(
+            s in "[\\x09\\x0a\\x0d\\x20-\\x7e]{0,2000}"
+        ) {
+            if let Some(p) = ParsedReply::from_rfc5322(s.as_bytes()) {
+                // Downstream calls on a parsed-from-garbage reply must also be
+                // panic-free.
+                let _ = p.from_domain();
+                let _ = p.is_from_authenticated("plausiden.com");
+            }
+        }
     }
 }

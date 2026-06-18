@@ -23,6 +23,7 @@
 
 use crate::ParsedReply;
 
+/// Extracted delivery-status-notification (bounce) details.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DsnInfo {
     /// The recipient address that failed (extracted from

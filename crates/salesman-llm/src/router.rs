@@ -15,6 +15,8 @@ use std::sync::Arc;
 /// depend on salesman-state. State implements this in its own crate.
 #[async_trait]
 pub trait LlmCallSink: Send + Sync + std::fmt::Debug {
+    /// Persist one `llm_calls` accounting row (backend, model, token
+    /// counts, latency, cost, and the call's purpose).
     #[allow(clippy::too_many_arguments)]
     async fn record_call(
         &self,
@@ -48,6 +50,8 @@ pub enum RouteHint {
     Backend(BackendKind),
 }
 
+/// Routes [`ChatRequest`]s to a registered [`LlmBackend`] based on a
+/// [`RouteHint`], with fallback across the preference chain.
 #[derive(Debug)]
 pub struct LlmRouter {
     backends: HashMap<BackendKind, Arc<dyn LlmBackend>>,
@@ -64,6 +68,9 @@ pub struct LlmRouter {
 }
 
 impl LlmRouter {
+    /// Build an empty router with the default per-route backend choices
+    /// (Claude for reasoning/deep-reasoning, Gemini for bulk/grounded,
+    /// LFI for sovereign). Register backends before routing.
     pub fn new() -> Self {
         Self {
             backends: HashMap::new(),
@@ -77,6 +84,7 @@ impl LlmRouter {
         }
     }
 
+    /// Register a backend under its `kind()`, replacing any existing one.
     pub fn register(&mut self, backend: Arc<dyn LlmBackend>) {
         self.backends.insert(backend.kind(), backend);
     }
@@ -122,6 +130,7 @@ impl LlmRouter {
         self
     }
 
+    /// The operator brand/voice brief injected into prompts, if configured.
     pub fn operator_brief(&self) -> Option<&str> {
         self.operator_brief.as_deref()
     }
@@ -185,6 +194,7 @@ impl LlmRouter {
         self.chat_for(hint, "unspecified", req).await
     }
 
+    /// The backend kinds currently registered (unordered).
     pub fn registered_kinds(&self) -> Vec<BackendKind> {
         self.backends.keys().copied().collect()
     }

@@ -59,6 +59,9 @@ pub struct SubscriberCliBackend {
 }
 
 impl SubscriberCliBackend {
+    /// Build a backend that shells out to a subscriber CLI (`binary` +
+    /// `extra_args`) for the given `kind`/`model`, bounded by `timeout`
+    /// per call.
     pub fn new(
         kind: BackendKind,
         model: impl Into<String>,
@@ -77,7 +80,12 @@ impl SubscriberCliBackend {
 
     /// Build a Claude (Code) CLI backend honoring env overrides:
     ///   - SALESMAN_CLAUDE_CLI_BIN   (default: `claude`)
-    ///   - SALESMAN_CLAUDE_CLI_ARGS  (JSON array, default: `["--print"]`)
+    ///   - SALESMAN_CLAUDE_CLI_ARGS  (JSON array, default: `["--print"]`).
+    ///     This is also where reasoning **effort** is configured on the
+    ///     CLI transport — append whatever effort flag your installed
+    ///     `claude` CLI accepts (the exact flag is CLI-version-specific,
+    ///     so it's not hard-coded here). e.g. to run at max effort:
+    ///     `SALESMAN_CLAUDE_CLI_ARGS='["--print","--effort","max"]'`.
     ///   - SALESMAN_CLAUDE_CLI_MODEL (default: unset → don't pass
     ///     --model, let the CLI pick its own default which usually
     ///     tracks the subscriber's tier)
@@ -92,8 +100,7 @@ impl SubscriberCliBackend {
     /// `sonnet`, `opus`, `claude-sonnet-4-5`).
     pub fn claude_from_env(model: impl Into<String>) -> Result<Self> {
         let model = model.into();
-        let bin = std::env::var("SALESMAN_CLAUDE_CLI_BIN")
-            .unwrap_or_else(|_| "claude".to_string());
+        let bin = std::env::var("SALESMAN_CLAUDE_CLI_BIN").unwrap_or_else(|_| "claude".to_string());
         let mut args = parse_args_env("SALESMAN_CLAUDE_CLI_ARGS")
             .unwrap_or_else(|| vec!["--print".to_string()]);
         if let Ok(cli_model) = std::env::var("SALESMAN_CLAUDE_CLI_MODEL")
@@ -123,8 +130,7 @@ impl SubscriberCliBackend {
     ///   - SALESMAN_LLM_CLI_TIMEOUT_SEC (default: 180)
     pub fn gemini_from_env(model: impl Into<String>) -> Result<Self> {
         let model = model.into();
-        let bin = std::env::var("SALESMAN_GEMINI_CLI_BIN")
-            .unwrap_or_else(|_| "gemini".to_string());
+        let bin = std::env::var("SALESMAN_GEMINI_CLI_BIN").unwrap_or_else(|_| "gemini".to_string());
         let mut args = parse_args_env("SALESMAN_GEMINI_CLI_ARGS")
             .unwrap_or_else(|| vec!["--skip-trust".to_string(), "chat".to_string()]);
         if let Ok(cli_model) = std::env::var("SALESMAN_GEMINI_CLI_MODEL")
@@ -167,12 +173,7 @@ fn parse_args_str(raw: &str) -> Option<Vec<String>> {
         // Fallback: whitespace-split so operators don't have to
         // remember JSON quoting in env. SAFETY: we never invoke a
         // shell with these — they go straight into `Command::arg`.
-        Some(
-            trimmed
-                .split_whitespace()
-                .map(|s| s.to_string())
-                .collect(),
-        )
+        Some(trimmed.split_whitespace().map(|s| s.to_string()).collect())
     })
 }
 
@@ -322,17 +323,16 @@ impl LlmBackend for SubscriberCliBackend {
             BackendKind::Lfi => {}
         }
 
-        let mut child = cmd.spawn()
-            .map_err(|e| Error::Llm {
-                backend: self.kind.to_string(),
-                message: format!(
-                    "subscriber-cli: failed to spawn {:?}: {e}. Is the \
+        let mut child = cmd.spawn().map_err(|e| Error::Llm {
+            backend: self.kind.to_string(),
+            message: format!(
+                "subscriber-cli: failed to spawn {:?}: {e}. Is the \
                      CLI installed and on PATH? (set \
                      SALESMAN_CLAUDE_CLI_BIN / SALESMAN_GEMINI_CLI_BIN \
                      to override)",
-                    self.binary
-                ),
-            })?;
+                self.binary
+            ),
+        })?;
 
         // Send prompt over stdin so it never lands in argv / ps.
         // BUG ASSUMPTION: if the child exits before we finish
@@ -524,7 +524,10 @@ mod tests {
             vec![],
             Duration::from_secs(5),
         );
-        let r = b.chat(req(vec![(Role::User, "hello world")])).await.unwrap();
+        let r = b
+            .chat(req(vec![(Role::User, "hello world")]))
+            .await
+            .unwrap();
         assert!(r.message.content.contains("hello world"));
         assert_eq!(r.finish_reason, FinishReason::Stop);
         assert_eq!(r.usage.cost_micro_usd, 0);

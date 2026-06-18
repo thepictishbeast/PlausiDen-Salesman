@@ -24,16 +24,24 @@ use tracing::warn;
 /// One template loaded from `templates/cold/*.toml`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ColdTemplate {
+    /// Machine identifier; must match the file stem.
     pub key: String,
+    /// One-line description for the operator.
     pub description: String,
+    /// Prospect segment this template targets (e.g. `security`).
     #[serde(default)]
     pub segment: Option<String>,
+    /// Sequencer delay hint, in days.
     #[serde(default)]
     pub delay_days: Option<u32>,
+    /// Example subject the LLM writes a similar one from.
     pub subject_seed: String,
+    /// Example body the LLM uses as tone + structure.
     pub body_seed: String,
+    /// Phrases the LLM MUST include verbatim (e.g. the opt-out line).
     #[serde(default)]
     pub mandatory_phrases: Vec<String>,
+    /// Phrases the LLM MUST NOT use (clichés to avoid).
     #[serde(default)]
     pub forbidden_phrases: Vec<String>,
 }
@@ -43,11 +51,22 @@ impl ColdTemplate {
     /// `<dir>/<key>.toml`. Returns `None` if file is missing; bubbles
     /// errors only on parse failure.
     pub fn load(templates_dir: &std::path::Path, key: &str) -> Result<Option<Self>> {
+        // Template keys are simple identifiers, never paths. Reject anything
+        // that could escape `templates_dir` BEFORE touching the filesystem —
+        // defense-in-depth against CWE-22 path traversal (an absolute key or
+        // one containing `..` would otherwise read outside the templates dir).
+        if key.is_empty() || key.contains('/') || key.contains('\\') || key.contains("..") {
+            return Err(Error::Validation(format!(
+                "invalid template key `{key}`: must not be empty or contain `/`, `\\`, or `..`"
+            )));
+        }
         let path = templates_dir.join(format!("{key}.toml"));
         if !path.exists() {
             return Ok(None);
         }
-        let text = std::fs::read_to_string(&path).map_err(Error::Io)?;
+        // `key` is validated above to be a bare identifier (no `/`, `\`, or
+        // `..`), so `path` cannot escape `templates_dir`.
+        let text = std::fs::read_to_string(&path).map_err(Error::Io)?; // nosemgrep
         let parsed: ColdTemplate = toml::from_str(&text)
             .map_err(|e| Error::Validation(format!("template `{key}` parse: {e}")))?;
         Ok(Some(parsed))
@@ -63,7 +82,9 @@ fn _toml_dep_visible() {
 /// What the LLM returns. Mirrors the JSON schema in the system prompt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColdEmailDraft {
+    /// Subject line of the draft.
     pub subject: String,
+    /// Body of the draft.
     pub body: String,
     /// Short ad-hoc note from the model on why it picked this angle.
     /// Surfaced to the operator in the review queue.
@@ -75,6 +96,7 @@ pub struct ColdEmailDraft {
     pub confidence: Option<f32>,
 }
 
+/// Drafts a personalized cold email for a prospect via the LLM.
 #[derive(Debug)]
 pub struct DraftColdEmailTool {
     router: Arc<LlmRouter>,
@@ -84,6 +106,8 @@ pub struct DraftColdEmailTool {
 }
 
 impl DraftColdEmailTool {
+    /// Build the cold-email drafting tool over the LLM `router`, signing as
+    /// `sender_name` at `sender_company` with the `sender_one_liner` pitch.
     pub fn new(
         router: Arc<LlmRouter>,
         sender_name: impl Into<String>,
@@ -194,6 +218,12 @@ impl Tool for DraftColdEmailTool {
         let mut last_score = 0.0f32;
         let mut last_reasons: Vec<String> = vec![];
 
+        // Company name + homepage to redact alongside the emails/phones that
+        // redact() catches by default. Computed once — the prospect is constant
+        // across retries.
+        let pii_terms = crate::prospect_pii_terms(&prospect);
+        let term_refs: Vec<&str> = pii_terms.iter().map(String::as_str).collect();
+
         for attempt in 0..=max_retries {
             let mut user = user_initial.clone();
             if let Some(fb) = &feedback {
@@ -201,6 +231,14 @@ impl Tool for DraftColdEmailTool {
                 user.push_str(fb);
                 user.push_str("\nWrite a new version that avoids those tells. Same JSON shape.");
             }
+
+            // PII-redaction boundary (CLAUDE.md "No PII to third parties"): the
+            // cold draft carries the richest prospect dossier (company, homepage,
+            // description, signals, interest tags) to a SaaS model. Redact emails,
+            // phones, company name + homepage before the call and rehydrate the
+            // model's output before parsing. Redact per-attempt: `user` grows with
+            // retry feedback, which can echo prospect text.
+            let redaction = salesman_core::redact::redact(&user, &term_refs);
 
             let req = ChatRequest {
                 messages: vec![
@@ -212,7 +250,7 @@ impl Tool for DraftColdEmailTool {
                     },
                     Message {
                         role: Role::User,
-                        content: user,
+                        content: redaction.text().to_string(),
                         tool_calls: vec![],
                         tool_results: vec![],
                     },
@@ -227,12 +265,31 @@ impl Tool for DraftColdEmailTool {
                 .router
                 .chat_for(RouteHint::Reasoning, "draft_cold_email", req)
                 .await?;
-            let raw = resp.message.content.trim();
-            let draft = parse_draft(raw).map_err(|e| Error::Tool {
+
+            // Telemetry on the redaction decision — counts + backend only,
+            // never the redacted values (those ARE the PII).
+            tracing::debug!(
+                attempt,
+                redacted_count = redaction.redacted_count(),
+                backend = resp.backend.as_deref().unwrap_or("unknown"),
+                model = resp.model.as_deref().unwrap_or("unknown"),
+                "cold-draft: redacted prospect PII before SaaS call"
+            );
+
+            // Restore the real names/addresses in the model's output before
+            // parsing, scoring, or persisting.
+            let rehydrated = redaction.rehydrate(resp.message.content.trim());
+            if rehydrated.contains("[[REDACTED_") {
+                tracing::warn!(
+                    attempt,
+                    "cold-draft: model output retained a redaction placeholder after rehydrate"
+                );
+            }
+            let draft = parse_draft(&rehydrated).map_err(|e| Error::Tool {
                 tool: "content.draft_cold_email".into(),
                 message: format!(
                     "attempt {attempt}: parse: {e} -- raw: {}",
-                    truncate(raw, 200)
+                    truncate(&rehydrated, 200)
                 ),
             })?;
 
@@ -418,6 +475,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn load_rejects_path_traversal_keys() {
+        // The CWE-22 guard must reject path-ish keys BEFORE any filesystem
+        // access (so this is a pure, disk-free test).
+        let dir = std::path::Path::new("/tmp/salesman-templates-does-not-exist");
+        for bad in ["../secrets", "a/b", "..", "x\\y", "/etc/passwd", ""] {
+            assert!(
+                ColdTemplate::load(dir, bad).is_err(),
+                "template key {bad:?} must be rejected by the traversal guard"
+            );
+        }
+        // A normal key against a missing dir is Ok(None), not an error.
+        assert!(matches!(
+            ColdTemplate::load(dir, "security_pivot"),
+            Ok(None)
+        ));
+    }
+
+    #[test]
     fn parses_clean_json() {
         let raw = r#"{"subject":"x","body":"y","angle":"z","confidence":0.7}"#;
         let d = parse_draft(raw).unwrap();
@@ -443,5 +518,84 @@ mod tests {
     #[test]
     fn errors_on_garbage() {
         assert!(parse_draft("totally not json").is_err());
+    }
+
+    #[test]
+    fn prospect_pii_terms_redacts_company_and_homepage_but_skips_short_names() {
+        // A normal-length company name + homepage become redaction terms.
+        let p = json!({
+            "display_name": "Acme Robotics",
+            "homepage": "https://acme-robotics.example"
+        });
+        let terms = crate::prospect_pii_terms(&p);
+        assert!(
+            terms.iter().any(|t| t == "Acme Robotics"),
+            "company redacted"
+        );
+        assert!(
+            terms.iter().any(|t| t == "https://acme-robotics.example"),
+            "homepage redacted"
+        );
+        // A short/common company name must be SKIPPED: redact() matches raw
+        // substrings, so "AI" would clobber unrelated text and corrupt the prompt.
+        let short = json!({ "display_name": "AI", "homepage": "https://ai-corp.example" });
+        let st = crate::prospect_pii_terms(&short);
+        assert!(
+            !st.iter().any(|t| t == "AI"),
+            "2-char company name must be skipped"
+        );
+        assert!(
+            st.iter().any(|t| t.contains("ai-corp.example")),
+            "homepage still kept for short-name prospects"
+        );
+    }
+
+    #[test]
+    fn user_prompt_redaction_strips_prospect_pii() {
+        // The cold-draft path sends the prospect dossier to a SaaS model; after
+        // redaction the prompt must carry no raw email, phone, company name, or
+        // homepage, and rehydration must round-trip exactly. This guards the
+        // exact gap the pre-merge audit found (draft_cold_email was unredacted).
+        let tool = DraftColdEmailTool::new(
+            std::sync::Arc::new(LlmRouter::new()),
+            "Sender",
+            "PlausiDen",
+            "one-liner",
+        );
+        let prospect = json!({
+            "display_name": "Acme Robotics",
+            "homepage": "https://acme-robotics.example",
+            "description": "Reach the founder jane.doe@acme.com or +1-415-555-0123",
+        });
+        let user = tool.user_prompt(&prospect, "Sentinel", None, None);
+        // sanity: the assembled prompt includes the PII before redaction.
+        assert!(user.contains("jane.doe@acme.com"));
+        assert!(user.contains("Acme Robotics"));
+        assert!(user.contains("https://acme-robotics.example"));
+
+        let terms = crate::prospect_pii_terms(&prospect);
+        let refs: Vec<&str> = terms.iter().map(String::as_str).collect();
+        let red = salesman_core::redact::redact(&user, &refs);
+        assert!(
+            !red.text().contains("jane.doe@acme.com"),
+            "email must be redacted"
+        );
+        assert!(
+            !red.text().contains("+1-415-555-0123"),
+            "phone must be redacted"
+        );
+        assert!(
+            !red.text().contains("Acme Robotics"),
+            "company must be redacted"
+        );
+        assert!(
+            !red.text().contains("https://acme-robotics.example"),
+            "homepage must be redacted"
+        );
+        assert_eq!(
+            red.rehydrate(red.text()),
+            user,
+            "rehydration must round-trip"
+        );
     }
 }

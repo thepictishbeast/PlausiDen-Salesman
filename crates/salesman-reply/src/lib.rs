@@ -25,6 +25,7 @@
 //! TLS-only via tokio-rustls. We refuse to connect to non-TLS ports
 //! to remove the foot-gun.
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 pub mod auth_results;
 pub mod config;

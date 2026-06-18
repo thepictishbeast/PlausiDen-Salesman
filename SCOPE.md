@@ -16,8 +16,9 @@ slice fast, layer defenses over time.**
   real prospects* within days, not weeks.
 - Sovereignty: LFI is the personalization brain. No SaaS LLM in the
   data path. No PII to third parties.
-- Compute split: VPS (45.77.217.37) hosts the orchestrator + workers;
-  laptop hosts dev + CI runners.
+- Compute split: the openclaw VPS (`207.148.30.162`; re-provisioned
+  2026-05-31, old `45.77.217.37` retired — see HANDOFF.md) hosts the
+  orchestrator + workers; laptop hosts dev + CI runners.
 - AVP-2 doctrine applies — but pragmatically. Tier 1 by 0.1, Tier 3
   by 0.5. Don't gold-plate an unproven workflow.
 

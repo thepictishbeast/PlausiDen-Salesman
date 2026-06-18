@@ -10,14 +10,20 @@ use std::time::Duration;
 
 const GDELT_URL: &str = "https://api.gdeltproject.org/api/v2/doc/doc";
 
+/// A single news article hit from GDELT.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewsHit {
+    /// Article title.
     pub title: String,
+    /// Article URL.
     pub url: String,
+    /// When GDELT first saw the article (its `seendate`).
     pub seen_at: String,
+    /// Source country code, if reported.
     pub source_country: Option<String>,
 }
 
+/// Client for the GDELT 2.0 DOC news API.
 #[derive(Debug)]
 pub struct GdeltClient {
     http: reqwest::Client,
@@ -30,6 +36,7 @@ impl Default for GdeltClient {
 }
 
 impl GdeltClient {
+    /// Build a GDELT (global news) API client.
     pub fn new() -> Self {
         Self {
             http: reqwest::Client::builder()
@@ -82,12 +89,14 @@ impl GdeltClient {
     }
 }
 
+/// [`GdeltClient`] exposed as an agent-callable [`Tool`].
 #[derive(Debug)]
 pub struct GdeltTool {
     inner: std::sync::Arc<GdeltClient>,
 }
 
 impl GdeltTool {
+    /// Wrap a shared [`GdeltClient`] as an OSINT [`Tool`].
     pub fn new(inner: std::sync::Arc<GdeltClient>) -> Self {
         Self { inner }
     }

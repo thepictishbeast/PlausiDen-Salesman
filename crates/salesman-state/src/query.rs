@@ -50,14 +50,26 @@ fn random_pick(keys: &[String], default_key: &str) -> String {
     keys[idx].clone()
 }
 
+/// A prospect joined with its company's enrichment facts, as consumed
+/// by the drafter tools.
 #[derive(Debug, Clone)]
 pub struct ProspectWithFacts {
+    /// The prospect id.
     pub prospect_id: ProspectId,
+    /// The prospect's company id.
     pub company_id: CompanyId,
+    /// Company display name.
     pub display_name: String,
+    /// Company homepage URL, if known.
     pub homepage: Option<String>,
+    /// Company industry, if known.
     pub industry: Option<String>,
+    /// Company description, if known.
     pub description: Option<String>,
+    /// Company region (free-text), if known. Drives local-first ranking
+    /// (see salesman_discovery::locality).
+    pub region: Option<String>,
+    /// Detected tech signals (JSONB array).
     pub tech_signals: serde_json::Value,
     /// Per-prospect tags JSONB (interests, notes, do-not-pitch
     /// list). `{}` for new prospects; accumulates via
@@ -79,38 +91,56 @@ impl ProspectWithFacts {
             "homepage": self.homepage,
             "industry": self.industry,
             "description": self.description,
+            "region": self.region,
             "tech_signals": self.tech_signals,
             "tags": self.tags,
         })
     }
 }
 
+/// One step in a campaign sequence definition.
 #[derive(Debug, Clone)]
 pub struct SequenceStepInput {
+    /// Channel for this step (e.g. `email`).
     pub channel: String,
+    /// Template key to draft from.
     pub template_key: String,
+    /// Delay before this step, in days.
     pub delay_days: u32,
 }
 
+/// A prospect whose next sequence step is due to be drafted.
 #[derive(Debug, Clone)]
 pub struct DueProspect {
+    /// The prospect id.
     pub prospect_id: ProspectId,
+    /// The sequence the prospect is enrolled in.
     pub sequence_id: uuid::Uuid,
+    /// The step index that is now due.
     pub current_step: u32,
+    /// Template key for the due step.
     pub template_key: String,
+    /// Channel for the due step.
     pub channel: String,
 }
 
+/// Per-template performance counters.
 #[derive(Debug, Clone)]
 pub struct TemplateStat {
+    /// The template key these stats are for.
     pub template_key: String,
+    /// Number of drafts produced from this template.
     pub drafted: i64,
+    /// Number sent.
     pub sent: i64,
+    /// Number that received any reply.
     pub replied: i64,
+    /// Number that received an engaged (positive) reply.
     pub engaged_replied: i64,
 }
 
 impl TemplateStat {
+    /// Replies per send, in [0,1] (0 when nothing has been sent).
     pub fn reply_rate(&self) -> f32 {
         if self.sent == 0 {
             0.0
@@ -118,6 +148,7 @@ impl TemplateStat {
             self.replied as f32 / self.sent as f32
         }
     }
+    /// Engaged replies per send, in [0,1] (0 when nothing has been sent).
     pub fn engaged_rate(&self) -> f32 {
         if self.sent == 0 {
             0.0
@@ -127,22 +158,32 @@ impl TemplateStat {
     }
 }
 
+/// A campaign with its spend vs. cost cap.
 #[derive(Debug, Clone)]
 pub struct CampaignCostRow {
+    /// Campaign id.
     pub id: CampaignId,
+    /// Campaign name.
     pub name: String,
+    /// Campaign status (wire string).
     pub status: String,
+    /// Configured cost cap in micro-USD, if any.
     pub cost_cap_micro_usd: Option<i64>,
+    /// Total spent so far, in micro-USD.
     pub spent_micro_usd: i64,
+    /// Number of LLM calls attributed to the campaign.
     pub calls: i64,
 }
 
 impl CampaignCostRow {
+    /// True once spend has reached/exceeded the campaign cost cap; false
+    /// when no cap is set.
     pub fn over_cap(&self) -> bool {
         self.cost_cap_micro_usd
             .map(|cap| self.spent_micro_usd >= cap)
             .unwrap_or(false)
     }
+    /// Percent of the cost cap consumed, or `None` when no positive cap is set.
     pub fn pct_used(&self) -> Option<f32> {
         self.cost_cap_micro_usd.and_then(|cap| {
             if cap <= 0 {
@@ -154,75 +195,130 @@ impl CampaignCostRow {
     }
 }
 
+/// One `llm_calls` row to persist (a single inference call).
 #[derive(Debug, Clone)]
 pub struct LlmCallRecord {
+    /// Backend that served the call.
     pub backend: String,
+    /// Model identifier.
     pub model: String,
+    /// Prompt token count.
     pub prompt_tokens: u32,
+    /// Output token count.
     pub output_tokens: u32,
+    /// Cache-hit token count.
     pub cache_hit_tokens: u32,
+    /// Call latency in milliseconds.
     pub latency_ms: u64,
+    /// Estimated cost in micro-USD.
     pub cost_micro_usd: u64,
+    /// What the call was for (e.g. `draft_cold`).
     pub purpose: String,
+    /// Related entity id (touch/prospect/etc.), if any.
     pub related_id: Option<uuid::Uuid>,
+    /// Kind of the related entity, if any.
     pub related_kind: Option<String>,
 }
 
+/// Aggregated LLM cost/usage grouped by backend + model.
 #[derive(Debug, Clone)]
 pub struct CostSummaryRow {
+    /// Backend.
     pub backend: String,
+    /// Model identifier.
     pub model: String,
+    /// Number of calls in the group.
     pub count: i64,
+    /// Total prompt tokens.
     pub prompt_tokens: i64,
+    /// Total output tokens.
     pub output_tokens: i64,
+    /// Total cache-hit tokens.
     pub cache_hit_tokens: i64,
+    /// Total cost in micro-USD.
     pub cost_micro_usd: i64,
+    /// Average latency in milliseconds.
     pub avg_latency_ms: i64,
+    /// 95th-percentile latency in milliseconds.
     pub p95_latency_ms: i64,
 }
 
+/// Aggregated LLM cost/usage grouped by call purpose.
 #[derive(Debug, Clone)]
 pub struct PurposeCostRow {
+    /// The call purpose this row aggregates.
     pub purpose: String,
+    /// Number of calls in the group.
     pub count: i64,
+    /// Total prompt tokens.
     pub prompt_tokens: i64,
+    /// Total output tokens.
     pub output_tokens: i64,
+    /// Total cache-hit tokens.
     pub cache_hit_tokens: i64,
+    /// Total cost in micro-USD.
     pub cost_micro_usd: i64,
+    /// Average latency in milliseconds.
     pub avg_latency_ms: i64,
+    /// 95th-percentile latency in milliseconds.
     pub p95_latency_ms: i64,
 }
 
+/// One entry on the suppression list.
 #[derive(Debug, Clone)]
 pub struct SuppressionRow {
+    /// Row id.
     pub id: uuid::Uuid,
+    /// The suppressed target (e.g. an email address or domain).
     pub target: String,
+    /// Kind of target (e.g. `email`, `domain`).
     pub target_kind: String,
+    /// Why the target was suppressed.
     pub reason: String,
+    /// What added it (e.g. `reply_optout`, `manual`).
     pub source: String,
+    /// When it was added.
     pub added_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// A snapshot of pipeline counts over a recent time window.
 #[derive(Debug, Clone)]
 pub struct PipelineSummary {
+    /// Total companies discovered.
     pub companies: i64,
+    /// Total prospects.
     pub prospects: i64,
+    /// Prospects in the `new` state.
     pub new_prospects: i64,
+    /// Prospects in the `contacted` state.
     pub contacted: i64,
+    /// Prospects in the `engaged` state.
     pub engaged: i64,
+    /// Prospects in the `won` state.
     pub won: i64,
+    /// Prospects in the `lost` state.
     pub lost: i64,
+    /// Prospects in the `suppressed` state.
     pub suppressed_prospects: i64,
+    /// Drafts awaiting operator approval.
     pub awaiting_approval: i64,
+    /// Sends within the window.
     pub sent_recent: i64,
+    /// Replies within the window.
     pub replies_recent: i64,
+    /// Opt-outs within the window.
     pub optout_recent: i64,
+    /// Total suppression-list size.
     pub suppressions: i64,
+    /// Receipts written within the window.
     pub receipts_recent: i64,
+    /// The window size, in hours.
     pub since_hours: i64,
 }
 
 impl PipelineSummary {
+    /// Render this pipeline summary as the human-readable text block
+    /// shown by the operator CLI.
     pub fn render_text(&self) -> String {
         format!(
             "PlausiDen-Salesman pipeline summary ({}h window)\n\
@@ -266,12 +362,18 @@ impl PipelineSummary {
     }
 }
 
+/// A stored inbound reply, in display form.
 #[derive(Debug, Clone)]
 pub struct ReplyRow {
+    /// Sender address.
     pub from_address: String,
+    /// Subject line, if any.
     pub subject: Option<String>,
+    /// Message body.
     pub body: String,
+    /// Classified reply kind (wire string).
     pub kind: String,
+    /// When the reply was received.
     pub received_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -282,23 +384,33 @@ pub struct ReplyRow {
 /// reply as if it's the first.
 #[derive(Debug, Clone)]
 pub struct ThreadTurn {
+    /// When this turn occurred.
     pub at: chrono::DateTime<chrono::Utc>,
     /// "outbound" for touches we sent; "reply" for inbound replies.
     pub role: String,
+    /// Subject line, if any.
     pub subject: Option<String>,
+    /// Message body.
     pub body: String,
     /// Only set on inbound replies — the classifier kind
     /// (engaged / question / objection / …).
     pub reply_kind: Option<String>,
 }
 
+/// An inbound reply that has not yet been classified.
 #[derive(Debug, Clone)]
 pub struct UnclassifiedReply {
+    /// The reply's id.
     pub reply_id: uuid::Uuid,
+    /// The prospect the reply belongs to.
     pub prospect_id: ProspectId,
+    /// The campaign the prospect is in.
     pub campaign_id: CampaignId,
+    /// Sender address.
     pub from_address: String,
+    /// Subject line, if any.
     pub subject: Option<String>,
+    /// Message body.
     pub body: String,
     /// Raw header bag persisted at insert_reply_threaded time.
     /// The classifier checks `Authentication-Results` here BEFORE
@@ -312,31 +424,48 @@ pub struct UnclassifiedReply {
 /// outbound that prompted it. Used by `salesman draft-replies`.
 #[derive(Debug, Clone)]
 pub struct ReplyNeedingResponse {
+    /// The reply's id.
     pub reply_id: uuid::Uuid,
+    /// The prospect the reply belongs to.
     pub prospect_id: ProspectId,
+    /// Sender address.
     pub from_address: String,
+    /// Inbound subject, if any.
     pub inbound_subject: Option<String>,
+    /// Inbound body being replied to.
     pub inbound_body: String,
+    /// Classified inbound kind (wire string).
     pub inbound_kind: String,
     /// The outbound that this reply is in response to, if threading
     /// matched. Often Some — IMAP threading via In-Reply-To /
     /// References lines up most of the time.
     pub outbound_subject: Option<String>,
+    /// Body of the matched outbound, if any.
     pub outbound_body: Option<String>,
     /// Prospect display fields the drafter uses for personalization.
     pub company_name: String,
+    /// Prospect company industry, if known.
     pub industry: Option<String>,
+    /// Prospect company description, if known.
     pub description: Option<String>,
 }
 
+/// A queued/awaiting-approval touch in display form.
 #[derive(Debug, Clone)]
 pub struct TouchSummary {
+    /// The touch id.
     pub touch_id: salesman_core::TouchId,
+    /// The prospect the touch targets.
     pub prospect_id: ProspectId,
+    /// Company display name.
     pub company: String,
+    /// Channel (e.g. `email`).
     pub channel: String,
+    /// Subject line, if any.
     pub subject: Option<String>,
+    /// Message body.
     pub body: String,
+    /// When the touch was queued.
     pub queued_at: chrono::DateTime<chrono::Utc>,
     /// Provenance JSONB { backend, model, via_fallback, purpose }.
     /// None for legacy touches drafted before migration 0005.
@@ -368,18 +497,29 @@ impl TouchSummary {
 /// drafter consumes these as personalization anchors.
 #[derive(Debug, Clone)]
 pub struct TriggerEventRow {
+    /// Trigger event id.
     pub id: uuid::Uuid,
+    /// The prospect this event is an anchor for.
     pub prospect_id: ProspectId,
+    /// Company display name.
     pub company: String,
+    /// Where the event came from (e.g. `recent_news`).
     pub source: String,
+    /// The event headline used as the outreach anchor.
     pub headline: String,
+    /// Source URL, if any.
     pub url: Option<String>,
+    /// Recency score in 0..=1.
     pub recency_score: f32,
+    /// Relevance score in 0..=1.
     pub relevance_score: f32,
+    /// When the event was recorded.
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl TriggerEventRow {
+    /// Composite ranking score (recency × relevance) used to order
+    /// trigger events for outreach prioritisation.
     pub fn rank(&self) -> f32 {
         self.recency_score * self.relevance_score
     }
@@ -389,13 +529,75 @@ impl TriggerEventRow {
 /// fields so the public function stays under the seven-arg lint.
 #[derive(Debug, Clone)]
 pub struct TriggerEventInsert<'a> {
+    /// The prospect the event anchors to.
     pub prospect_id: ProspectId,
+    /// Where the event came from.
     pub source: &'a str,
+    /// The event headline.
     pub headline: &'a str,
+    /// Source URL, if any.
     pub url: Option<&'a str>,
+    /// Recency score in 0..=1.
     pub recency_score: f32,
+    /// Relevance score in 0..=1.
     pub relevance_score: f32,
+    /// Raw source payload (JSONB), retained for audit.
     pub raw: &'a serde_json::Value,
+}
+
+/// Input shape for `insert_owner_notification`. Groups the per-contact
+/// fields so the public function stays under the seven-arg lint.
+#[derive(Debug, Clone)]
+pub struct OwnerNotificationInsert<'a> {
+    /// The touch this notification is about, if any.
+    pub touch_id: Option<salesman_core::TouchId>,
+    /// The prospect that was contacted.
+    pub prospect_id: ProspectId,
+    /// Prospect name/business, captured at send time (subject line).
+    pub prospect_label: &'a str,
+    /// The recipient address that was contacted.
+    pub to_address: &'a str,
+    /// Channel used (e.g. `email`).
+    pub channel: &'a str,
+    /// When the contact was sent.
+    pub sent_at: chrono::DateTime<chrono::Utc>,
+    /// The subject that was sent, if any.
+    pub subject: Option<&'a str>,
+    /// The body that was sent.
+    pub body: &'a str,
+    /// The signed receipt id for the send, if recorded.
+    pub receipt_id: Option<salesman_core::ReceiptId>,
+    /// The campaign the contact belonged to, if any.
+    pub campaign: Option<&'a str>,
+}
+
+/// A persisted owner audit-notification row.
+#[derive(Debug, Clone)]
+pub struct OwnerNotificationRow {
+    /// Row id.
+    pub id: uuid::Uuid,
+    /// The prospect that was contacted.
+    pub prospect_id: ProspectId,
+    /// Prospect name/business captured at send time.
+    pub prospect_label: String,
+    /// The recipient address.
+    pub to_address: String,
+    /// Channel used.
+    pub channel: String,
+    /// When the contact was sent.
+    pub sent_at: chrono::DateTime<chrono::Utc>,
+    /// Subject sent, if any.
+    pub subject: Option<String>,
+    /// Body sent.
+    pub body: String,
+    /// Signed receipt id, if any.
+    pub receipt_id: Option<uuid::Uuid>,
+    /// Campaign, if any.
+    pub campaign: Option<String>,
+    /// When the notification row was queued.
+    pub queued_at: chrono::DateTime<chrono::Utc>,
+    /// When the operator mailbox received it; `None` while pending.
+    pub delivered_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl State {
@@ -722,7 +924,7 @@ impl State {
         let rows = sqlx::query(
             "SELECT p.id AS prospect_id, p.tags AS tags, c.id AS company_id,
                     c.display_name, c.homepage, c.industry,
-                    c.description, c.tech_signals
+                    c.description, c.region, c.tech_signals
              FROM prospects p
              JOIN companies c ON c.id = p.company_id
              WHERE p.campaign_id = $1
@@ -747,6 +949,7 @@ impl State {
             let homepage: Option<String> = r.try_get("homepage").unwrap_or(None);
             let industry: Option<String> = r.try_get("industry").unwrap_or(None);
             let description: Option<String> = r.try_get("description").unwrap_or(None);
+            let region: Option<String> = r.try_get("region").unwrap_or(None);
             let tech_signals: serde_json::Value = r
                 .try_get("tech_signals")
                 .unwrap_or(serde_json::Value::Array(vec![]));
@@ -760,6 +963,7 @@ impl State {
                 homepage,
                 industry,
                 description,
+                region,
                 tech_signals,
                 tags,
             });
@@ -884,7 +1088,7 @@ impl State {
         let row = sqlx::query(
             "SELECT p.id AS prospect_id, p.tags AS tags, c.id AS company_id,
                     c.display_name, c.homepage, c.industry,
-                    c.description, c.tech_signals
+                    c.description, c.region, c.tech_signals
              FROM prospects p
              JOIN companies c ON c.id = p.company_id
              WHERE p.id = $1",
@@ -908,6 +1112,7 @@ impl State {
             description: r
                 .try_get::<Option<String>, _>("description")
                 .unwrap_or(None),
+            region: r.try_get::<Option<String>, _>("region").unwrap_or(None),
             tech_signals: r
                 .try_get::<serde_json::Value, _>("tech_signals")
                 .unwrap_or(serde_json::Value::Array(vec![])),
@@ -979,6 +1184,99 @@ impl State {
         .await
         .map_err(|e| Error::Db(e.to_string()))?;
         Ok(id)
+    }
+
+    /// Persist an owner audit-notification for one outbound contact.
+    /// The row is queued undelivered (`delivered_at IS NULL`) — actual
+    /// delivery to the operator mailbox is gated behind send approval.
+    /// Returns the new row id.
+    pub async fn insert_owner_notification(
+        &self,
+        n: &OwnerNotificationInsert<'_>,
+    ) -> Result<uuid::Uuid> {
+        let id = uuid::Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO owner_notifications
+             (id, touch_id, prospect_id, prospect_label, to_address, channel,
+              sent_at, subject, body, receipt_id, campaign)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+        )
+        .bind(id)
+        .bind(n.touch_id.map(|t| t.0))
+        .bind(n.prospect_id.0)
+        .bind(n.prospect_label)
+        .bind(n.to_address)
+        .bind(n.channel)
+        .bind(n.sent_at)
+        .bind(n.subject)
+        .bind(n.body)
+        .bind(n.receipt_id.map(|r| r.0))
+        .bind(n.campaign)
+        .execute(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(id)
+    }
+
+    /// The pending (undelivered) owner-notification queue, oldest first,
+    /// capped at `limit`.
+    pub async fn list_pending_owner_notifications(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<OwnerNotificationRow>> {
+        let rows = sqlx::query(
+            "SELECT id, prospect_id, prospect_label, to_address, channel, sent_at,
+                    subject, body, receipt_id, campaign, queued_at, delivered_at
+             FROM owner_notifications
+             WHERE delivered_at IS NULL
+             ORDER BY queued_at ASC
+             LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| OwnerNotificationRow {
+                id: r.try_get("id").unwrap_or_else(|_| uuid::Uuid::nil()),
+                prospect_id: ProspectId(
+                    r.try_get("prospect_id")
+                        .unwrap_or_else(|_| uuid::Uuid::nil()),
+                ),
+                prospect_label: r.try_get("prospect_label").unwrap_or_default(),
+                to_address: r.try_get("to_address").unwrap_or_default(),
+                channel: r.try_get("channel").unwrap_or_default(),
+                sent_at: r.try_get("sent_at").unwrap_or_else(|_| Utc::now()),
+                subject: r.try_get("subject").ok(),
+                body: r.try_get("body").unwrap_or_default(),
+                receipt_id: r.try_get("receipt_id").ok(),
+                campaign: r.try_get("campaign").ok(),
+                queued_at: r.try_get("queued_at").unwrap_or_else(|_| Utc::now()),
+                delivered_at: r.try_get("delivered_at").ok(),
+            })
+            .collect())
+    }
+
+    /// Mark an owner-notification delivered (operator mailbox received
+    /// it). Returns the number of rows updated (0 if the id is unknown
+    /// or it was already delivered).
+    pub async fn mark_owner_notification_delivered(
+        &self,
+        id: uuid::Uuid,
+        delivered_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64> {
+        let res = sqlx::query(
+            "UPDATE owner_notifications
+             SET delivered_at = $2
+             WHERE id = $1 AND delivered_at IS NULL",
+        )
+        .bind(id)
+        .bind(delivered_at)
+        .execute(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok(res.rows_affected())
     }
 
     /// Pick a template via epsilon-greedy. With probability `1-epsilon`
@@ -1183,6 +1481,8 @@ impl State {
             .collect())
     }
 
+    /// Per-template funnel counts (drafted / sent / replied / engaged),
+    /// for A/B comparison of cold-email templates. See [`TemplateStat`].
     pub async fn template_stats(&self) -> Result<Vec<TemplateStat>> {
         let rows = sqlx::query(
             "SELECT
@@ -1254,6 +1554,81 @@ impl State {
         Ok(out)
     }
 
+    /// Like [`Self::list_drafts_awaiting_approval`] but across ALL
+    /// campaigns. Powers the API `/drafts` operator view. Read-only.
+    pub async fn list_all_drafts_awaiting_approval(&self) -> Result<Vec<TouchSummary>> {
+        let rows = sqlx::query(
+            "SELECT t.id, t.prospect_id, t.subject, t.body, t.channel, t.queued_at,
+                    t.produced_by, c.display_name AS company
+             FROM touches t
+             JOIN prospects p ON p.id = t.prospect_id
+             JOIN companies c ON c.id = p.company_id
+             WHERE t.outcome = 'awaiting_approval'
+             ORDER BY t.queued_at",
+        )
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            out.push(TouchSummary {
+                touch_id: salesman_core::TouchId(
+                    r.try_get("id").unwrap_or_else(|_| uuid::Uuid::nil()),
+                ),
+                prospect_id: ProspectId(
+                    r.try_get("prospect_id")
+                        .unwrap_or_else(|_| uuid::Uuid::nil()),
+                ),
+                company: r.try_get("company").unwrap_or_default(),
+                channel: r.try_get("channel").unwrap_or_default(),
+                subject: r.try_get("subject").unwrap_or(None),
+                body: r.try_get("body").unwrap_or_default(),
+                queued_at: r
+                    .try_get("queued_at")
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+                produced_by: r.try_get("produced_by").ok().flatten(),
+            });
+        }
+        Ok(out)
+    }
+
+    /// List all campaigns, newest first. Powers the API `/campaigns`
+    /// operator view. Read-only.
+    pub async fn list_campaigns(&self) -> Result<Vec<Campaign>> {
+        let rows = sqlx::query(
+            "SELECT id, name, goal, target_segment, status, created_at,
+                    paused_at, paused_reason
+             FROM campaigns
+             ORDER BY created_at DESC",
+        )
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            // status is stored as a snake_case string; fall back to Draft
+            // if it is somehow unparseable rather than failing the whole list.
+            let status = r
+                .try_get::<String, _>("status")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(CampaignStatus::Draft);
+            out.push(Campaign {
+                id: CampaignId(r.try_get("id").unwrap_or_else(|_| uuid::Uuid::nil())),
+                name: r.try_get("name").unwrap_or_default(),
+                goal: r.try_get("goal").unwrap_or_default(),
+                target_segment: r.try_get("target_segment").unwrap_or_default(),
+                status,
+                created_at: r.try_get("created_at").unwrap_or_else(|_| Utc::now()),
+                paused_at: r.try_get("paused_at").unwrap_or(None),
+                paused_reason: r.try_get("paused_reason").unwrap_or(None),
+            });
+        }
+        Ok(out)
+    }
+
     // -----------------------------------------------------------------
     // touch transitions
     // -----------------------------------------------------------------
@@ -1320,6 +1695,46 @@ impl State {
             .await;
         }
         Ok(result.rows_affected())
+    }
+
+    /// Queue an owner audit-notification for a sent touch (call right
+    /// after [`Self::mark_touch_sent`]). Populates the row by joining the
+    /// touch to its prospect, company, contact, and campaign: the label
+    /// prefers the contact name, falling back to the company name; the
+    /// recipient address is the prospect's primary contact email (or `""`).
+    /// Returns the new row id, or `None` if `touch_id` is unknown.
+    ///
+    /// This only WRITES the pending audit row — actual delivery of the
+    /// notification email to the operator is gated behind the send path.
+    pub async fn enqueue_owner_notification_for_touch(
+        &self,
+        touch_id: TouchId,
+    ) -> Result<Option<uuid::Uuid>> {
+        let id = uuid::Uuid::now_v7();
+        let res = sqlx::query(
+            "INSERT INTO owner_notifications
+               (id, touch_id, prospect_id, prospect_label, to_address, channel,
+                sent_at, subject, body, receipt_id, campaign)
+             SELECT $1, t.id, t.prospect_id,
+                    COALESCE(ct.name, c.display_name),
+                    COALESCE(ct.email, ''),
+                    t.channel,
+                    COALESCE(t.sent_at, NOW()),
+                    t.subject, t.body, t.receipt_id,
+                    cmp.name
+             FROM touches t
+             JOIN prospects p   ON p.id = t.prospect_id
+             JOIN companies c   ON c.id = p.company_id
+             JOIN campaigns cmp ON cmp.id = p.campaign_id
+             LEFT JOIN contacts ct ON ct.id = p.primary_contact_id
+             WHERE t.id = $2",
+        )
+        .bind(id)
+        .bind(touch_id.0)
+        .execute(self.pool())
+        .await
+        .map_err(|e| Error::Db(e.to_string()))?;
+        Ok((res.rows_affected() > 0).then_some(id))
     }
 
     /// List touches in `approved` state for a campaign — these are
@@ -1666,6 +2081,9 @@ impl State {
             .collect())
     }
 
+    /// Overwrite a reply's classified [`ReplyKind`] (e.g. after re-running
+    /// the classifier). Does not itself advance the prospect's funnel — see
+    /// `apply_reply_to_prospect` for that.
     pub async fn update_reply_kind(&self, reply_id: uuid::Uuid, kind: ReplyKind) -> Result<()> {
         sqlx::query("UPDATE replies SET kind = $2 WHERE id = $1")
             .bind(reply_id)
@@ -1701,18 +2119,10 @@ impl State {
             .await
             .map_err(|e| Error::Db(e.to_string()))?;
 
-        // Map ReplyKind → FunnelState transition.
-        let new_state: Option<&str> = match kind {
-            ReplyKind::Engaged | ReplyKind::Question => Some("engaged"),
-            // LegalThreat is treated as a stricter form of Optout —
-            // sender is suppressed, prospect is dropped from active
-            // outreach. The drafter refuses to respond; the operator
-            // handles legally-charged replies personally.
-            ReplyKind::Optout | ReplyKind::LegalThreat => Some("suppressed"),
-            ReplyKind::Bounce => Some("lost"),
-            // Objection / OOO / Spam / Unclassified — leave funnel state.
-            _ => None,
-        };
+        // Map ReplyKind → FunnelState transition. The policy lives in
+        // salesman-core (ReplyKind::funnel_state_label) so it is unit-tested
+        // independently of the DB — see salesman-core reply_kind_props.rs.
+        let new_state: Option<&str> = kind.funnel_state_label();
         if let Some(target) = new_state {
             sqlx::query(
                 "UPDATE prospects SET state = $2, state_changed_at = NOW(), \
@@ -1732,7 +2142,7 @@ impl State {
         // tag so audit + alerts can distinguish a benign opt-out
         // from a legally-charged inbound that needs operator
         // attention RIGHT NOW.
-        if matches!(kind, ReplyKind::Optout | ReplyKind::LegalThreat) {
+        if kind.is_suppression_trigger() {
             let (reason_text, source_tag) = match kind {
                 ReplyKind::LegalThreat => (
                     "reply contained legal threat (cease-and-desist / attorney / regulator)",
@@ -1800,7 +2210,9 @@ impl State {
             ReplyKind::OutOfOffice => Some("auto: reply classified out_of_office"),
             ReplyKind::Optout => Some("auto: reply classified optout"),
             ReplyKind::Bounce => Some("auto: reply classified bounce"),
-            ReplyKind::LegalThreat => Some("auto: reply classified legal_threat — operator must handle"),
+            ReplyKind::LegalThreat => {
+                Some("auto: reply classified legal_threat — operator must handle")
+            }
             _ => None,
         };
         if let Some(reason) = pause_reason {
@@ -2058,7 +2470,7 @@ impl State {
         let rows = sqlx::query(
             "SELECT p.id AS prospect_id, p.tags AS tags, c.id AS company_id, \
                     c.display_name, c.homepage, c.industry, \
-                    c.description, c.tech_signals \
+                    c.description, c.region, c.tech_signals \
              FROM prospects p \
              JOIN companies c ON c.id = p.company_id \
              WHERE p.state = 'won' \
@@ -2092,6 +2504,7 @@ impl State {
                 description: r
                     .try_get::<Option<String>, _>("description")
                     .unwrap_or(None),
+                region: r.try_get::<Option<String>, _>("region").unwrap_or(None),
                 tech_signals: r
                     .try_get::<Option<serde_json::Value>, _>("tech_signals")
                     .unwrap_or(None)

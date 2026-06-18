@@ -14,14 +14,20 @@ use std::time::Duration;
 const SUMMARY_BASE: &str = "https://en.wikipedia.org/api/rest_v1/page/summary/";
 const UA: &str = "PlausiDenSalesman/0.0 (+https://plausiden.com/bots; civic-research)";
 
+/// A Wikipedia REST summary for an article.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WikipediaSummary {
+    /// Article title.
     pub title: String,
+    /// Lede/summary extract.
     pub extract: String,
+    /// Canonical desktop URL of the page.
     pub url: String,
+    /// True if the page is a disambiguation page.
     pub disambiguation: bool,
 }
 
+/// Client for the Wikipedia REST summary API.
 #[derive(Debug)]
 pub struct WikipediaClient {
     http: reqwest::Client,
@@ -34,6 +40,7 @@ impl Default for WikipediaClient {
 }
 
 impl WikipediaClient {
+    /// Build a Wikipedia REST API client.
     pub fn new() -> Self {
         Self {
             // SAFETY: rustls-tls + UA + timeout — known-good combo;
@@ -46,6 +53,8 @@ impl WikipediaClient {
         }
     }
 
+    /// Fetch the Wikipedia REST summary for `title`, or `None` if there
+    /// is no matching page.
     pub async fn summary(&self, title: &str) -> Result<Option<WikipediaSummary>> {
         let url = format!("{SUMMARY_BASE}{}", urlencode_path(title));
         let resp = self.http.get(&url).send().await.map_err(|e| Error::Tool {
@@ -78,12 +87,14 @@ impl WikipediaClient {
     }
 }
 
+/// [`WikipediaClient`] exposed as an agent-callable [`Tool`].
 #[derive(Debug)]
 pub struct WikipediaTool {
     inner: std::sync::Arc<WikipediaClient>,
 }
 
 impl WikipediaTool {
+    /// Wrap a shared [`WikipediaClient`] as an OSINT [`Tool`].
     pub fn new(inner: std::sync::Arc<WikipediaClient>) -> Self {
         Self { inner }
     }

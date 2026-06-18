@@ -26,17 +26,21 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use tracing::warn;
 
+/// Interests extracted from a prospect's public signals.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractedInterests {
+    /// The extracted interest tags.
     pub interests: Vec<String>,
 }
 
+/// Extracts prospect interests from supplied text via the LLM.
 #[derive(Debug)]
 pub struct InterestExtractTool {
     router: Arc<LlmRouter>,
 }
 
 impl InterestExtractTool {
+    /// Build the interest-extraction tool over the LLM `router`.
     pub fn new(router: Arc<LlmRouter>) -> Self {
         Self { router }
     }
@@ -89,6 +93,10 @@ impl Tool for InterestExtractTool {
                       - No prose outside JSON.";
 
         let user = format!("Reply body:\n{body}\n");
+        // PII-redaction boundary (CLAUDE.md): the reply body is a SaaS-model
+        // input that can carry the prospect's email/signature. Redact before
+        // the call; rehydrate the output before parsing.
+        let redaction = salesman_core::redact::redact(&user, &[]);
 
         let req = ChatRequest {
             messages: vec![
@@ -100,7 +108,7 @@ impl Tool for InterestExtractTool {
                 },
                 Message {
                     role: Role::User,
-                    content: user,
+                    content: redaction.text().to_string(),
                     tool_calls: vec![],
                     tool_results: vec![],
                 },
@@ -114,7 +122,8 @@ impl Tool for InterestExtractTool {
             .router
             .chat_for(RouteHint::Bulk, "extract_interests", req)
             .await?;
-        let parsed = parse_extraction(&resp.message.content).unwrap_or_else(|e| {
+        let rehydrated = redaction.rehydrate(&resp.message.content);
+        let parsed = parse_extraction(&rehydrated).unwrap_or_else(|e| {
             warn!("%e" = %e, "interest extractor output unparseable; returning empty");
             ExtractedInterests { interests: vec![] }
         });

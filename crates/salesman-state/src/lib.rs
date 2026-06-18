@@ -5,6 +5,7 @@
 //! handles `Db` errors by failing the operation, not by retrying
 //! inside the call.
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 use async_trait::async_trait;
 use salesman_core::{Error, Result};
@@ -43,6 +44,8 @@ impl State {
         Ok(Self { pool })
     }
 
+    /// The underlying Postgres connection pool, for callers that need to
+    /// run a query or transaction not covered by a typed method here.
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }
