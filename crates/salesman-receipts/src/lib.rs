@@ -323,7 +323,7 @@ fn signing_hash(
         "payload": payload,
     });
     let mut hasher = Sha256::new();
-    hasher.update(&canonical_json(&preimage));
+    hasher.update(canonical_json(&preimage));
     hasher.finalize().into()
 }
 
