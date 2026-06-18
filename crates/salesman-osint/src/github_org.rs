@@ -10,6 +10,7 @@ use salesman_tools::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::time::Duration;
+use zeroize::Zeroizing;
 
 const GITHUB_API: &str = "https://api.github.com";
 const UA: &str = "PlausiDenSalesman/0.0";
@@ -55,10 +56,22 @@ pub struct GithubOrg {
 }
 
 /// Client for the GitHub REST org/repos endpoints.
-#[derive(Debug)]
 pub struct GithubOrgClient {
     http: reqwest::Client,
-    token: Option<String>,
+    /// GitHub PAT. Zeroized on drop; never logged. A derived `Debug` would
+    /// print the token (CLAUDE.md: no secrets in logs), so `Debug` is
+    /// implemented manually below to redact it.
+    token: Option<Zeroizing<String>>,
+}
+
+impl std::fmt::Debug for GithubOrgClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GithubOrgClient")
+            .field("http", &self.http)
+            // Reveal presence, never the value.
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 impl Default for GithubOrgClient {
@@ -79,7 +92,7 @@ impl GithubOrgClient {
                 .timeout(Duration::from_secs(20))
                 .build()
                 .expect("reqwest construction infallible"),
-            token,
+            token: token.map(Zeroizing::new),
         }
     }
 
@@ -92,7 +105,7 @@ impl GithubOrgClient {
             .header("Accept", "application/vnd.github+json")
             .header("X-GitHub-Api-Version", "2022-11-28");
         if let Some(t) = &self.token {
-            req = req.bearer_auth(t);
+            req = req.bearer_auth(t.as_str());
         }
         req
     }
@@ -202,5 +215,31 @@ impl Tool for GithubOrgTool {
             "org": org,
             "repos": top,
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_redacts_token() {
+        let c = GithubOrgClient::new(Some("ghp_supersecrettoken123".into()));
+        let dbg = format!("{c:?}");
+        assert!(
+            !dbg.contains("ghp_supersecrettoken123"),
+            "Debug leaks token: {dbg}"
+        );
+        assert!(dbg.contains("<redacted>"));
+        // The Tool wrapper's derived Debug delegates to the manual impl above,
+        // so it must not leak the token either.
+        let tool = GithubOrgTool::new(std::sync::Arc::new(c));
+        assert!(!format!("{tool:?}").contains("ghp_supersecrettoken123"));
+    }
+
+    #[test]
+    fn no_token_debug_shows_none() {
+        let c = GithubOrgClient::new(None);
+        assert!(format!("{c:?}").contains("token: None"));
     }
 }
