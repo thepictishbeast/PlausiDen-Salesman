@@ -157,10 +157,13 @@ impl Tool for AnglePickerTool {
             serde_json::to_string_pretty(&prospect).unwrap_or_default(),
             serde_json::to_string_pretty(&catalog_v).unwrap_or_default(),
         );
-        // PII-redaction boundary (CLAUDE.md): the prospect facts are a
-        // SaaS-model input. Redact any email before the call; rehydrate the
-        // output before parsing. (Catalog is product data, no PII.)
-        let redaction = salesman_core::redact::redact(&user, &[]);
+        // PII-redaction boundary (CLAUDE.md "No PII to third parties"): the
+        // prospect facts are a SaaS-model input. Redact emails, phones, and the
+        // known company name + homepage before the call; rehydrate the output
+        // before parsing. (Catalog is product data, no PII.)
+        let red_terms = crate::prospect_pii_terms(&prospect);
+        let red_refs: Vec<&str> = red_terms.iter().map(String::as_str).collect();
+        let redaction = salesman_core::redact::redact(&user, &red_refs);
 
         let req = ChatRequest {
             messages: vec![

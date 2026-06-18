@@ -386,8 +386,7 @@ impl Tool for DraftReplyTool {
         // suppressed optout/bounce; spam shouldn't get a reply.
         // legal_threat is treated even more strictly — operator MUST
         // handle it personally, never auto-draft a response.
-        const TERMINAL: &[&str] =
-            &["optout", "bounce", "spam", "out_of_office", "legal_threat"];
+        const TERMINAL: &[&str] = &["optout", "bounce", "spam", "out_of_office", "legal_threat"];
         if TERMINAL
             .iter()
             .any(|t| t.eq_ignore_ascii_case(&inbound_kind))
@@ -435,12 +434,14 @@ impl Tool for DraftReplyTool {
             inbound_body: &inbound_body,
             inbound_kind: &inbound_kind,
         });
-        // PII-redaction boundary (CLAUDE.md): the draft path already sends
-        // prospect context to a SaaS model, so strip raw email addresses
-        // from the prompt and rehydrate them back into the model's output
-        // afterward — strictly reduces PII exposure, at no personalization
-        // cost (the model doesn't need raw addresses to write a reply).
-        let redaction = salesman_core::redact::redact(&user, &[]);
+        // PII-redaction boundary (CLAUDE.md "No PII to third parties"): this
+        // path sends prospect context to a SaaS model, so redact emails, phones,
+        // and the known company name + homepage from the prompt, then rehydrate
+        // them back into the model's output afterward — strictly reduces PII
+        // exposure; rehydrate restores the real values for the final reply.
+        let red_terms = crate::prospect_pii_terms(&prospect);
+        let red_refs: Vec<&str> = red_terms.iter().map(String::as_str).collect();
+        let redaction = salesman_core::redact::redact(&user, &red_refs);
 
         let req = ChatRequest {
             messages: vec![
@@ -736,7 +737,11 @@ mod tests {
             !red.text().contains("jane.doe@acme.com"),
             "the prompt sent to the model must not contain the raw email"
         );
-        assert_eq!(red.rehydrate(red.text()), user, "rehydration must round-trip");
+        assert_eq!(
+            red.rehydrate(red.text()),
+            user,
+            "rehydration must round-trip"
+        );
     }
 
     #[test]

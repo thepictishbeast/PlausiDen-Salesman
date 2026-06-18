@@ -218,6 +218,12 @@ impl Tool for DraftColdEmailTool {
         let mut last_score = 0.0f32;
         let mut last_reasons: Vec<String> = vec![];
 
+        // Company name + homepage to redact alongside the emails/phones that
+        // redact() catches by default. Computed once — the prospect is constant
+        // across retries.
+        let pii_terms = crate::prospect_pii_terms(&prospect);
+        let term_refs: Vec<&str> = pii_terms.iter().map(String::as_str).collect();
+
         for attempt in 0..=max_retries {
             let mut user = user_initial.clone();
             if let Some(fb) = &feedback {
@@ -225,6 +231,14 @@ impl Tool for DraftColdEmailTool {
                 user.push_str(fb);
                 user.push_str("\nWrite a new version that avoids those tells. Same JSON shape.");
             }
+
+            // PII-redaction boundary (CLAUDE.md "No PII to third parties"): the
+            // cold draft carries the richest prospect dossier (company, homepage,
+            // description, signals, interest tags) to a SaaS model. Redact emails,
+            // phones, company name + homepage before the call and rehydrate the
+            // model's output before parsing. Redact per-attempt: `user` grows with
+            // retry feedback, which can echo prospect text.
+            let redaction = salesman_core::redact::redact(&user, &term_refs);
 
             let req = ChatRequest {
                 messages: vec![
@@ -236,7 +250,7 @@ impl Tool for DraftColdEmailTool {
                     },
                     Message {
                         role: Role::User,
-                        content: user,
+                        content: redaction.text().to_string(),
                         tool_calls: vec![],
                         tool_results: vec![],
                     },
@@ -251,12 +265,31 @@ impl Tool for DraftColdEmailTool {
                 .router
                 .chat_for(RouteHint::Reasoning, "draft_cold_email", req)
                 .await?;
-            let raw = resp.message.content.trim();
-            let draft = parse_draft(raw).map_err(|e| Error::Tool {
+
+            // Telemetry on the redaction decision — counts + backend only,
+            // never the redacted values (those ARE the PII).
+            tracing::debug!(
+                attempt,
+                redacted_count = redaction.redacted_count(),
+                backend = resp.backend.as_deref().unwrap_or("unknown"),
+                model = resp.model.as_deref().unwrap_or("unknown"),
+                "cold-draft: redacted prospect PII before SaaS call"
+            );
+
+            // Restore the real names/addresses in the model's output before
+            // parsing, scoring, or persisting.
+            let rehydrated = redaction.rehydrate(resp.message.content.trim());
+            if rehydrated.contains("[[REDACTED_") {
+                tracing::warn!(
+                    attempt,
+                    "cold-draft: model output retained a redaction placeholder after rehydrate"
+                );
+            }
+            let draft = parse_draft(&rehydrated).map_err(|e| Error::Tool {
                 tool: "content.draft_cold_email".into(),
                 message: format!(
                     "attempt {attempt}: parse: {e} -- raw: {}",
-                    truncate(raw, 200)
+                    truncate(&rehydrated, 200)
                 ),
             })?;
 
@@ -485,5 +518,84 @@ mod tests {
     #[test]
     fn errors_on_garbage() {
         assert!(parse_draft("totally not json").is_err());
+    }
+
+    #[test]
+    fn prospect_pii_terms_redacts_company_and_homepage_but_skips_short_names() {
+        // A normal-length company name + homepage become redaction terms.
+        let p = json!({
+            "display_name": "Acme Robotics",
+            "homepage": "https://acme-robotics.example"
+        });
+        let terms = crate::prospect_pii_terms(&p);
+        assert!(
+            terms.iter().any(|t| t == "Acme Robotics"),
+            "company redacted"
+        );
+        assert!(
+            terms.iter().any(|t| t == "https://acme-robotics.example"),
+            "homepage redacted"
+        );
+        // A short/common company name must be SKIPPED: redact() matches raw
+        // substrings, so "AI" would clobber unrelated text and corrupt the prompt.
+        let short = json!({ "display_name": "AI", "homepage": "https://ai-corp.example" });
+        let st = crate::prospect_pii_terms(&short);
+        assert!(
+            !st.iter().any(|t| t == "AI"),
+            "2-char company name must be skipped"
+        );
+        assert!(
+            st.iter().any(|t| t.contains("ai-corp.example")),
+            "homepage still kept for short-name prospects"
+        );
+    }
+
+    #[test]
+    fn user_prompt_redaction_strips_prospect_pii() {
+        // The cold-draft path sends the prospect dossier to a SaaS model; after
+        // redaction the prompt must carry no raw email, phone, company name, or
+        // homepage, and rehydration must round-trip exactly. This guards the
+        // exact gap the pre-merge audit found (draft_cold_email was unredacted).
+        let tool = DraftColdEmailTool::new(
+            std::sync::Arc::new(LlmRouter::new()),
+            "Sender",
+            "PlausiDen",
+            "one-liner",
+        );
+        let prospect = json!({
+            "display_name": "Acme Robotics",
+            "homepage": "https://acme-robotics.example",
+            "description": "Reach the founder jane.doe@acme.com or +1-415-555-0123",
+        });
+        let user = tool.user_prompt(&prospect, "Sentinel", None, None);
+        // sanity: the assembled prompt includes the PII before redaction.
+        assert!(user.contains("jane.doe@acme.com"));
+        assert!(user.contains("Acme Robotics"));
+        assert!(user.contains("https://acme-robotics.example"));
+
+        let terms = crate::prospect_pii_terms(&prospect);
+        let refs: Vec<&str> = terms.iter().map(String::as_str).collect();
+        let red = salesman_core::redact::redact(&user, &refs);
+        assert!(
+            !red.text().contains("jane.doe@acme.com"),
+            "email must be redacted"
+        );
+        assert!(
+            !red.text().contains("+1-415-555-0123"),
+            "phone must be redacted"
+        );
+        assert!(
+            !red.text().contains("Acme Robotics"),
+            "company must be redacted"
+        );
+        assert!(
+            !red.text().contains("https://acme-robotics.example"),
+            "homepage must be redacted"
+        );
+        assert_eq!(
+            red.rehydrate(red.text()),
+            user,
+            "rehydration must round-trip"
+        );
     }
 }
