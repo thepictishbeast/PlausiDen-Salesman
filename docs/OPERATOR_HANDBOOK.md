@@ -38,8 +38,9 @@ salesman status                                     # JSON health
 | Variable | Required for | Notes |
 |---|---|---|
 | `SALESMAN_DATABASE_URL` | everything that touches state | `postgresql:///salesman?host=/var/run/postgresql` for VPS |
-| `ANTHROPIC_API_KEY` | draft / classify / comparison / case_study | one of two LLM keys must be set for any LLM op |
+| `ANTHROPIC_API_KEY` | draft / classify / comparison / case_study | one of two LLM keys must be set for any LLM op under the default `api` transport |
 | `GEMINI_API_KEY` | bulk classify, grounded search | cheap default for high-volume |
+| `SALESMAN_LLM_TRANSPORT` | optional; LLM transport selection | `cli` (the deployed openclaw transport — routes via the operator's subscriber CLIs, no API key needed) or `api` (code default, uses the keys above); see `docs/SUBSCRIBER_LOGIN.md` |
 | `BRAVE_SEARCH_API_KEY` | discovery.brave_search tool | optional; OSINT works without it |
 | `SALESMAN_SMTP_HOST` / `_PORT` / `_USERNAME` / `_PASSWORD` | send-pending --for-real | SMTP relay credentials |
 | `SALESMAN_FROM_NAME` / `_FROM_EMAIL` | send-pending --for-real | sender identity (per ADR-0003) |
@@ -285,15 +286,21 @@ salesman costs --since-hours 168    # last 7 days
 Shows: calls, prompt/output/cache tokens, USD cost, avg + p95 latency.
 
 ### `audit`
-Verify the receipt chain. Loads the signing key, recomputes hashes,
-reports OK / FAIL per receipt.
+Verify each receipt's Ed25519 signature, reporting OK / FAIL per
+receipt. Under the v2 scheme the signature authenticates the FULL
+receipt (id, event_kind, signing_key_id, created_at, prev_hash, and
+payload) — not just the payload. `salesman audit-chain` additionally
+walks the prev_hash linkage and enforces per-key scoping (rejects a
+chain whose signing_key_id changes mid-stream).
 
 ```bash
 salesman audit --limit 100
 ```
 
-If any receipt shows BAD, the chain has been tampered with —
-investigate immediately.
+If any receipt shows BAD, that receipt has been tampered with —
+investigate immediately. Note the chain alone cannot detect
+end-of-chain truncation or full-table deletion; that needs an
+external anchor — see [`AUDIT_CHAIN.md`](AUDIT_CHAIN.md).
 
 ### `status`
 JSON health probe. Exits non-zero if any required component is down.

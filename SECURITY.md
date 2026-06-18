@@ -18,12 +18,21 @@ Adversaries:
 
 | Threat | Mitigation |
 |---|---|
-| External compromise | Salesman runs as dedicated unprivileged user; no SSH-as-salesman; secrets via systemd `LoadCredential=` + on-disk encryption |
+| External compromise | Salesman runs as dedicated unprivileged user; no SSH-as-salesman; secrets via EnvironmentFile `/etc/salesman.env` (mode 0640, `root:salesman`) — see DEPLOYMENT_GUIDE / OPERATOR_HANDBOOK |
 | Reply injection (HTML, URL parse, etc.) | Reply ingestion strips HTML, validates encoding, never executes inline scripts |
-| Supply chain | `cargo audit` + `cargo deny` in CI; vendored deps where critical; no SaaS LLM dependency |
+| Supply chain | `cargo audit` + `cargo deny` in CI; vendored deps where critical. Drafting/reply use SaaS Claude/Gemini behind a PII redaction boundary (see note below) |
 | Operator mistake | Per-batch send-cap (default 50/batch, 200/day); confirmation prompt CLI-side; pre-merge audit on schema changes |
 | Spam / blacklist | Per-domain throttle, SPF/DKIM/DMARC enforced, monitor delivery + bounce rate, auto-pause on >5% bounce |
 | PII leakage in logs | `tracing` filters scrub email addresses + names from log lines; structured-logging contracts |
+
+### PII redaction boundary
+
+Drafting and reply handling call SaaS LLMs (Claude/Gemini), but prospect PII
+(email, phone, company name, homepage) is redacted before the call and
+rehydrated after, so PII does not leave the box in the clear. Residual
+free-text names (e.g. a person named in a `description`) are an accepted v1
+limitation. Local-only LFI is deferred (ADR-0003). See
+[docs/PII_REDACTION_BOUNDARY.md](docs/PII_REDACTION_BOUNDARY.md).
 
 ## Reporting a vulnerability
 

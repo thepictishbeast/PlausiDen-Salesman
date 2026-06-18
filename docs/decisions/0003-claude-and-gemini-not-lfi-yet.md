@@ -34,6 +34,13 @@ needed.
 - ⚠️  PII (prospect names, emails, contexts) leaves the cluster
   with every draft + classification call. Owner consciously
   accepted this as the trade for capability.
+  - **Amendment 2026-06-18:** a redaction boundary now mitigates
+    this. Prospect PII (email, phone, company display_name,
+    homepage) is redacted before the SaaS call and rehydrated
+    after, so it no longer leaves the box in the clear; residual
+    free-text names (in `description`, etc.) remain an accepted v1
+    limitation. See `crates/salesman-core/src/redact.rs` and
+    `docs/PII_REDACTION_BOUNDARY.md`.
 - ⚠️  Cost surface: Claude + Gemini API calls add up. Cost ledger
   (M1-M4) makes this visible.
 - ❌ We are NOT positioning Salesman as a sovereignty product

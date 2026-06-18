@@ -20,17 +20,24 @@ right prospects**.
 
 A self-hosted, AI-driven cold-outreach platform. It ingests prospect
 lists, enriches them with public OSINT, drafts personalized first-touch
-emails using your choice of LLM (Claude / Gemini / a local model), and
-sends them through your own SMTP — but only after a human reviews and
+emails using your choice of SaaS LLM (Claude / Gemini; a fully-local
+model is deferred — see ADR-0003), and sends them through your own
+SMTP — but only after a human reviews and
 approves each draft. Every send is signed with a per-org Ed25519 key
-into a tamper-evident receipt chain. Replies come back via IMAP, get
+into a hash-linked receipt chain (per-receipt signatures are
+tamper-evident; detecting end-of-chain truncation needs an external
+anchor — see docs/AUDIT_CHAIN.md). Replies come back via IMAP, get
 classified, and update the funnel. Bounces and opt-outs auto-suppress
 forever. Compliance is by-construction, not by-policy: the receipt chain
 is replayable, the suppression list is exportable, the unsubscribe
 endpoint is RFC 8058 one-click.
 
 It is not a SaaS that holds your customer relationships. The data is
-yours, on your hardware, encrypted at rest, behind your firewall.
+yours, on your hardware, encrypted at rest. Drafting/reply use SaaS
+Claude/Gemini, but prospect PII (email, phone, company name, homepage)
+is redacted before the call and rehydrated after — a redaction boundary
+that keeps PII off third parties in the clear (residual free-text names
+are an accepted v1 limitation; see docs/PII_REDACTION_BOUNDARY.md).
 
 ## Who it's for (Ideal Customer Profile)
 
@@ -89,7 +96,7 @@ yours, on your hardware, encrypted at rest, behind your firewall.
 - New-domain quota per batch (--ack-new-domains)
 - AI-detector ensemble gate before approval (8 heuristics, expandable)
 - Test-send-to: redirect-one-message smoke test
-- Receipts: Ed25519-signed, hash-chained, replayable
+- Receipts: Ed25519-signed, hash-chained, replayable (truncation needs an external anchor — see docs/AUDIT_CHAIN.md)
 
 ### Reply ingest
 - IMAP poll over TLS
@@ -361,9 +368,12 @@ what you sent.
 ### The pitch (45 seconds)
 > "If you've ever signed a SOC 2 audit and worried about how to defend
 > your outbound email tooling, Salesman is built for that conversation.
-> It's a self-hosted Rust binary. Your prospect data never leaves your
-> VPS. Every email is signed with a per-org Ed25519 key into a hash
-> chain you can replay. Every send needs a human to type their approval.
+> It's a self-hosted Rust binary. Drafting uses SaaS Claude/Gemini, but
+> prospect PII (email, phone, company name, homepage) is redacted before
+> the call and rehydrated after — a redaction boundary, so PII doesn't
+> leave your box to third parties in the clear. Every email is signed
+> with a per-org Ed25519 key into a hash chain you can replay. Every
+> send needs a human to type their approval.
 > RFC 8058 one-click unsubscribe is wired by default. Bounces auto-
 > suppress, opt-outs auto-suppress, and a recipient ends up on the
 > do-not-contact list within 60 seconds of a STOP reply. We made this

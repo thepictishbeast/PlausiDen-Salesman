@@ -1,8 +1,7 @@
 # MODEL_RESILIENCE.md — LLM router contract under degradation
 
 Source-of-truth for how Salesman's LLM layer behaves when a model is
-rate-limited, billing-exhausted, returning 5xx, or replaced. Anchored
-in `feedback_model_resilience.md`.
+rate-limited, billing-exhausted, returning 5xx, or replaced.
 
 The over-arching principle:
 
@@ -88,8 +87,10 @@ Even when 1-5 fail, the existing gates catch quality regression:
   queue (`max_retries` regenerate on detector failure).
 - Human approval is the final gate. The reviewer sees `produced_by`
   + `via_fallback`.
-- `audit-chain` daily timer attests the hash chain — tampering after
-  the fact is detectable.
+- `audit-chain` daily timer attests the hash chain. v2 signs the full
+  receipt, so mutating any field after the fact is detectable — but
+  end-of-chain truncation or full-table deletion needs an external
+  anchor to catch (see `docs/AUDIT_CHAIN.md`).
 
 ---
 

@@ -3,8 +3,9 @@
 
 ## Context
 
-The OpenClaw VPS (45.77.217.37) was originally provisioned with
-SSH password auth enabled. The auth log showed continuous brute-
+The OpenClaw VPS (45.77.217.37 — note: this IP is now dead; the
+current VPS is 207.148.30.162, re-provisioned 2026-05-31) was
+originally provisioned with SSH password auth enabled. The auth log showed continuous brute-
 force attempts from random IPs (visible in `journalctl -u ssh`).
 A weak-or-leaked root password on a public IPv4 is a credible
 compromise vector.

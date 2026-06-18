@@ -42,6 +42,11 @@ SSH to the VPS and edit `/etc/salesman.env` (mode 0640, owner `root:salesman`).
 ANTHROPIC_API_KEY=sk-ant-...   # one of the two is enough
 GEMINI_API_KEY=...             # both is better — bulk vs reasoning routes
 BRAVE_SEARCH_API_KEY=...       # optional but enables OSINT search
+SALESMAN_LLM_TRANSPORT=cli     # subscriber-CLI transport: spawns the operator's
+                               # claude/gemini CLI, auth lives in that CLI's
+                               # credential store (API keys above ignored).
+                               # Omit or set =api to keep the API-key path.
+                               # See docs/SUBSCRIBER_LOGIN.md.
 ```
 
 ### Required for sending mail
@@ -87,7 +92,7 @@ Set ALL of these on `outreach.plausiden.com` (or whichever sender domain).
 ### a. SPF — TXT on `outreach.plausiden.com`
 
 ```
-v=spf1 ip4:45.77.217.37 -all
+v=spf1 ip4:<SENDER_IP> -all
 ```
 
 `-all` is hard-fail. Use `~all` only during the first 48h of warmup; tighten
@@ -112,7 +117,7 @@ v=DMARC1; p=none; rua=mailto:dmarc@plausiden.com; pct=100
 
 After 7 days of clean reports, escalate to `p=quarantine`, then `p=reject`.
 
-### d. PTR — set in Vultr panel for 45.77.217.37
+### d. PTR — set in Vultr panel for `<SENDER_IP>` (the real on-box sending IP)
 
 ```
 mail.plausiden.com
@@ -126,7 +131,7 @@ mail.plausiden.com
 salesman doctor   # checks SMTP env + LLM backends + unsub minter
 salesman dns-check --domain outreach.plausiden.com \
                    --dkim-selector s1 \
-                   --sender-ip 45.77.217.37 \
+                   --sender-ip "<SENDER_IP>" \
                    --expected-ptr mail.plausiden.com
 ```
 
@@ -146,7 +151,7 @@ These are free and tell you when you're being spam-binned BEFORE volume drops.
   Add the sender domain, verify with a TXT, watch the dashboard for the first
   week. Spam rate >0.3% is a P0.
 - **Microsoft SNDS / JMRP** — https://sendersupport.olc.protection.outlook.com/
-  Add the sending IP (45.77.217.37). SNDS shows reputation; JMRP forwards
+  Add the sending IP (`<SENDER_IP>`). SNDS shows reputation; JMRP forwards
   spam complaints to you.
 
 Both can take 24–72h to populate.

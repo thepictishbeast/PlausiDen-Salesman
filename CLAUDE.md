@@ -16,7 +16,7 @@ automation. Ship the smallest useful slice fast, layer defenses over time.
 - Postgres + Redis on the VPS (not SQLite — concurrent workers)
 - `lettre` for SMTP, `imap` for reply ingest
 - Crawler (TS/Playwright) for web scraping
-- LFI (PlausiDen-AI) for personalization — never SaaS LLM in the data path
+- Drafting/reply use SaaS Claude/Gemini, but prospect PII (email, phone, company name, homepage) is redacted before the call and rehydrated after (a redaction boundary; residual free-text names are an accepted v1 limitation). Local-only LFI is deferred — see ADR-0003 and `docs/PII_REDACTION_BOUNDARY.md`.
 
 ## Compute split
 - **VPS (207.148.30.162, Debian 13 trixie)**: orchestrator + workers + Postgres + Redis. Re-provisioned 2026-05-31 — the old `45.77.217.37` is DEAD (see `HANDOFF.md`). Cohabits with the OpenClaw service.
@@ -28,7 +28,7 @@ automation. Ship the smallest useful slice fast, layer defenses over time.
 - No selling or sharing scraped contact data.
 - No auto-send without human review (until phase 0.3).
 - No LinkedIn / X automation in v0 (TOS surface; opt-in later).
-- No PII to third parties; all generation through LFI locally.
+- Redact prospect PII (email, phone, company name, homepage) before any SaaS LLM call, rehydrate after — PII must not leave the box in the clear.
 
 ## Rate-limit defaults
 - Per-recipient: 5 touches max per 30 days

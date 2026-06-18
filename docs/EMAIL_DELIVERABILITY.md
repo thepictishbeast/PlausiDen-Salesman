@@ -47,14 +47,14 @@ or marketing mail.
 Add a TXT record at the sending domain:
 
 ```
-outreach.plausiden.com.  3600  IN  TXT  "v=spf1 ip4:45.77.217.37 -all"
+outreach.plausiden.com.  3600  IN  TXT  "v=spf1 ip4:<SENDER_IP> -all"
 ```
 
 If you also send via a relay (Mailgun, Postmark, SendGrid, AWS SES),
 include them:
 
 ```
-v=spf1 ip4:45.77.217.37 include:mailgun.org -all
+v=spf1 ip4:<SENDER_IP> include:mailgun.org -all
 ```
 
 `-all` (hard fail) is preferred over `~all` (soft fail) for outreach
@@ -104,10 +104,10 @@ In the Vultr control panel: Servers → your-server → Settings → IPv4
 → Reverse DNS. Set it to your sending hostname:
 
 ```
-45.77.217.37  →  mail.outreach.plausiden.com
+<SENDER_IP>  →  mail.outreach.plausiden.com
 ```
 
-Verify with `dig -x 45.77.217.37`.
+Verify with `dig -x <SENDER_IP>`.
 
 ### Step 6 — postmaster mailbox
 

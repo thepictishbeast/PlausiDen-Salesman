@@ -14,8 +14,11 @@ slice fast, layer defenses over time.**
 
 - Owner needs revenue. Phase 0.1 must produce *useful sales output for
   real prospects* within days, not weeks.
-- Sovereignty: LFI is the personalization brain. No SaaS LLM in the
-  data path. No PII to third parties.
+- Sovereignty: drafting/reply use SaaS Claude/Gemini, but prospect PII
+  (email, phone, company name, homepage) is redacted before the call and
+  rehydrated after — a redaction boundary; residual free-text names are an
+  accepted v1 limitation. Local-only LFI is deferred — see ADR-0003 and
+  docs/PII_REDACTION_BOUNDARY.md.
 - Compute split: the openclaw VPS (`207.148.30.162`; re-provisioned
   2026-05-31, old `45.77.217.37` retired — see HANDOFF.md) hosts the
   orchestrator + workers; laptop hosts dev + CI runners.

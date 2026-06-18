@@ -26,11 +26,6 @@
 
 # PlausiDen-Salesman
 
-> **SCOPE PENDING ALIGNMENT.** See [`SCOPE.md`](SCOPE.md) for the strawman
-> interpretation; the project owner will redirect or confirm before any
-> meaningful implementation begins. This README will be rewritten once
-> scope is locked.
-
 Outreach + spoof-training engine for the PlausiDen ecosystem. Designed as
 a sister to PlausiDen-CRM (pipeline / customer relationship state) and
 PlausiDen-Mail (delivery channel).
@@ -52,15 +47,18 @@ output is "real outreach" or "training exercise" is a per-campaign tag.
 ## Stance
 
 - Local-first, sovereignty-respecting, AVP-2 audited.
-- LFI-driven personalization (no SaaS LLM in the data path).
+- Drafting/reply use SaaS Claude/Gemini, but prospect PII (email, phone, company name, homepage) is redacted before the call and rehydrated after (a redaction boundary; residual free-text names are an accepted v1 limitation). Local-only LFI is deferred — see ADR-0003 and [`docs/PII_REDACTION_BOUNDARY.md`](docs/PII_REDACTION_BOUNDARY.md).
 - Every outreach is logged + attestable (PlausiDen-Obs).
 - Compliance-test mode produces signed receipts: who got the test,
   what they did, when. Forms the audit trail for security-team reports.
 
 ## Status
 
-Scaffold only — initial commit. **Read [`SCOPE.md`](SCOPE.md) before
-contributing or assigning.**
+Tier 0 has shipped (pre-go-live — no real send yet). See
+[`HANDOFF.md`](HANDOFF.md) for current runtime + where we left off, and
+[`ROADMAP.md`](ROADMAP.md) for what's next. **Read [`SCOPE.md`](SCOPE.md)
+and [`docs/COLLABORATION.md`](docs/COLLABORATION.md) before contributing
+or assigning.**
 
 ## Sister repos
 
