@@ -8,7 +8,7 @@ Type=oneshot
 User=salesman
 Group=salesman
 EnvironmentFile=/etc/salesman.env
-ExecStart=/usr/local/bin/salesman inbox-poll
+ExecStart=/opt/salesman/bin/salesman inbox-poll
 
 # Hardening
 NoNewPrivileges=true

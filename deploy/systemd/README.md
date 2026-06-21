@@ -2,8 +2,9 @@
 
 These templates run Salesman on a Debian/Ubuntu VPS. They assume:
 
-- `/usr/local/bin/salesman` and `/usr/local/bin/salesman-api` are installed
-- A `salesman` user/group exists (created by `scripts/deploy.sh`)
+- `/opt/salesman/bin/salesman` and `/opt/salesman/bin/salesman-api` are installed
+  (both built + installed there by `scripts/deploy.sh`)
+- A `salesman` user/group already exists (NOT created by `scripts/deploy.sh` — create it first)
 - `/etc/salesman.env` exists (mode 0640, owner `root:salesman`)
 - `/opt/salesman/{data,logs}` are world-readable / owner-writable
 

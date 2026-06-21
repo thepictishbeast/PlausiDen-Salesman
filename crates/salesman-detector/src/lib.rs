@@ -73,8 +73,9 @@ pub fn score(body: &str, subject: Option<&str>) -> RiskScore {
 /// Same as `score`, plus a hard fact-trace gate when `facts` is
 /// provided. Every numeric claim in the body whose digit run does
 /// NOT appear in the facts JSONB is flagged as `fabricated_numeric_claim`
-/// at weight 0.85 — strong enough to fail the standard 0.50 detector
-/// threshold on its own. The soft `unanchored_numeric_claim` heuristic
+/// at weight 0.85 — strong enough to fail any detector threshold up to
+/// 0.85 (including the 0.50 bulk fact-check default and the 0.6 manual
+/// approve gate) on its own. The soft `unanchored_numeric_claim` heuristic
 /// is suppressed when facts are present (the harder check supersedes it).
 ///
 /// Why this matters: stops the drafter from inventing stats. If the

@@ -3,7 +3,7 @@
 #
 # Runs:
 #   - cargo fmt --check
-#   - cargo clippy --all -- -D warnings
+#   - cargo clippy --workspace --all-targets -- -D warnings
 #   - cargo test --workspace --no-fail-fast
 #   - cargo audit (if installed)
 #   - cargo deny check (if installed)

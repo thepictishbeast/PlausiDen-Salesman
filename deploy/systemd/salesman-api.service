@@ -8,7 +8,7 @@ Type=simple
 User=salesman
 Group=salesman
 EnvironmentFile=/etc/salesman.env
-ExecStart=/usr/local/bin/salesman-api
+ExecStart=/opt/salesman/bin/salesman-api
 Restart=on-failure
 RestartSec=10s
 
