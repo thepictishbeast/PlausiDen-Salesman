@@ -9,7 +9,7 @@ Group=salesman
 EnvironmentFile=/etc/salesman.env
 # Walk the entire chain. On break/sig-failure, exit non-zero — systemd
 # logs it, and the failing journal entry is the audit signal.
-ExecStart=/usr/local/bin/salesman audit-chain
+ExecStart=/opt/salesman/bin/salesman audit-chain
 
 NoNewPrivileges=true
 ProtectSystem=strict

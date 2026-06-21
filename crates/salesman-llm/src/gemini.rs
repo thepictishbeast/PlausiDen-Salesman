@@ -11,8 +11,10 @@
 //! - Tools are declared as `tools[*].functionDeclarations[*]` with
 //!   the same `parameters` JSON-Schema shape we already produce.
 //!
-//! SECURITY: API key in `Zeroizing<String>`. Sent as a query param
-//! per Google's docs; never logged.
+//! SECURITY: API key in `Zeroizing<String>`, `Debug` is manually redacted,
+//! and the key is sent as the `x-goog-api-key` request HEADER — never as a
+//! URL `?key=` query param, which reqwest echoes into transport-error
+//! `Display` and would leak the key into `Error::Llm`. Never logged.
 //!
 //! BUG ASSUMPTION: this targets `gemini-1.5-pro` and `gemini-1.5-flash`.
 //! Newer Gemini 2.x model variants should work since the schema is
@@ -78,6 +80,16 @@ impl GeminiBackend {
             .map_err(|_| Error::Config("GEMINI_API_KEY not set".into()))?;
         Ok(Self::new(model, key))
     }
+
+    /// The generateContent endpoint URL for this model. Deliberately
+    /// key-free — the API key travels in the `x-goog-api-key` header so it
+    /// can never leak into a reqwest error's URL (see the module SECURITY note).
+    fn endpoint_url(&self) -> String {
+        format!(
+            "{GEMINI_API_BASE}/models/{model}:generateContent",
+            model = self.model
+        )
+    }
 }
 
 #[async_trait]
@@ -92,17 +104,18 @@ impl LlmBackend for GeminiBackend {
     async fn chat(&self, req: ChatRequest) -> Result<ChatResponse> {
         let started = Instant::now();
         let body = build_request(&req)?;
-        let url = format!(
-            "{GEMINI_API_BASE}/models/{model}:generateContent?key={key}",
-            model = self.model,
-            key = &**self.api_key,
-        );
+        // Key goes in the x-goog-api-key header, NOT the URL: reqwest's
+        // transport-error Display echoes the request URL, so a `?key=...`
+        // query param would leak the key into Error::Llm (CLAUDE.md: no
+        // secrets in logs). Headers are never echoed in reqwest errors.
+        let url = self.endpoint_url();
         debug!(model = %self.model, "gemini chat request");
 
         let resp = self
             .http
             .post(&url)
             .header("content-type", "application/json")
+            .header("x-goog-api-key", &**self.api_key)
             .json(&body)
             .send()
             .await
@@ -397,6 +410,29 @@ mod tests {
             max_tokens: 1024,
             temperature: 0.2,
         }
+    }
+
+    #[test]
+    fn endpoint_url_carries_no_api_key() {
+        let b = GeminiBackend::new("gemini-1.5-flash", "super-secret-key-123");
+        let url = b.endpoint_url();
+        assert!(
+            !url.contains("super-secret-key-123"),
+            "url leaks key: {url}"
+        );
+        assert!(!url.contains("key="), "url has a key query param: {url}");
+        assert!(url.ends_with(":generateContent"));
+    }
+
+    #[test]
+    fn debug_redacts_api_key() {
+        let b = GeminiBackend::new("gemini-1.5-flash", "super-secret-key-123");
+        let dbg = format!("{b:?}");
+        assert!(
+            !dbg.contains("super-secret-key-123"),
+            "Debug leaks key: {dbg}"
+        );
+        assert!(dbg.contains("<redacted>"));
     }
 
     #[test]

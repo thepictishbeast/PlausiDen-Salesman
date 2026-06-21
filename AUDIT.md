@@ -1,6 +1,6 @@
 # AVP-2 Tier 1 audit — first pass
 
-> Per `AVP2_SUPERSOCIETY_PROTOCOL.md` Tier 1 (Existence proof, passes 1–6).
+> Per `AVP2_PROTOCOL.md` Tier 1 (Existence proof, passes 1–6).
 > This file is the audit ledger; each entry is a per-crate first-pass
 > review. Subsequent passes get appended.
 
@@ -42,7 +42,7 @@ sign-off should add an entry below this with reviewer name + date.
 |---|---|---|
 | salesman-state | OK | `insert_companies(&[])` returns Ok(0). `upsert_prospects_for_campaign(&[])` returns Ok(0). Empty CSV reads return Ok(empty). Empty body → draft skipped by detector or LLM error path. |
 | salesman-discovery | OK | Empty homepage HTML produces empty signals; CSV with no rows returns empty Vec. |
-| salesman-receipts | OK | `verify_chain(&[], _, &zero_hash())` returns Ok (vacuously). `prev_hash != HASH_LEN` errors loudly. |
+| salesman-receipts | OK | `verify_chain(&[], _, &zero_hash())` returns Ok (vacuously) — a hash chain alone can't see an emptied/truncated table; detecting that needs `verify_chain_anchored` against a trusted off-box/append-only anchor (in-Postgres anchor = no guarantee). `prev_hash != HASH_LEN` errors loudly. See `docs/AUDIT_CHAIN.md`. |
 | salesman-detector | OK | Empty body → score 0.0. Body `< 80` chars skips em-dash density (avoids divide-by-tiny). |
 
 ### Boundary sweep
@@ -50,7 +50,7 @@ sign-off should add an entry below this with reviewer name + date.
 | Crate | Status | Notes |
 |---|---|---|
 | salesman-state | OK | All counts use `::BIGINT`; UUIDv7 sorts naturally; CITEXT for case-insensitive email + domain compare. |
-| salesman-receipts | OK | Hash + signature lengths checked (32 / 64 bytes) on every receipt verify. |
+| salesman-receipts | OK | Hash + signature lengths checked (32 / 64 bytes) on every receipt verify. Scheme v2: the signature authenticates the FULL receipt (id, event_kind, signing_key_id, created_at, prev_hash, payload), not just `prev_hash‖payload`, so mutating any field invalidates it. `verify_chain` enforces per-key scoping — a chain whose `signing_key_id` changes mid-stream is rejected. See `docs/AUDIT_CHAIN.md`. |
 | salesman-discovery::homepage | OK | 4 MiB body cap before parse. 5-redirect cap. 15s timeout. |
 | salesman-llm | OK | Both backends time out at 180s. |
 | salesman-content::seo_meta | OK | Title hard-truncated to 60 chars; description to 160. Char-count, not byte-count, so unicode safe. |

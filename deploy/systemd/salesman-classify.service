@@ -8,7 +8,7 @@ Type=oneshot
 User=salesman
 Group=salesman
 EnvironmentFile=/etc/salesman.env
-ExecStart=/usr/local/bin/salesman classify-replies --batch 25
+ExecStart=/opt/salesman/bin/salesman classify-replies --batch 25
 
 NoNewPrivileges=true
 ProtectSystem=strict

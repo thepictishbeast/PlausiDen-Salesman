@@ -16,20 +16,26 @@ templates/cold/introduction_b.toml    # B — "{specific signal from research}"
 The bodies should be identical (or near-identical). Only the
 subject changes. That isolates the subject as the variable.
 
-## How the bandit picks
+## How the bandit picks (planned — not yet wired)
 
-When a sequence has multiple candidate templates for a step, the
-operator passes BOTH keys to the sequencer. The existing
-`pick_template_via_bandit` (already in `salesman-state`) does
-epsilon-greedy selection:
+> **Status:** the epsilon-greedy selector below is *planned*, not current
+> behavior. `pick_template_via_bandit` exists in `salesman-state` but has **no
+> callers**: the live sequencer (`tick-sequences`) selects a template via the
+> per-prospect `template_key`, and there is no CLI to pass candidate keys yet.
+> Until that wiring lands, A/B variants are exercised by assigning the variant
+> `template_key` to prospects directly, not by the bandit.
+
+The intended design: when a sequence has multiple candidate templates for a
+step, the operator passes BOTH keys to the sequencer and
+`pick_template_via_bandit` does epsilon-greedy selection:
 
 - With probability `1 - epsilon`: pick the template with the highest
   `engaged_rate` so far.
 - With probability `epsilon` (default 0.20): pick a random other
   candidate.
 
-So early on the bandit explores both variants ~50/50. As data
-accumulates, it tilts toward the winner. The exploration tail keeps
+So early on the bandit would explore both variants ~50/50. As data
+accumulates, it would tilt toward the winner. The exploration tail keeps
 the loser sampled occasionally so we don't fixate on a noisy
 early-game result.
 
@@ -70,11 +76,11 @@ universal winner.
   AND CTA all differ between A and B, you don't know which variable
   drove the result. Discipline: change ONE thing per pair.
 - **Calling a winner too early.** With `sent < 30` per variant the
-  noise dominates. Wait. The bandit handles the wait gracefully —
-  you don't need to baby-sit.
+  noise dominates. Wait. Once the bandit is wired it will handle the wait
+  gracefully — you won't need to baby-sit.
 - **Running too many variants in parallel.** With 4+ variants the
   exploration tax exceeds the signal you'll extract. Stick to 2-3.
 - **Forgetting to add the variant to the sequence's candidate list.**
-  If only the base key is in the candidates, the bandit never sees
-  the variant and the test never runs. Verify with
+  If only the base key is in the candidates, the bandit (once wired) never
+  sees the variant and the test never runs. Verify with
   `salesman template-stats` — both keys should have `drafted > 0`.

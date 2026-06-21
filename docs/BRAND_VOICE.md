@@ -34,9 +34,13 @@ SaaS vendor and we never sound like one.
   (e.g. "Reply STOP and I won't follow up.") in its body or mandatory phrases.
 - **No self-contradiction.** A template never uses a phrase it lists in its own
   `forbidden_phrases`.
+
+## Enforced at send time (not by the template test)
+
 - **Identifiable sender.** A real sender identity + physical postal address ship
   with the message (the sender is attributable; only prospect *data* is
-  sovereign — see `docs/OUTREACH_INFRA_HANDOFF.md`).
+  sovereign — see `docs/OUTREACH_INFRA_HANDOFF.md`). This is enforced by the
+  runtime sender config at send time, not by the template voice test.
 
 ## Banned reflexes (the clichés we keep out)
 

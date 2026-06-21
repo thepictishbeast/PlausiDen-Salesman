@@ -819,7 +819,10 @@ enum Cmd {
         #[arg(long)]
         campaign: String,
         /// Detector threshold above which a draft is flagged.
-        /// Default 0.50 matches the standard approve-gate threshold.
+        /// Default 0.50 — intentionally STRICTER than the 0.6 manual
+        /// `approve` gate: fact-check is a bulk triage tool with no
+        /// human eyeballing each draft, so it surfaces more borderline
+        /// drafts for review.
         #[arg(long, default_value_t = 0.50)]
         threshold: f32,
         /// Print every draft's score, not only the ones that fail.
@@ -836,7 +839,9 @@ enum Cmd {
         #[arg(long)]
         campaign: String,
         /// Detector threshold — drafts at or above this score stay
-        /// in the queue. Matches the standard approve-gate default.
+        /// in the queue. Default 0.50 — intentionally STRICTER than the
+        /// 0.6 manual `approve` gate, because this bulk auto-approve
+        /// path has no per-draft human review.
         #[arg(long, default_value_t = 0.50)]
         threshold: f32,
         /// Print what would be approved without changing state.
@@ -860,7 +865,9 @@ enum Cmd {
         #[arg(long)]
         campaign: Option<String>,
     },
-    /// Kill switch — pauses every active campaign.
+    /// (stub, Phase 1.4) Kill switch — will pause every active campaign
+    /// and flush outbound queues. Currently a no-op that only logs the
+    /// request; it does NOT yet stop anything.
     Halt {
         #[arg(long, default_value = "operator-issued")]
         reason: String,
@@ -2902,7 +2909,7 @@ async fn main() -> Result<()> {
                         tracing::warn!(
                             domain=%domain, n_bounces=%n_bounces,
                             threshold=%domain_quarantine_threshold,
-                            "domain quarantined (recent hard-bounce rate) — skipping",
+                            "domain quarantined (recent hard-bounce count) — skipping",
                         );
                         continue;
                     }

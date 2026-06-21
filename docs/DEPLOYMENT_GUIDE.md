@@ -20,15 +20,20 @@ and `OPERATOR_HANDBOOK.md` into one ordered checklist. Read top to bottom.
 
 You need:
 
-1. The VPS is reachable, postgres + redis are up, and `/etc/salesman.env` exists
-   (templated by the deploy script). `salesman-cli` and `salesman-api` binaries
-   are installed under `/usr/local/bin/`.
+1. The VPS is reachable, postgres + redis are up, and `/etc/salesman.env` exists.
+   `scripts/deploy.sh` builds and installs BOTH the `salesman` and `salesman-api`
+   binaries to `/opt/salesman/bin/` (matching the systemd units' `ExecStart`).
+   It does NOT create `/etc/salesman.env` — you create that file by hand
+   (see §1).
 2. A sender domain you control DNS for. Recommended: `outreach.plausiden.com`
    (subdomain of the brand) so the apex `plausiden.com` reputation is isolated.
-3. A `salesman` Linux user (created by `scripts/deploy.sh`) — never run as root.
+3. A `salesman` Linux user. **This user must already exist** — `scripts/deploy.sh`
+   does NOT create it. Create it before deploying, and never run as root.
 4. **No data in production yet.** Ideally migrate on a clean DB.
 
-If anything in 1–4 is missing, run `scripts/deploy.sh` first and come back.
+If the binaries in 1 are missing, run `scripts/deploy.sh` to build and install
+them. The `salesman` user (3) and `/etc/salesman.env` (1) are prerequisites you
+must set up by hand before deploying.
 
 ---
 
@@ -42,6 +47,11 @@ SSH to the VPS and edit `/etc/salesman.env` (mode 0640, owner `root:salesman`).
 ANTHROPIC_API_KEY=sk-ant-...   # one of the two is enough
 GEMINI_API_KEY=...             # both is better — bulk vs reasoning routes
 BRAVE_SEARCH_API_KEY=...       # optional but enables OSINT search
+SALESMAN_LLM_TRANSPORT=cli     # subscriber-CLI transport: spawns the operator's
+                               # claude/gemini CLI, auth lives in that CLI's
+                               # credential store (API keys above ignored).
+                               # Omit or set =api to keep the API-key path.
+                               # See docs/SUBSCRIBER_LOGIN.md.
 ```
 
 ### Required for sending mail
@@ -87,7 +97,7 @@ Set ALL of these on `outreach.plausiden.com` (or whichever sender domain).
 ### a. SPF — TXT on `outreach.plausiden.com`
 
 ```
-v=spf1 ip4:45.77.217.37 -all
+v=spf1 ip4:<SENDER_IP> -all
 ```
 
 `-all` is hard-fail. Use `~all` only during the first 48h of warmup; tighten
@@ -112,7 +122,7 @@ v=DMARC1; p=none; rua=mailto:dmarc@plausiden.com; pct=100
 
 After 7 days of clean reports, escalate to `p=quarantine`, then `p=reject`.
 
-### d. PTR — set in Vultr panel for 45.77.217.37
+### d. PTR — set in Vultr panel for `<SENDER_IP>` (the real on-box sending IP)
 
 ```
 mail.plausiden.com
@@ -126,7 +136,7 @@ mail.plausiden.com
 salesman doctor   # checks SMTP env + LLM backends + unsub minter
 salesman dns-check --domain outreach.plausiden.com \
                    --dkim-selector s1 \
-                   --sender-ip 45.77.217.37 \
+                   --sender-ip "<SENDER_IP>" \
                    --expected-ptr mail.plausiden.com
 ```
 
@@ -146,7 +156,7 @@ These are free and tell you when you're being spam-binned BEFORE volume drops.
   Add the sender domain, verify with a TXT, watch the dashboard for the first
   week. Spam rate >0.3% is a P0.
 - **Microsoft SNDS / JMRP** — https://sendersupport.olc.protection.outlook.com/
-  Add the sending IP (45.77.217.37). SNDS shows reputation; JMRP forwards
+  Add the sending IP (`<SENDER_IP>`). SNDS shows reputation; JMRP forwards
   spam complaints to you.
 
 Both can take 24–72h to populate.
@@ -188,10 +198,10 @@ salesman discover --campaign warmup-2026-04 --from-csv ~/prospects-warmup-2026-0
 Pick a sequence (or use the default single-touch):
 
 ```sh
-salesman draft --campaign warmup-2026-04
+salesman draft --campaign warmup-2026-04 --product Sentinel
 ```
 
-This generates an LLM-written draft per prospect. They land in
+`--product` is required. This generates an LLM-written draft per prospect. They land in
 `awaiting_approval` — nothing is sent yet.
 
 Review them in the dashboard (`https://salesman.plausiden.com/drafts`) or
@@ -222,6 +232,13 @@ It verifies:
 - no obvious test/demo prospects in queue (acme/test/demo)
 - detector ensemble: no draft scores ≥0.6
 - prints 3 sample drafts for eyeball review
+
+> **On the detector threshold:** the default differs by command.
+> `approve` / `preflight` / `score` default to **0.6** — these are
+> manual-gate commands where a human reviews each draft, so the bar is
+> looser. The bulk commands `fact-check` / `approve-all` default to a
+> **stricter 0.50**, because they act on many drafts at once with no
+> per-draft human review. Pass `--detector-threshold` to override either.
 
 The verdict is one of READY / READY-WITH-WARNINGS / BLOCKED. Don't proceed
 until you see READY.

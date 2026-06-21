@@ -7,19 +7,19 @@ automation. Ship the smallest useful slice fast, layer defenses over time.
 ## Read first
 0. `HANDOFF.md` — **current runtime + where we left off (READ THIS FIRST)**
 1. `SCOPE.md` — current strawman + owner decision points
-2. `ARCHITECTURE.md` — planned shape (stub until phase 0.1 locks)
+2. `ARCHITECTURE.md` — current shape (15-crate workspace layout)
 3. PlausiDen-Meta operating principles
 4. PlausiDen-AVP-Doctrine validation tier targets
 
 ## Stack
 - Rust core (mirrors PlausiDen-Engine pattern)
-- Postgres + Redis on the VPS (not SQLite — concurrent workers)
+- Postgres on the VPS (not SQLite — concurrent workers); Redis is a declared dependency, not yet wired; scheduling via systemd timers
 - `lettre` for SMTP, `imap` for reply ingest
 - Crawler (TS/Playwright) for web scraping
-- LFI (PlausiDen-AI) for personalization — never SaaS LLM in the data path
+- Drafting/reply use SaaS Claude/Gemini, but prospect PII (email, phone, company name, homepage) is redacted before the call and rehydrated after (a redaction boundary; residual free-text names are an accepted v1 limitation). Local-only LFI is deferred — see ADR-0003 and `docs/PII_REDACTION_BOUNDARY.md`.
 
 ## Compute split
-- **VPS (207.148.30.162, Debian 13 trixie)**: orchestrator + workers + Postgres + Redis. Re-provisioned 2026-05-31 — the old `45.77.217.37` is DEAD (see `HANDOFF.md`). Cohabits with the OpenClaw service.
+- **VPS (207.148.30.162, Debian 13 trixie)**: orchestrator + workers + Postgres (Redis declared but unused; scheduling via systemd timers). Re-provisioned 2026-05-31 — the old `45.77.217.37` is DEAD (see `HANDOFF.md`). Cohabits with the OpenClaw service.
 - **Laptop**: dev environment + self-hosted CI runner.
 
 ## Hard rules
@@ -28,7 +28,7 @@ automation. Ship the smallest useful slice fast, layer defenses over time.
 - No selling or sharing scraped contact data.
 - No auto-send without human review (until phase 0.3).
 - No LinkedIn / X automation in v0 (TOS surface; opt-in later).
-- No PII to third parties; all generation through LFI locally.
+- Redact prospect PII (email, phone, company name, homepage) before any SaaS LLM call, rehydrate after — PII must not leave the box in the clear.
 
 ## Rate-limit defaults
 - Per-recipient: 5 touches max per 30 days

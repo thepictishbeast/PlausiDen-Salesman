@@ -1,8 +1,6 @@
 # ARCHITECTURE.md — PlausiDen-Salesman
 
-> Stub. Rewritten when phase 0.1 scope is locked (see SCOPE.md owner-decision points).
-
-## High-level (planned)
+## High-level
 
 ```
                   ┌─────────────────────────────────┐
@@ -19,7 +17,7 @@
                                           tags
 
          ┌────────────────────────────────────────────┐
-         │  Postgres (state) + Redis (queue)          │
+         │  Postgres (state) + systemd timers (sched) │
          └────────────────────────────────────────────┘
 
          ┌────────────────────────────────────────────┐
@@ -27,20 +25,34 @@
          └────────────────────────────────────────────┘
 ```
 
-## Crate layout (planned)
+## Crate layout
+
+15 workspace crates, each a hardenable boundary (AVP-2 layering):
 
 ```
 crates/
-  salesman-core/         # types, traits, state machine, signing
-  salesman-orchestrator/ # main daemon, job dispatcher
-  salesman-discovery/    # lead-source adapters (crawler, APIs)
-  salesman-enrichment/   # deterministic data merging
-  salesman-generator/    # LFI + template integration
-  salesman-delivery/     # lettre wrapper + provenance tagging
-  salesman-reply/        # IMAP poller + classifier
-  salesman-cli/          # operator interface
-  salesman-admin-ui/     # web UI (axum + leptos? — TBD)
+  salesman-core/         # shared types, error model, tracing setup, config loader
+  salesman-state/        # Postgres schema + migrations + typed queries (sqlx)
+  salesman-llm/          # multi-LLM router (claude, gemini, future lfi); tool-use, cache, cost ledger
+  salesman-tools/        # tool trait + registry; tools register declarative schemas the LLM invokes
+  salesman-discovery/    # OSINT discovery: search APIs, site enumeration, tech detection, public-data adapters
+  salesman-osint/        # per-prospect intel: site scrape (crawler RPC), people enrichment, social signals
+  salesman-competitor/   # identify + characterize competitors per prospect; side-by-side angle
+  salesman-content/      # brand content: comparison pages, case studies, SEO articles, LinkedIn posts
+  salesman-outreach/     # multi-channel sender; phase 1 SMTP via lettre + provenance tagging
+  salesman-reply/        # IMAP reply ingest + classifier + state-machine update
+  salesman-orchestrator/ # the agentic loop: plan → act → observe → reflect → next
+  salesman-cli/          # operator surface: campaign create, dry-run, queue inspect, kill switch
+  salesman-api/          # HTTP API for the dashboard + CRM integration (axum)
+  salesman-detector/     # "is this AI?" detector ensemble (outreach pre-send gate)
+  salesman-receipts/     # crypto-receipt service (Merkle log of every send + state change)
 ```
+
+Rough mapping from the earlier planned names: `enrichment` split into
+`discovery` + `osint`; `generator` became `content`; `delivery` became
+`outreach`; `admin-ui` became `api`. Scheduling is done with systemd
+timers (`deploy/systemd/salesman-{daily,classify,audit-chain,inbox-poll,doctor-watch}.timer`),
+not a queue — there is no Redis in any crate.
 
 ## Sequence (planned, 0.1 happy path)
 

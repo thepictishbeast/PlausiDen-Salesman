@@ -1,5 +1,10 @@
 # PlausiDen-Salesman — Master Plan (v1, supersedes SCOPE 0.1-only roadmap)
 
+> **Historical note (2026-06):** This is the original Phase 1.0 plan, a
+> point-in-time record. For current authoritative state see CLAUDE.md /
+> ROADMAP.md / ARCHITECTURE.md; several specifics below have since evolved
+> (flagged inline with "Update (2026-06)").
+
 > **Owner directive 2026-04-26 evening:**
 > "We want a very capable sales agent that can make cold sales using
 > [Claude] and Gemini to do so. It should be able to access tools and
@@ -38,6 +43,8 @@ the agent loop, with LFI added later as a sovereignty option.
 - **Hard rate caps** per recipient (max 4 touches in 30 days), per
   domain (max 8/day), per sender mailbox (per-mailbox configurable),
   per channel.
+  > **Update (2026-06):** caps are now max 5 touches/30d per recipient
+  > and 10/domain/hour (per CLAUDE.md), not 4 and 8/day.
 - **No AI-content shipping with detectability above threshold.** Every
   generated message is scored by an adversarial detector pipeline
   before it can be queued. Threshold is configurable but defaults to
@@ -48,6 +55,9 @@ the agent loop, with LFI added later as a sovereignty option.
 - **Kill switch.** A single `salesman-cli halt` command immediately
   pauses every active campaign and flushes outbound queues. Logged
   with reason.
+  > **Update (2026-06):** the binary is `salesman` (not `salesman-cli`),
+  > and `salesman halt` is currently a no-op STUB (Phase 1.4) — not yet a
+  > working constraint.
 - **Reply-driven ethics.** Negative reply, opt-out, or any phrase
   matching the "stop" classifier → instant suppression list, sequence
   pause, owner notified.
@@ -177,6 +187,13 @@ See `migrations/` (created in Phase 1.0). Top-level tables:
 `companies`, `contacts`, `signals`, `competitors`, `campaigns`,
 `prospects`, `touches`, `replies`, `suppressions`, `receipts`,
 `llm_calls`, `tool_calls`.
+
+> **Update (2026-06):** the shipped schema has no `signals` or
+> `competitors` tables, and migrations live under
+> `crates/salesman-state/migrations/`. It instead adds sequence,
+> trigger-event, and owner-notification tables (see
+> `0002_sequences.sql`, `0007_trigger_events.sql`,
+> `0010_owner_notifications.sql`).
 
 ## Repos this depends on
 

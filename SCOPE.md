@@ -14,8 +14,11 @@ slice fast, layer defenses over time.**
 
 - Owner needs revenue. Phase 0.1 must produce *useful sales output for
   real prospects* within days, not weeks.
-- Sovereignty: LFI is the personalization brain. No SaaS LLM in the
-  data path. No PII to third parties.
+- Sovereignty: drafting/reply use SaaS Claude/Gemini, but prospect PII
+  (email, phone, company name, homepage) is redacted before the call and
+  rehydrated after — a redaction boundary; residual free-text names are an
+  accepted v1 limitation. Local-only LFI is deferred — see ADR-0003 and
+  docs/PII_REDACTION_BOUNDARY.md.
 - Compute split: the openclaw VPS (`207.148.30.162`; re-provisioned
   2026-05-31, old `45.77.217.37` retired — see HANDOFF.md) hosts the
   orchestrator + workers; laptop hosts dev + CI runners.
@@ -54,7 +57,7 @@ slice fast, layer defenses over time.**
 |---|---|---|
 | Core language | **Rust** | Mirrors PlausiDen ecosystem, AVP-2 alignment |
 | Persistence | **PostgreSQL on VPS** | Concurrent workers + structured queries; SQLite would limit later phases |
-| Job queue | **Redis on VPS** | Battle-tested for cron + scheduled sends + retry backoff |
+| Scheduling | **systemd timers** | daily / classify / audit-chain / inbox-poll / doctor-watch units on the VPS; Redis is a declared-but-unused dependency, not wired |
 | Mail send | **`lettre` crate** + direct SMTP | No SaaS dep; we control egress |
 | Reply ingest | Custom `imap` poller | Native Rust IMAP exists |
 | Web scraping | **PlausiDen-Crawler** (TS/Playwright) over a worker queue | Already exists |
@@ -71,7 +74,7 @@ slice fast, layer defenses over time.**
   ├── data/                   # postgres data, runtime state
   ├── etc/                    # config (TOML, owned by salesman user)
   ├── log/                    # structured logs (PlausiDen-Obs format)
-  └── docker-compose.yml      # postgres + redis + orchestrator
+  └── docker-compose.yml      # postgres + orchestrator (Redis declared but unused)
 ```
 
 Runs as a dedicated `salesman` system user (not root, not openclaw).
@@ -97,6 +100,6 @@ subdomain (TBD); admin UI behind basic-auth + IP allowlist.
 
 ## Once 0.1 is locked
 
-ARCHITECTURE.md is rewritten with the chosen lead-discovery design, real
-crate names, and the first vertical slice's sequence diagram. Until then
-it stays as a stub.
+ARCHITECTURE.md is now current: it documents the real 15-crate workspace
+layout and high-level shape. (The scope has since grown well past this
+0.1-only framing — see PLAN.md for the larger autonomous-sales-engine plan.)

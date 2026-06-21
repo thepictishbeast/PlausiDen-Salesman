@@ -17,8 +17,8 @@ Format: **Subsystem** → **Decision** → **Reasoning**.
 | HTTP server | `axum` 0.7 + `tower-http` 0.5 | What everyone uses |
 | HTTP client | `reqwest` 0.12 (rustls) | What everyone uses |
 | Crypto signing | `ed25519-dalek` 2 + `sha2` 0.10 | Standard |
-| CSV ingest | `csv` 1.3 | Standard |
-| HTML scraping | `scraper` 0.20 | Standard |
+| CSV ingest | `csv` 1.4 | Standard |
+| HTML scraping | `scraper` 0.27 | Standard |
 | CLI | `clap` 4 derive | Standard |
 | Tracing | `tracing` 0.1 + `tracing-subscriber` 0.3 | Standard |
 | Time | `chrono` 0.4 | Could swap to `jiff` someday — not urgent |
@@ -30,8 +30,9 @@ Format: **Subsystem** → **Decision** → **Reasoning**.
 
 ## Built ourselves but FOSS exists (TODO: evaluate)
 
-### CRM front-end (crm-api)
-**Built:** ~400-line axum + server-rendered HTML dashboard with SVG funnel.
+### CRM front-end (salesman-api)
+**Built:** ~400-line axum + server-rendered HTML dashboard with SVG funnel
+(`crates/salesman-api/src/html.rs`).
 **FOSS alternatives:**
 - **Twenty** (twenty.com) — modern open-source CRM, NestJS + Postgres + React. AGPL.
 - **EspoCRM** — PHP, GPL. Very mature.
@@ -42,9 +43,9 @@ with our event bus). Document Twenty as the upgrade path when:
 - Owner needs multi-user (we're single-operator)
 - Needs deal-pipeline workflows beyond our funnel view
 - Needs custom fields / forms / kanban
-**Migration path when ready:** crm-ingest projector writes to
-Twenty's Postgres directly OR via Twenty's REST API; deprecate
-crm-api.
+**Migration path when ready:** a projector writes our event bus into
+Twenty's Postgres directly OR via Twenty's REST API; deprecate the
+`salesman-api` dashboard.
 
 ### Static-site renderer (salesman-content::site)
 **Built:** ~250-line markdown→HTML renderer with sitemap + index.

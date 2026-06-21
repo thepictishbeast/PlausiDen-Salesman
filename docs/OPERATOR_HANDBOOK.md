@@ -38,8 +38,9 @@ salesman status                                     # JSON health
 | Variable | Required for | Notes |
 |---|---|---|
 | `SALESMAN_DATABASE_URL` | everything that touches state | `postgresql:///salesman?host=/var/run/postgresql` for VPS |
-| `ANTHROPIC_API_KEY` | draft / classify / comparison / case_study | one of two LLM keys must be set for any LLM op |
+| `ANTHROPIC_API_KEY` | draft / classify / comparison / case_study | one of two LLM keys must be set for any LLM op under the default `api` transport |
 | `GEMINI_API_KEY` | bulk classify, grounded search | cheap default for high-volume |
+| `SALESMAN_LLM_TRANSPORT` | optional; LLM transport selection | `cli` (the deployed openclaw transport — routes via the operator's subscriber CLIs, no API key needed) or `api` (code default, uses the keys above); see `docs/SUBSCRIBER_LOGIN.md` |
 | `BRAVE_SEARCH_API_KEY` | discovery.brave_search tool | optional; OSINT works without it |
 | `SALESMAN_SMTP_HOST` / `_PORT` / `_USERNAME` / `_PASSWORD` | send-pending --for-real | SMTP relay credentials |
 | `SALESMAN_FROM_NAME` / `_FROM_EMAIL` | send-pending --for-real | sender identity (per ADR-0003) |
@@ -135,6 +136,13 @@ salesman reject  --touch <uuid>
 Approve runs the AI-detector gate first (default threshold 0.6).
 If detector flags the draft, refuses approval. Override with:
 
+> The 0.6 default is the **manual gate** shared by `approve` /
+> `preflight` / `score` — commands where a human reviews each draft. The
+> **bulk** commands `fact-check` / `approve-all` default to a stricter
+> **0.50**, since they act on many drafts at once with no per-draft human
+> review. There is no single "standard" threshold; it depends on the
+> command. Use `--detector-threshold` to override either.
+
 ```bash
 salesman approve --touch <uuid> \
   --detector-threshold 0.7 \
@@ -214,8 +222,9 @@ Persists each new message as a `replies` row with `kind=unclassified`.
 Threading: matches reply.from_address to a prospect's primary contact.
 No match → reply dropped + warned (not your prospect).
 
-The `salesman-classify.timer` runs `classify-replies` every 10 min,
-so you typically don't run this manually unless debugging.
+The `salesman-classify.timer` runs `classify-replies` every 5 min
+(`OnUnitActiveSec=5min`), so you typically don't run this manually
+unless debugging.
 
 ### `classify-replies`
 LLM-classifies pending replies and applies funnel-state transitions.
@@ -273,7 +282,8 @@ Pipeline counts + N-hour activity.
 salesman summary --since-hours 24
 ```
 
-Emitted by `salesman-summary.timer` daily at 09:00 UTC.
+Emitted by `salesman-daily.timer` daily at 07:00
+(`OnCalendar=*-*-* 07:00:00`).
 
 ### `costs`
 LLM cost report by (backend, model) over a window.
@@ -285,15 +295,21 @@ salesman costs --since-hours 168    # last 7 days
 Shows: calls, prompt/output/cache tokens, USD cost, avg + p95 latency.
 
 ### `audit`
-Verify the receipt chain. Loads the signing key, recomputes hashes,
-reports OK / FAIL per receipt.
+Verify each receipt's Ed25519 signature, reporting OK / FAIL per
+receipt. Under the v2 scheme the signature authenticates the FULL
+receipt (id, event_kind, signing_key_id, created_at, prev_hash, and
+payload) — not just the payload. `salesman audit-chain` additionally
+walks the prev_hash linkage and enforces per-key scoping (rejects a
+chain whose signing_key_id changes mid-stream).
 
 ```bash
 salesman audit --limit 100
 ```
 
-If any receipt shows BAD, the chain has been tampered with —
-investigate immediately.
+If any receipt shows BAD, that receipt has been tampered with —
+investigate immediately. Note the chain alone cannot detect
+end-of-chain truncation or full-table deletion; that needs an
+external anchor — see [`AUDIT_CHAIN.md`](AUDIT_CHAIN.md).
 
 ### `status`
 JSON health probe. Exits non-zero if any required component is down.
@@ -346,7 +362,7 @@ Stub. Will pause every active campaign in Phase 1.4.
 
 ### Daily
 
-- Read the 09:00 UTC summary email
+- Read the 07:00 summary email (emitted by `salesman-daily.timer`)
 - If anything looks off, `salesman status` + `salesman audit`
 
 ### Weekly

@@ -4,8 +4,8 @@
 # Steps:
 #   1. tar source (excluding target/, .git/)
 #   2. scp to VPS:/tmp
-#   3. ssh: extract → cargo build --release -p salesman-cli
-#   4. install /opt/salesman/bin/salesman (atomic via rename)
+#   3. ssh: extract → cargo build --release -p salesman-cli -p salesman-api
+#   4. install /opt/salesman/bin/{salesman,salesman-api} (atomic via rename)
 #   5. systemctl restart salesman-* units that are active
 #
 # Idempotent. Safe to re-run. Requires `ssh openclaw` working.
@@ -43,9 +43,13 @@ sudo -u salesman bash -lc '
         /tmp/salesman-deploy/PlausiDen-Salesman/ \
         /opt/salesman/build/PlausiDen-Salesman/
   cd /opt/salesman/build/PlausiDen-Salesman
-  cargo build --release -p salesman-cli 2>&1 | tail -3
+  cargo build --release -p salesman-cli -p salesman-api 2>&1 | tail -3
   install -m 755 target/release/salesman /tmp/salesman-new
   mv /tmp/salesman-new /opt/salesman/bin/salesman
+  # salesman-api is a long-running server (no --version flag); install it
+  # to the same dir the systemd unit invokes. Do not execute it here.
+  install -m 755 target/release/salesman-api /tmp/salesman-api-new
+  mv /tmp/salesman-api-new /opt/salesman/bin/salesman-api
   /opt/salesman/bin/salesman --version
 '
 rm -f /tmp/salesman-deploy.tar.gz

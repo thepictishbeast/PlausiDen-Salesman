@@ -97,14 +97,20 @@ them is a bug:
 4. Rate caps without the operator passing larger numbers explicitly.
 5. AI-detector run on every draft (even templated drafts get scored).
 6. Receipt signing on every send. (Failure to sign = failure to mark
-   as sent.)
+   as sent.) Signatures now authenticate the FULL receipt (scheme v2),
+   but end-of-chain truncation / full-table deletion still needs an
+   external anchor to detect — see `docs/AUDIT_CHAIN.md`.
 
 ## What the operator MUST do for the system to function
 
 1. Set sender identity (`SALESMAN_FROM_NAME`, `SALESMAN_FROM_EMAIL`,
    `SALESMAN_REPLY_TO`, `SALESMAN_LIST_UNSUBSCRIBE`,
    `SALESMAN_COMPLIANCE_FOOTER`).
-2. Set LLM keys (`ANTHROPIC_API_KEY` and/or `GEMINI_API_KEY`).
+2. Configure the LLM transport. The deployed default is the subscriber
+   CLI (`SALESMAN_LLM_TRANSPORT=cli`; see `docs/SUBSCRIBER_LOGIN.md`),
+   under which the API keys are ignored. The legacy/alternative path is
+   API keys (`ANTHROPIC_API_KEY` and/or `GEMINI_API_KEY`) with
+   `SALESMAN_LLM_TRANSPORT=api`.
 3. Pre-set Postgres signing key (auto-generated on first run if
    missing — but operator should back it up).
 4. Periodically: `salesman audit` to verify the receipt chain.
