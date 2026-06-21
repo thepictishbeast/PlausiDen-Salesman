@@ -25,8 +25,10 @@ To send legitimate B2B email you need, on the **sending domain**:
    receivers reject mail from domains without one).
 5. A **PTR (reverse DNS)** record on the sending IP pointing to the
    sending hostname (Vultr lets you set this in the control panel).
-6. A **`List-Unsubscribe`** header on every outbound message
-   (Salesman emits this when `SALESMAN_LIST_UNSUBSCRIBE` is set).
+6. A **`List-Unsubscribe`** header on every outbound message. Salesman
+   emits this if EITHER `SALESMAN_UNSUBSCRIBE_BASE_URL` (the RFC 8058
+   one-click minter — preferred) OR the static `SALESMAN_LIST_UNSUBSCRIBE`
+   is set.
 7. A **physical address** in the body (CAN-SPAM requires this).
 
 Once the records propagate (5 min to 24 h), register the domain with
@@ -66,21 +68,21 @@ Generate an Ed25519 or 2048-bit RSA keypair on the VPS:
 
 ```
 sudo apt install opendkim opendkim-tools
-sudo opendkim-genkey -t -s salesman -d outreach.plausiden.com
+sudo opendkim-genkey -t -s s1 -d outreach.plausiden.com
 ```
 
-This produces `salesman.private` (private key — protect with mode
-0600) and `salesman.txt` (public key, ready to drop into DNS). Add a
-TXT record at `salesman._domainkey.outreach.plausiden.com`:
+This produces `s1.private` (private key — protect with mode
+0600) and `s1.txt` (public key, ready to drop into DNS). Add a
+TXT record at `s1._domainkey.outreach.plausiden.com`:
 
 ```
-salesman._domainkey.outreach.plausiden.com.  3600  IN  TXT
+s1._domainkey.outreach.plausiden.com.  3600  IN  TXT
   "v=DKIM1; k=rsa; p=MIIBIjANBg...PUBLIC_KEY..."
 ```
 
 Configure your MTA (Postfix + opendkim, or whatever relay) to sign
-all outbound with the `salesman` selector. Salesman itself doesn't
-sign — the MTA in front does.
+all outbound with the `s1` selector (this matches the `dns-check`
+default selector). Salesman itself doesn't sign — the MTA in front does.
 
 ### Step 4 — set DMARC
 
@@ -117,17 +119,22 @@ address before accepting mail.
 
 ### Step 7 — `List-Unsubscribe` header
 
-Set `SALESMAN_LIST_UNSUBSCRIBE` in `/etc/salesman.env`. Use both:
+Salesman emits the `List-Unsubscribe` header if EITHER of these is set
+in `/etc/salesman.env`:
 
 ```
+# Preferred: RFC 8058 one-click minter (HTTPS, dynamic per-recipient URL)
+SALESMAN_UNSUBSCRIBE_BASE_URL=https://outreach.plausiden.com/unsubscribe
+
+# Or: a static List-Unsubscribe value (mailto: or https://)
 SALESMAN_LIST_UNSUBSCRIBE=mailto:unsubscribe@outreach.plausiden.com
 ```
 
-You ALSO need an HTTPS opt-out URL (per RFC 8058) for one-click
-unsubscribe. Salesman emits both `List-Unsubscribe` and
-`List-Unsubscribe-Post: List-Unsubscribe=One-Click`. Make sure the
-URL accepts a `POST` from any user-agent and immediately suppresses
-the recipient.
+Prefer `SALESMAN_UNSUBSCRIBE_BASE_URL`: when it's set, Salesman emits
+both `List-Unsubscribe` and `List-Unsubscribe-Post:
+List-Unsubscribe=One-Click` (per RFC 8058), and the minter route accepts
+a `POST` from any user-agent and immediately suppresses the recipient.
+Gmail / Yahoo bulk-sender rules effectively require this one-click path.
 
 ### Step 8 — physical address in the body
 
@@ -168,9 +175,17 @@ Before you flip `--for-real` for the first time:
 
 ## Operational hygiene
 
-- Monitor your bounce rate. If hard-bounce rate exceeds 3 %, pause
-  sends and investigate. Salesman auto-suppresses on bounce
-  (Phase 1.6) — but a domain-wide bounce flood is your problem.
+- Monitor your bounce rate. The **3 % figure is manual operator
+  guidance**, not an enforced auto-pause: nothing in Salesman watches a
+  bounce *rate* and halts sends. What IS automated:
+  - **Per-recipient:** a hard bounce auto-suppresses that single
+    recipient (they're added to the do-not-contact list).
+  - **Per-domain:** a count-based soft-quarantine — once a domain
+    accumulates ≥3 hard bounces in a rolling 24h window, further sends to
+    that domain are skipped (default; not a rate computation).
+
+  If hard-bounce volume climbs, pause sends and investigate by hand — a
+  domain-wide bounce flood is still your problem to catch.
 - Watch the optout rate. If > 1 % in any 7-day window, your
   prospect list isn't qualified. Stop sending and re-sift.
 - Rotate the DKIM key annually. Update DNS first (publish new

@@ -64,7 +64,7 @@ are an accepted v1 limitation; see docs/PII_REDACTION_BOUNDARY.md).
 
 ### Discovery
 - CSV ingest with column validation
-- Homepage scrape with 70 tech-stack fingerprints
+- Homepage scrape with 77 tech-stack fingerprints
 - Email pattern guesser (first.last, flast, etc.)
 - Brave Search adapter for query-based discovery
 
@@ -94,7 +94,7 @@ are an accepted v1 limitation; see docs/PII_REDACTION_BOUNDARY.md).
 - Sender warmup gradient (5/d days 1-3, 10 days 4-7, 25 days 8-14, 100+)
 - Per-recipient + per-domain rate caps
 - New-domain quota per batch (--ack-new-domains)
-- AI-detector ensemble gate before approval (8 heuristics, expandable)
+- AI-detector ensemble gate before approval (12 heuristics, expandable)
 - Test-send-to: redirect-one-message smoke test
 - Receipts: Ed25519-signed, hash-chained, replayable (truncation needs an external anchor — see docs/AUDIT_CHAIN.md)
 
@@ -127,10 +127,10 @@ are an accepted v1 limitation; see docs/PII_REDACTION_BOUNDARY.md).
 - All migrations, all secrets in `/etc/salesman.env` mode 0640
 
 ### Production deploy
-- 5 systemd units (api / inbox-poll / classify / audit-chain) with full
+- 6 systemd units (api / inbox-poll / classify / audit-chain / daily / doctor-watch) with full
   defence-in-depth lockdown (NoNewPrivileges, ProtectSystem=strict,
   PrivateTmp, MemoryDenyWriteExecute, ReadWritePaths-pinned)
-- /usr/local/bin scripts/deploy.sh
+- Binaries (`salesman` + `salesman-api`) installed to `/opt/salesman/bin/` by `scripts/deploy.sh`
 - CI: cargo check / test / fmt / clippy / detector corpus / template
   bench / docs sanity / CLI --help smoke / shellcheck
 

@@ -63,7 +63,7 @@ once at router-build time.
    refuse, repeat step 2.
 
 4. **Flip the transport in the salesman env file** at
-   `/etc/salesman/env` (or wherever `EnvironmentFile=` in the
+   `/etc/salesman.env` (or wherever `EnvironmentFile=` in the
    systemd unit points):
 
    ```bash
@@ -71,8 +71,10 @@ once at router-build time.
    # Optional overrides (defaults shown):
    # SALESMAN_CLAUDE_CLI_BIN=claude
    # SALESMAN_CLAUDE_CLI_ARGS=["--print"]
+   # SALESMAN_CLAUDE_CLI_MODEL=          # optional; passed to the claude CLI
    # SALESMAN_GEMINI_CLI_BIN=gemini
-   # SALESMAN_GEMINI_CLI_ARGS=["chat"]
+   # SALESMAN_GEMINI_CLI_ARGS=["--skip-trust","chat"]
+   # SALESMAN_GEMINI_CLI_MODEL=          # optional; passed to the gemini CLI
    # SALESMAN_LLM_CLI_TIMEOUT_SEC=180
    ```
 

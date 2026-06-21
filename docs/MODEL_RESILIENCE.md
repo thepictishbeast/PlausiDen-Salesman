@@ -31,41 +31,65 @@ Operators can therefore answer at any time:
 ### 2. Artifacts carry their provenance
 
 `touches` has a `produced_by` JSONB column that records `{ "backend":
-"gemini", "model": "gemini-2.5-flash", "via_fallback": true }` at the
+"gemini", "model": "gemini-1.5-flash", "via_fallback": false }` at the
 moment of draft creation. The web dashboard + CLI surface this.
 
-`via_fallback: true` means the primary preference (per `RouteHint`) was
-unavailable and the router degraded. The operator sees this in the
-review queue and can choose to re-draft when the primary recovers.
+`via_fallback` is a reserved field for the planned multi-backend
+fallback work (see Pass D below). Today it is hardcoded `false`
+everywhere — the router does not degrade to a secondary backend, so no
+artifact is ever produced "via fallback". When fallback ships, a `true`
+value will mean the primary preference (per `RouteHint`) was unavailable
+and the router degraded, and the operator will see this in the review
+queue and be able to re-draft when the primary recovers.
 
-### 3. Fallback chains are explicit, not silent
+### 3. One backend per hint — no automatic fallback (yet)
 
-`LlmRouter::chat_for(hint, purpose, req)` selects backends in
-preference order:
+`LlmRouter::chat_for(hint, purpose, req)` maps the `RouteHint` to
+**exactly one** registered backend and uses it. There is no fallback
+chain, no next-hop, and no automatic retry against a different backend:
+if the selected backend is not registered, the call errors out loudly
+rather than degrading to a secondary.
 
-| RouteHint        | Primary         | Fallback chain                    |
-|------------------|-----------------|------------------------------------|
-| DeepReasoning    | Claude Opus 4.7 | Claude Sonnet → Gemini Pro → fail |
-| Reasoning        | Claude Sonnet   | Gemini Pro → Gemini Flash → fail   |
-| Bulk             | Gemini Flash    | Claude Haiku → fail                |
-| LocalOnly        | LFI             | (no fallback — fail loud)          |
+| RouteHint        | Backend (default)                |
+|------------------|-----------------------------------|
+| DeepReasoning    | Claude (`claude-opus-4-8`)        |
+| Reasoning        | Claude (`claude-opus-4-8`)        |
+| Bulk             | Gemini (`gemini-1.5-flash`)       |
+| LocalOnly        | LFI (deferred — see ADR-0003)     |
 
-On a fallback hop, the call is recorded with the actual backend used
-and `via_fallback=true`. Operator sees the degradation in the cost
-report (`salesman costs --by purpose --since 1h` shows the model split).
+Both `default_reasoning` and `default_deep_reasoning` resolve to the
+**same** Claude backend — reasoning vs deep-reasoning do not currently
+select different models. The call is recorded with the backend actually
+used; because there is no fallback, `via_fallback` is always `false`
+(see §2).
 
-### 4. Sensitive ops gate on backend health
+Multi-backend fallback (primary → secondary on rate-limit / 5xx) is
+**planned but unbuilt** — see Pass D in the implementation map below.
 
-These commands refuse to run if any required backend is unavailable:
+### 4. Sensitive ops gate on backend registration
 
-- `salesman send-pending --for-real` — must have at least the campaign's
-  declared minimum-quality backend reachable. (Default: must have
-  Claude OR Gemini reachable; without either, exit non-zero.)
+These commands refuse to run if a required backend is not **registered**
+(i.e. its key/transport is configured and the backend was wired into the
+router). The gate is a *registration* check, not a reachability or
+health check — it does not probe whether the backend is actually
+answering, just that one exists:
+
+- `salesman send-pending --for-real` — must have at least one usable
+  backend registered. (Default: Claude OR Gemini registered; without
+  either, exit non-zero.)
 - `salesman draft` — same.
-- `salesman preflight --campaign X` — surfaces backend-health line in
-  the verdict; flips READY → BLOCKED on unhealthy.
+- `salesman preflight --campaign X` — surfaces a backend-registration
+  line in the verdict; flips READY → BLOCKED when no required backend is
+  registered.
 
 `salesman doctor` always runs and reports — it's the diagnostic.
+
+> Live health probing — distinguishing *registered* from *reachable /
+> rate-limited / degraded* — is **not built yet**. There is no
+> `backend_status()` accessor and no `Health` type today; both are part
+> of the planned Pass B work (see the implementation map below). Until
+> then, a registered-but-unreachable backend will pass these gates and
+> fail at call time.
 
 ### 5. Prompt freshness across model swaps
 
@@ -125,5 +149,5 @@ Even when 1-5 fail, the existing gates catch quality regression:
 
 ### Pass E — daily summary email + Slack webhook
 - Cron-fired summary mail at 09:00 local
-- `SALESMAN_ALERT_WEBHOOK` for Slack/Discord on positive replies
+- `SALESMAN_ALERT_WEBHOOK_URL` for Slack/Discord on positive replies
 - Formatter handles both targets via a small abstraction

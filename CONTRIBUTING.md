@@ -12,8 +12,13 @@ hard rules in CLAUDE.md are non-negotiable. See also
    pre-commit set locally.
 4. PR with the [PlausiDen-Meta CONTRIBUTOR_CHECKLIST](https://github.com/thepictishbeast/PlausiDen-Meta/blob/main/CONTRIBUTOR_CHECKLIST.md)
    filled in the description.
-5. CI runs on the self-hosted runner pool (registered in
-   [PlausiDen-Runner](https://github.com/thepictishbeast/PlausiDen-Runner)).
+5. CI runs on GitHub-hosted `ubuntu-latest` runners (see
+   [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+
+Before pushing, run the local quality gate [`scripts/check.sh`](scripts/check.sh)
+— it runs `cargo fmt --check`, `cargo clippy --workspace -- -D warnings`,
+`cargo test --workspace`, plus `cargo audit` / `cargo deny check` when those
+tools are installed.
 
 ## Don'ts
 

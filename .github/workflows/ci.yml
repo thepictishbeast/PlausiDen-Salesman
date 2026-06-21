@@ -1,5 +1,5 @@
 # CI for PlausiDen-Salesman.
-# Runs on the self-hosted runner pool (PlausiDen-Runner).
+# Runs on GitHub-hosted ubuntu-latest runners.
 
 name: CI
 
