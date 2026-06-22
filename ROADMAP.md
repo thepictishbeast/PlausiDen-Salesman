@@ -9,10 +9,10 @@
 
 | | What | Status |
 |---|---|---|
-| 1.0  | Workspace + 15 crates + types + LLM trait + agent loop | ✅ commit `bcfde5c` |
-| 1.0.5| Real Claude + Gemini wire formats + CLI auto-registers | ✅ commit `8b3e95e` |
-| 1.1  | Discovery (CSV + homepage) + state batch ops + CLI | ✅ commit `fc701bb` |
-| 1.2  | LLM-driven cold-email drafting + owner review queue | ✅ commit `4da2e39` |
+| 1.0  | Workspace + 15 crates + types + LLM trait + agent loop | ✅ SHIPPED |
+| 1.0.5| Real Claude + Gemini wire formats + CLI auto-registers | ✅ SHIPPED |
+| 1.1  | Discovery (CSV + homepage) + state batch ops + CLI | ✅ SHIPPED |
+| 1.2  | LLM-driven cold-email drafting + owner review queue | ✅ SHIPPED |
 | 1.3a | salesman-receipts crate (Ed25519 + hash chain)        | ✅ in-flight commit |
 | 1.3b | salesman-outreach crate (SMTP via lettre + RFC 8058)  | ✅ in-flight commit |
 

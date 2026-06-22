@@ -18,7 +18,7 @@ and `salesman_content::prospect_pii_terms`.
 | Email addresses | linear scan in `redact()` |
 | Phone numbers | conservative scan in `redact()` |
 | Company `display_name` (≥ 4 chars) | `prospect_pii_terms` → `extra_terms` |
-| `homepage` URL | `prospect_pii_terms` → `extra_terms` |
+| `homepage` URL (≥ 4 chars, like display_name) | `prospect_pii_terms` → `extra_terms` |
 
 **Deliberately NOT term-redacted:** free-text fields (`description`, interest
 tags, etc.). The model needs them to personalize, and `redact()` still strips

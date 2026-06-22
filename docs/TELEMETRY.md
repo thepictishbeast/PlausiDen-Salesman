@@ -24,6 +24,10 @@ Every inference call is persisted to `llm_calls` with backend, model, purpose,
 token counts, latency, and `cost_micro_usd`. Query it:
 - `salesman costs [--by model|purpose] [--since-hours N]` — spend breakdown.
 - `salesman campaign-costs [--since-hours N]` — per-campaign spend vs cap.
+  **Caveat:** per-campaign attribution depends on `related_id`/`related_kind`
+  tagging on `llm_calls`, which is NOT yet wired (same follow-up as
+  [MODEL_RESILIENCE.md](MODEL_RESILIENCE.md) §1), so per-campaign `calls`/`spent`
+  currently read 0.
 
 ### Provenance on every artifact (`produced_by`)
 Drafts/replies record `produced_by = { backend, model, via_fallback, purpose }`

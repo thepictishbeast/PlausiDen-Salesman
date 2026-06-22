@@ -22,7 +22,10 @@ pointing at a 404 — Gmail/Yahoo eventually flag the domain.
 
 ### B6 — Template review pass
 `templates/cold/*.toml` — 10 starter templates (5 segment-agnostic
-+ 5 segment-specific intros + a security follow-up). Tune
++ 5 segment-specific intros + a security follow-up).
+> **Update 2026-06:** template set expanded to 12 files (A/B intro
+> variants + extra follow-ups/value_add/breakup/referral_ask).
+Tune
 `subject_seed`, `body_seed`, `forbidden_phrases`, `mandatory_phrases`
 to your voice. The model uses these as STRUCTURE/TONE references,
 not literal substitution; the prospect-specific content stays

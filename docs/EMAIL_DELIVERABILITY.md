@@ -130,11 +130,17 @@ SALESMAN_UNSUBSCRIBE_BASE_URL=https://outreach.plausiden.com/unsubscribe
 SALESMAN_LIST_UNSUBSCRIBE=mailto:unsubscribe@outreach.plausiden.com
 ```
 
-Prefer `SALESMAN_UNSUBSCRIBE_BASE_URL`: when it's set, Salesman emits
-both `List-Unsubscribe` and `List-Unsubscribe-Post:
+Prefer `SALESMAN_UNSUBSCRIBE_BASE_URL`: when the minter is set, Salesman
+emits both `List-Unsubscribe` and `List-Unsubscribe-Post:
 List-Unsubscribe=One-Click` (per RFC 8058), and the minter route accepts
 a `POST` from any user-agent and immediately suppresses the recipient.
 Gmail / Yahoo bulk-sender rules effectively require this one-click path.
+
+`List-Unsubscribe-Post: List-Unsubscribe=One-Click` is emitted **only**
+when the minter is configured. A static `SALESMAN_LIST_UNSUBSCRIBE`
+fallback (mailto: or even an https value) gets the plain `List-Unsubscribe`
+header **only** — never the One-Click post header, because there's no
+guaranteed One-Click POST endpoint behind it (a POST-to-mailto is invalid).
 
 ### Step 8 — physical address in the body
 
@@ -166,7 +172,7 @@ Before you flip `--for-real` for the first time:
 - [ ] DMARC record live with `p=none` + `rua` reporting
 - [ ] PTR set on the Vultr IP
 - [ ] `postmaster@<domain>` mailbox exists and reads
-- [ ] `SALESMAN_LIST_UNSUBSCRIBE` set
+- [ ] `SALESMAN_LIST_UNSUBSCRIBE` **or** `SALESMAN_UNSUBSCRIBE_BASE_URL` set
 - [ ] `SALESMAN_COMPLIANCE_FOOTER` includes physical address
 - [ ] `SALESMAN_FROM_NAME` and `SALESMAN_FROM_EMAIL` set
 - [ ] mail-tester.com score ≥ 9/10 from a test send
@@ -182,7 +188,9 @@ Before you flip `--for-real` for the first time:
     recipient (they're added to the do-not-contact list).
   - **Per-domain:** a count-based soft-quarantine — once a domain
     accumulates ≥3 hard bounces in a rolling 24h window, further sends to
-    that domain are skipped (default; not a rate computation).
+    that domain are skipped (default; not a rate computation). The 24h
+    window is **hardcoded**; only the threshold (default 3) is tunable, via
+    `--domain-quarantine-threshold` (0 disables the quarantine).
 
   If hard-bounce volume climbs, pause sends and investigate by hand — a
   domain-wide bounce flood is still your problem to catch.

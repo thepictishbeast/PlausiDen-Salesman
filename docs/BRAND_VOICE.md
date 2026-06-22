@@ -37,10 +37,14 @@ SaaS vendor and we never sound like one.
 
 ## Enforced at send time (not by the template test)
 
-- **Identifiable sender.** A real sender identity + physical postal address ship
-  with the message (the sender is attributable; only prospect *data* is
-  sovereign — see `docs/OUTREACH_INFRA_HANDOFF.md`). This is enforced by the
-  runtime sender config at send time, not by the template voice test.
+- **Identifiable sender.** A real sender identity (`SALESMAN_FROM_NAME`,
+  required) ships and a compliance footer is appended to every body; the footer
+  SHOULD carry a physical postal address but its presence is operator-configured,
+  not validated (the address lives in free-text `SALESMAN_COMPLIANCE_FOOTER` with
+  a default fallback). The sender is attributable; only prospect *data* is
+  sovereign — see `docs/OUTREACH_INFRA_HANDOFF.md`. The sender identity is
+  enforced by the runtime sender config at send time, not by the template voice
+  test.
 
 ## Banned reflexes (the clichés we keep out)
 
@@ -48,7 +52,10 @@ SaaS vendor and we never sound like one.
 "robust security posture", "comprehensive solution", "next-generation",
 "single pane of glass", "synergy", "best-in-class", "cutting-edge",
 "revolutionary", "thought leadership". Per-template `forbidden_phrases` extend
-this list; the test enforces each template against its own list.
+this list; the test enforces each template against its own list. This reflex
+list is NOT enforced as a cross-template test floor — only each template's own
+`forbidden_phrases` is test-enforced (`template_voice.rs`), plus draft-time
+`salesman-detector` (`check_banned_phrases`) flags these at send time.
 
 ## How templates encode the voice
 

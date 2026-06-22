@@ -76,7 +76,7 @@ SALESMAN_UNSUBSCRIBE_HMAC_SECRET=$(openssl rand -hex 32)
 
 > **DO NOT skip this.** Without these two vars the salesman-api `/unsubscribe`
 > route is disabled and gmail/yahoo will progressively spam-bin the domain.
-> Run `salesman doctor` to verify; look for `[ unsub minter] OK`.
+> Run `salesman doctor` to verify; look for `[ unsub minter]  OK  base=https://…`.
 
 ### Required for inbox polling
 
@@ -234,11 +234,14 @@ It verifies:
 - prints 3 sample drafts for eyeball review
 
 > **On the detector threshold:** the default differs by command.
-> `approve` / `preflight` / `score` default to **0.6** — these are
+> `approve` / `approve-batch` / `score` default to **0.6** — these are
 > manual-gate commands where a human reviews each draft, so the bar is
-> looser. The bulk commands `fact-check` / `approve-all` default to a
-> **stricter 0.50**, because they act on many drafts at once with no
-> per-draft human review. Pass `--detector-threshold` to override either.
+> looser, and you can pass `--detector-threshold` to override them. The
+> bulk commands `fact-check` / `approve-all` default to a **stricter
+> 0.50** via `--threshold`, because they act on many drafts at once with
+> no per-draft human review. `preflight` also gates at **0.6**, but that
+> value is **fixed / non-overridable** — it has no `--detector-threshold`
+> flag, and passing one ERRORS.
 
 The verdict is one of READY / READY-WITH-WARNINGS / BLOCKED. Don't proceed
 until you see READY.
@@ -309,7 +312,7 @@ salesman inbox --campaign warmup-2026-04   # latest replies
 | `bounced=N` keeps growing | `salesman suppressions list --source bounce --limit 50` | Validate the prospect list; CSV may have typos |
 | Spam complaints in Gmail Postmaster Tools | dashboard shows it | Pause the campaign. `salesman queue-clear --campaign X --confirm-typed` |
 | 5.7.26 / 5.7.1 errors | `salesman doctor` | DNS is wrong: re-verify SPF / DKIM / DMARC dig. Run `salesman doctor`. |
-| Gmail shows mail in spam folder | check the user's "show original" → list-unsubscribe | Verify the minter is configured; `salesman doctor` `[ unsub minter]` |
+| Gmail shows mail in spam folder | check the user's "show original" → list-unsubscribe | Verify the minter is configured; `salesman doctor` should show `[ unsub minter]  OK  base=https://…` |
 | One bad prospect should never get mail | `salesman suppressions add --target user@example.com --reason "owner blocked"` | (idempotent; the next send loop skips) |
 
 ---
