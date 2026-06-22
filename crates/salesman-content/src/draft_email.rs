@@ -103,6 +103,12 @@ pub struct DraftColdEmailTool {
     sender_name: String,
     sender_company: String,
     sender_one_liner: String,
+    /// Optional cost attribution `(related_id, related_kind)` stamped on
+    /// the `llm_calls` row for every draft this tool produces — e.g.
+    /// `(campaign_uuid, "campaign")` so drafting cost rolls up per
+    /// campaign. `None` ⇒ unattributed (e.g. the generic agent loop,
+    /// where the campaign isn't known).
+    attribution: Option<(String, String)>,
 }
 
 impl DraftColdEmailTool {
@@ -119,7 +125,21 @@ impl DraftColdEmailTool {
             sender_name: sender_name.into(),
             sender_company: sender_company.into(),
             sender_one_liner: sender_one_liner.into(),
+            attribution: None,
         }
+    }
+
+    /// Attribute the cost of every draft this tool produces to a source
+    /// artifact (`related_id` + `related_kind`, e.g. a campaign UUID and
+    /// `"campaign"`). Used by the per-campaign `draft` command so its LLM
+    /// spend shows up in `campaign-costs`. Builder-style; chains off `new`.
+    pub fn with_attribution(
+        mut self,
+        related_id: impl Into<String>,
+        related_kind: impl Into<String>,
+    ) -> Self {
+        self.attribution = Some((related_id.into(), related_kind.into()));
+        self
     }
 }
 
@@ -261,9 +281,22 @@ impl Tool for DraftColdEmailTool {
                 temperature: 0.55 + (attempt as f32) * 0.05,
             };
 
+            // Attribute this draft's LLM cost to its source (e.g. the
+            // campaign) so per-campaign cost roll-ups work. `None` when the
+            // tool was built without attribution (the generic agent loop).
+            let (related_id, related_kind) = match &self.attribution {
+                Some((id, kind)) => (Some(id.clone()), Some(kind.clone())),
+                None => (None, None),
+            };
             let resp = self
                 .router
-                .chat_for(RouteHint::Reasoning, "draft_cold_email", req)
+                .chat_for_attributed(
+                    RouteHint::Reasoning,
+                    "draft_cold_email",
+                    related_id,
+                    related_kind,
+                    req,
+                )
                 .await?;
 
             // Telemetry on the redaction decision — counts + backend only,

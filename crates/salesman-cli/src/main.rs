@@ -1885,6 +1885,12 @@ async fn main() -> Result<()> {
                 "the PlausiDen team",
                 "PlausiDen",
                 "Plausible deniability + sovereign data tools for SMB security teams.",
+            )
+            // Attribute this campaign's drafting LLM spend to it, so
+            // `salesman campaign-costs` shows real per-campaign cost.
+            .with_attribution(
+                campaign_id.0.to_string(),
+                salesman_state::RELATED_KIND_CAMPAIGN,
             );
 
             let mut ok = 0u32;
