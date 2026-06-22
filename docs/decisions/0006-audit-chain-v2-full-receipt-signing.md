@@ -1,4 +1,4 @@
-# 6. Audit-chain v2: sign the full receipt
+# 0006 — Audit-chain v2: sign the full receipt
 
 Date: 2026-06-18
 Status: Accepted
@@ -42,4 +42,5 @@ dispatch by version instead of hard-breaking existing receipts.
   a real external anchor into the state layer is a tracked follow-up (see
   docs/AUDIT_CHAIN.md). Until then `verify_chain` (no anchor) cannot detect a
   cleanly-truncated tail — documented, not hidden.
-- Supersedes the v1 signing detail in the `salesman-receipts` module docs.
+- Superseded the v1 signing detail in the `salesman-receipts` module docs,
+  which now describe scheme v2 only.

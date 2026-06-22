@@ -222,9 +222,14 @@ impl SmtpSender {
         }
         if let Some(url) = &unsub_url {
             builder = builder.header(ListUnsubscribe(format!("<{url}>")));
-            builder = builder.header(ListUnsubscribePost(
-                "List-Unsubscribe=One-Click".to_string(),
-            ));
+            // RFC 8058 one-click requires an HTTPS POST endpoint, so only
+            // advertise One-Click when the per-recipient minter produced
+            // the URL (see `emit_one_click`).
+            if emit_one_click(Some(url), self.config.unsubscribe_tokens.is_some()) {
+                builder = builder.header(ListUnsubscribePost(
+                    "List-Unsubscribe=One-Click".to_string(),
+                ));
+            }
         }
 
         let msg = builder
@@ -340,9 +345,35 @@ fn escape_html(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
+/// Decide whether to emit the RFC 8058 `List-Unsubscribe-Post:
+/// List-Unsubscribe=One-Click` header.
+///
+/// One-Click is only coherent when the recipient also got a minted
+/// HTTPS unsubscribe URL (the per-recipient token minter). A static
+/// `SALESMAN_LIST_UNSUBSCRIBE` fallback may be a `mailto:` — which the
+/// `List-Unsubscribe` header can carry, but which must NOT advertise
+/// One-Click (a POST-to-mailto is meaningless and trips strict MTAs).
+fn emit_one_click(unsub_url: Option<&str>, has_minter: bool) -> bool {
+    unsub_url.is_some() && has_minter
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_click_post_only_with_minter() {
+        // Minted per-recipient URL + minter present → One-Click is coherent.
+        assert!(emit_one_click(Some("https://unsub.example/u/abc"), true));
+        // Static fallback (no minter), even an https value → NO One-Click,
+        // because we can't guarantee a One-Click POST endpoint.
+        assert!(!emit_one_click(Some("https://list.example/unsub"), false));
+        // Static mailto fallback → NO One-Click (POST-to-mailto is invalid).
+        assert!(!emit_one_click(Some("mailto:unsub@example.com"), false));
+        // No unsubscribe URL at all → no header, no One-Click.
+        assert!(!emit_one_click(None, true));
+        assert!(!emit_one_click(None, false));
+    }
 
     #[test]
     fn debug_redacts_the_smtp_password() {

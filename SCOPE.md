@@ -60,7 +60,7 @@ slice fast, layer defenses over time.**
 | Scheduling | **systemd timers** | daily / classify / audit-chain / inbox-poll / doctor-watch units on the VPS; Redis is a declared-but-unused dependency, not wired |
 | Mail send | **`lettre` crate** + direct SMTP | No SaaS dep; we control egress |
 | Reply ingest | Custom `imap` poller | Native Rust IMAP exists |
-| Web scraping | **PlausiDen-Crawler** (TS/Playwright) over a worker queue | Already exists |
+| Web scraping | **PlausiDen-Crawler** (TS/Playwright) over a worker queue — planned/external, NOT yet wired (in-repo scraping is Rust reqwest+scraper) | Planned external dep |
 | LLM/personalization | **LFI** (PlausiDen-AI) | Sovereignty requirement |
 | Browser automation (LinkedIn etc) | Crawler + per-account isolation, opt-in only | TOS surface; default OFF |
 | Container runtime | **Docker** (already on VPS) | Easy ops; isolates workers |

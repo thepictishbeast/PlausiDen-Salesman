@@ -7,6 +7,9 @@
 ## Owner-blocked / pending
 
 - **N1** — integrate Originality.ai (or GPTZero) AI-text detector API
+  (an EXTERNAL-API detector; distinct from — and additive to — the
+  shipped in-house heuristic `salesman-detector`, which already flags
+  AI-tell phrasing at draft time)
 - **O1** — scaffold PlausiDen-Mail repo + workspace
 - **O2** — Postfix + Dovecot config templates
 - **O3** — IMAP IDLE bridge → Salesman API webhook

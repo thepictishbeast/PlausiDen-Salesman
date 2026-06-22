@@ -25,6 +25,10 @@
          └────────────────────────────────────────────┘
 ```
 
+> **Note on "Crawler (TS/Playwright)":** this is a *planned EXTERNAL
+> dependency* (PlausiDen-Crawler RPC), not yet wired. In-repo scraping
+> is Rust (`reqwest` + `scraper`).
+
 ## Crate layout
 
 15 workspace crates, each a hardenable boundary (AVP-2 layering):
@@ -36,9 +40,9 @@ crates/
   salesman-llm/          # multi-LLM router (claude, gemini, future lfi); tool-use, cache, cost ledger
   salesman-tools/        # tool trait + registry; tools register declarative schemas the LLM invokes
   salesman-discovery/    # OSINT discovery: search APIs, site enumeration, tech detection, public-data adapters
-  salesman-osint/        # per-prospect intel: site scrape (crawler RPC), people enrichment, social signals
+  salesman-osint/        # per-prospect intel via public APIs: DNS, GDELT, GitHub, HackerNews, Wikipedia, Wayback.
   salesman-competitor/   # identify + characterize competitors per prospect; side-by-side angle
-  salesman-content/      # brand content: comparison pages, case studies, SEO articles, LinkedIn posts
+  salesman-content/      # brand content: comparison pages, case studies, SEO articles
   salesman-outreach/     # multi-channel sender; phase 1 SMTP via lettre + provenance tagging
   salesman-reply/        # IMAP reply ingest + classifier + state-machine update
   salesman-orchestrator/ # the agentic loop: plan → act → observe → reflect → next

@@ -5,6 +5,10 @@
 > not from recollection. Where a fact could not be verified from outside the
 > box, it is marked **RECONCILE ON-BOX** — confirm it yourself before relying on it.
 
+> **2026-06 update:** the PII-redaction hardening merged to main at 1b0373b
+> (2026-06-18) and the follow-ups (secret-leak fixes, audit-chain v2, docs
+> accuracy) at d887e14 (2026-06-21) post-date this handoff; see CHANGELOG.
+
 ## Runtime (VERIFIED via Vultr API 2026-06-02)
 
 - **OpenClaw VPS was re-provisioned 2026-05-31** as a NEW box. Current:

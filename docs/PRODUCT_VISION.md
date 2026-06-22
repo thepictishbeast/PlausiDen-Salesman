@@ -88,7 +88,7 @@ are an accepted v1 limitation; see docs/PII_REDACTION_BOUNDARY.md).
 ### Outreach
 - SMTP send via lettre with TLS
 - RFC 8058 one-click unsubscribe (HMAC-SHA256 per-recipient tokens)
-- Sync hard-bounce auto-suppress (5.1.1, 5.1.2, 5.1.6, 5.4.4, 5.7.27)
+- Sync hard-bounce auto-suppress (5.1.1, 5.1.2, 5.1.6, 5.1.10, 5.4.4, 5.7.27)
 - Async DSN bounce auto-suppress (RFC 3464 heuristic detection)
 - Per-domain bounce-rate quarantine (3 hard bounces / 24h → soft pause)
 - Sender warmup gradient (5/d days 1-3, 10 days 4-7, 25 days 8-14, 100+)

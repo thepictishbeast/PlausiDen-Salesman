@@ -6,7 +6,7 @@ common-failure-modes table, and pointers.
 
 For the underlying architecture, see `PLAN.md`. For the phased
 delivery order, see `ROADMAP.md`. For first-time deployment, see
-`docs/EMAIL_DELIVERABILITY.md`.
+`docs/DEPLOYMENT_GUIDE.md`.
 
 ## Quick reference — the daily workflow
 
@@ -25,7 +25,7 @@ salesman send-pending --campaign cyber-smb --for-real
 
 # Per-batch ops
 salesman classify-replies                           # if not on systemd timer
-salesman audit                                      # verify chain
+salesman audit                                      # verify recent individual receipts (use audit-chain for linkage)
 salesman summary --since-hours 24
 salesman costs   --since-hours 24
 salesman status                                     # JSON health
@@ -137,11 +137,14 @@ Approve runs the AI-detector gate first (default threshold 0.6).
 If detector flags the draft, refuses approval. Override with:
 
 > The 0.6 default is the **manual gate** shared by `approve` /
-> `preflight` / `score` — commands where a human reviews each draft. The
-> **bulk** commands `fact-check` / `approve-all` default to a stricter
-> **0.50**, since they act on many drafts at once with no per-draft human
-> review. There is no single "standard" threshold; it depends on the
-> command. Use `--detector-threshold` to override either.
+> `approve-batch` / `score` — commands where a human reviews each draft,
+> and where `--detector-threshold` lets you override. The **bulk**
+> commands `fact-check` / `approve-all` default to a stricter **0.50**
+> (via `--threshold`), since they act on many drafts at once with no
+> per-draft human review. `preflight` also gates at 0.6, but that value
+> is **fixed / non-overridable** — it has no `--detector-threshold` flag,
+> and passing one ERRORS. There is no single "standard" threshold; it
+> depends on the command.
 
 ```bash
 salesman approve --touch <uuid> \
@@ -282,8 +285,10 @@ Pipeline counts + N-hour activity.
 salesman summary --since-hours 24
 ```
 
-Emitted by `salesman-daily.timer` daily at 07:00
-(`OnCalendar=*-*-* 07:00:00`).
+Run daily at 07:00 (`OnCalendar=*-*-* 07:00:00`) by
+`salesman-daily.timer`, which executes `scripts/salesman-daily.sh`; the
+summary is written to STDOUT → `/opt/salesman/logs/daily.log` (the daily
+runbook). No email is sent.
 
 ### `costs`
 LLM cost report by (backend, model) over a window.
@@ -362,18 +367,24 @@ Stub. Will pause every active campaign in Phase 1.4.
 
 ### Daily
 
-- Read the 07:00 summary email (emitted by `salesman-daily.timer`)
+- Read the 07:00 summary written to `/opt/salesman/logs/daily.log` by
+  `salesman-daily.timer` (the daily runbook) — no email is sent
 - If anything looks off, `salesman status` + `salesman audit`
 
 ### Weekly
 
-- Take the Vultr snapshot when the snapshot-reminder email lands
+- Take the Vultr snapshot on a manual weekly cadence (set yourself a
+  recurring reminder — no email is sent)
 - Skim the cost report: `salesman costs --since-hours 168`
 - Review awaiting-approval queue: `salesman review --campaign <name>`
 
 ### Incident: SMTP failures
 
-- `journalctl -u salesman-classify --since 1h`
+- Inspect the send invocation's output/logs (the `send-pending` run, or
+  `journalctl -u salesman --since 1h` if sends run under a unit) and run
+  `salesman doctor --probe-smtp` to test the SMTP connection. (Don't look
+  at `salesman-classify` — that's the reply classifier, unrelated to
+  SMTP sends.)
 - Check Postmaster Tools dashboard for reputation flap
 - Pause sequence: `salesman halt --reason "investigating bounces"`
   (when implemented; for now manually `UPDATE campaigns SET status =

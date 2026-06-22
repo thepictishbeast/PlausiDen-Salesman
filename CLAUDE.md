@@ -15,7 +15,7 @@ automation. Ship the smallest useful slice fast, layer defenses over time.
 - Rust core (mirrors PlausiDen-Engine pattern)
 - Postgres on the VPS (not SQLite — concurrent workers); Redis is a declared dependency, not yet wired; scheduling via systemd timers
 - `lettre` for SMTP, `imap` for reply ingest
-- Crawler (TS/Playwright) for web scraping
+- Crawler (planned external dep — PlausiDen-Crawler TS/Playwright RPC, not yet wired; in-repo scraping is Rust reqwest+scraper)
 - Drafting/reply use SaaS Claude/Gemini, but prospect PII (email, phone, company name, homepage) is redacted before the call and rehydrated after (a redaction boundary; residual free-text names are an accepted v1 limitation). Local-only LFI is deferred — see ADR-0003 and `docs/PII_REDACTION_BOUNDARY.md`.
 
 ## Compute split

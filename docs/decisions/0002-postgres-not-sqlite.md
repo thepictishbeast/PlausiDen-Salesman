@@ -13,7 +13,8 @@ real ops cost. SQLite would have zero ops cost.
 
 ## Decision
 
-We use Postgres 16 as the single source of truth for state.
+We use Postgres 16+ (CI exercises migrations against postgres:17) as the
+single source of truth for state.
 Schema lives in `crates/salesman-state/migrations/*.sql` and is
 applied via `salesman migrate` (sqlx::migrate!).
 

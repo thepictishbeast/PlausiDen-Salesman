@@ -13,7 +13,7 @@ already paid for.
 | Transport | Source | Auth | Cost ledger |
 |---|---|---|---|
 | `api`  *(default)* | `salesman-llm::claude::ClaudeBackend` / `GeminiBackend` | API key in env | per-token, real $$ |
-| `cli`              | `salesman-llm::subscriber_cli::SubscriberCliBackend`     | subprocess-spawn the operator's `claude` / `gemini` CLI; auth lives in *that* CLI's credential store | always 0 µ-USD (sub is flat-fee); token counts are byte/4 estimates for capacity planning |
+| `cli`              | `salesman-llm::subscriber_cli::SubscriberCliBackend`     | subprocess-spawn the operator's `claude` / `gemini` CLI; auth lives in *that* CLI's credential store | records an ESTIMATED cost from the model rate table (token counts are byte/4 estimates); real marginal cost is 0 — the subscription is flat-fee |
 
 Selection is one env var on the box that runs `salesman`:
 
@@ -56,7 +56,7 @@ once at router-build time.
 
    ```bash
    sudo -iu salesman bash -lc 'echo "say one word" | claude --print'
-   sudo -iu salesman bash -lc 'echo "say one word" | gemini chat'
+   sudo -iu salesman bash -lc 'echo "say one word" | gemini --skip-trust chat'
    ```
 
    Each should print one short word. If they prompt for re-auth or
@@ -114,9 +114,10 @@ once at router-build time.
   ephemeral cache markers; the CLI path doesn't expose them. First-
   call latency is the same; the savings on cold-cache amortization
   don't apply.
-- **Real cost accounting.** Cost ledger always reads 0 µUSD because
-  the subscription is flat-fee. Use latency + token-count estimates
-  for capacity planning.
+- **Real cost accounting.** The ledger records an ESTIMATED cost from
+  the model rate table (token counts are byte/4 estimates); the real
+  marginal cost is 0 because the subscription is flat-fee. Use latency +
+  token-count estimates for capacity planning.
 
 ## Threat model + safety
 
@@ -151,8 +152,9 @@ left a stale or zero-balance API key in `/etc/salesman.env` from
 the API-path days, the CLI would silently bill the dev account
 instead of using the subscription. **The SubscriberCliBackend now
 scrubs `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` (and the related
-`ANTHROPIC_AUTH_TOKEN` / `GOOGLE_API_KEY` / `GOOGLE_GENAI_USE_*`
-vars) from the spawned subprocess's environment per-vendor**, so
+`ANTHROPIC_AUTH_TOKEN` / `GOOGLE_API_KEY` / `GOOGLE_GENAI_USE_VERTEXAI`
+/ `GOOGLE_GENAI_USE_GCA` vars) from the spawned subprocess's environment
+per-vendor**, so
 the CLI falls back to OAuth automatically. No operator action
 needed; documented for explainability.
 

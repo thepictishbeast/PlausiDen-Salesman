@@ -18,8 +18,8 @@ Adversaries:
 
 | Threat | Mitigation |
 |---|---|
-| External compromise | Salesman runs as dedicated unprivileged user; no SSH-as-salesman; secrets via EnvironmentFile `/etc/salesman.env` (mode 0640, `root:salesman`) — see DEPLOYMENT_GUIDE / OPERATOR_HANDBOOK |
-| Reply injection (HTML, URL parse, etc.) | Reply ingestion strips HTML, validates encoding, never executes inline scripts |
+| External compromise | Salesman runs as dedicated unprivileged user; no SSH-as-salesman; secrets via EnvironmentFile `/etc/salesman.env` (mode 0640, `root:salesman`) — see [docs/DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md) / [docs/OPERATOR_HANDBOOK.md](docs/OPERATOR_HANDBOOK.md) |
+| Reply injection (HTML, URL parse, etc.) | Reply ingestion is parse-only (mail-parser); HTML is never rendered or executed, and only the decoded plain-text body is read by the classifier/DSN detector. |
 | Supply chain | `cargo audit` + `cargo deny` in CI; vendored deps where critical. Drafting/reply use SaaS Claude/Gemini behind a PII redaction boundary (see note below) |
 | Operator mistake | Per-invocation send-cap default 25 (`--max-batch`), further limited by a sender-warmup curve (5/10/25/100 by domain age); confirmation prompt CLI-side; pre-merge audit on schema changes |
 | Spam / blacklist | Per-domain throttle, SPF/DKIM/DMARC enforced, monitor delivery + bounce rate, auto-skip (soft-quarantine) a domain with ≥3 hard bounces in 24h (configurable via `--domain-quarantine-threshold`) |

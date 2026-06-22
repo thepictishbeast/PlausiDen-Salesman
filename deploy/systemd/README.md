@@ -21,7 +21,11 @@ sudo systemctl enable --now salesman-api.service
 sudo systemctl enable --now salesman-inbox-poll.timer
 sudo systemctl enable --now salesman-classify.timer
 sudo systemctl enable --now salesman-audit-chain.timer
+sudo systemctl enable --now salesman-daily.timer        # 07:00 summary runbook
 ```
+
+(`salesman-doctor-watch.timer` is bootstrap-only — enable it during
+bring-up if you want the doctor-verdict webhook, not part of steady state.)
 
 ## Verify
 
@@ -34,7 +38,7 @@ journalctl -u salesman-audit-chain.service --since="2 days ago"
 
 ## Hardening
 
-Every unit applies a defence-in-depth lockdown:
+Most units apply a defence-in-depth lockdown:
 
 - `NoNewPrivileges=true` — no setuid escalation
 - `ProtectSystem=strict` — `/usr` and friends are read-only
@@ -52,10 +56,16 @@ Every unit applies a defence-in-depth lockdown:
 
 Adjust `ReadWritePaths` if you mount data elsewhere.
 
+> **Exception:** the two units that run shell scripts —
+> `salesman-daily.service` and `salesman-doctor-watch.service` —
+> intentionally OMIT `MemoryDenyWriteExecute=true`. The shell + the tools
+> they invoke need writable-executable memory, so W^X would break them.
+> Every other (Rust-binary) unit keeps it.
+
 ## Audit-chain timer
 
-The daily `audit-chain` walks the entire receipt hash chain and exits
-non-zero on the first break. A failing run shows up red in
+The daily `audit-chain` (`salesman-audit-chain.timer`, 03:30 UTC) walks
+the entire receipt hash chain and exits non-zero on the first break. A failing run shows up red in
 `systemctl status` and in `journalctl`. Hook a monitoring system
 (Sentinel, Prometheus alertmanager, or a Slack webhook) to alert on
 unit-failure.

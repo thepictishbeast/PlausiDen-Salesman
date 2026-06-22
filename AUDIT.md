@@ -25,13 +25,13 @@ sign-off should add an entry below this with reviewer name + date.
 | salesman-llm | OK | Trait `LlmBackend`, struct `LlmRouter`, two backends. All used. |
 | salesman-tools | OK | `Tool` trait + `ToolRegistry` + `EchoTool` (smoke-test only — kept for `salesman tools` CLI surface visibility). |
 | salesman-discovery | OK | 3 + 1 (Brave) tools, all called by CLI. `HomepageFetcher` used by both tool path and `enrich` CLI. |
-| salesman-content | OK | 5 tools + 1 site-renderer. All called. |
-| salesman-osint | OK | 3 tools (GDELT/GitHub/HN), all called. |
+| salesman-content | OK | 9 tools + 1 site-renderer. All called. |
+| salesman-osint | OK | 6 tools (GDELT/GitHub/HN/DNS/Wayback/Wikipedia), all called. |
 | salesman-outreach | OK | `SmtpSender` + helpers; all called by `send-pending`. |
 | salesman-reply | OK | `ImapPoller` + `ParsedReply`; all called by `inbox-poll`. |
 | salesman-orchestrator | NOTE | Currently agent-loop skeleton; `ToolRegistry::schemas()` is the only loop-tool plumbing. Will see heavier use when sequence scheduling drives the agent. |
-| salesman-cli | OK | 20 subcommands, all wired. |
-| salesman-api | OK | 7 routes, all wired. |
+| salesman-cli | OK | 58 subcommands, all wired. |
+| salesman-api | OK | 7 operator routes + 2 public unsubscribe routes, all wired. |
 | salesman-receipts | OK | `Signer`, `Receipt`, `verify_receipt`, `verify_chain`, helpers. All called by CLI + state + api. |
 | salesman-detector | OK | `score()`, `RiskScore`, `SignalHit`. All called by `approve` CLI. |
 | salesman-competitor | TODO | Empty placeholder. Land in P2.5. |

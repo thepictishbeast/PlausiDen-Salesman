@@ -16,17 +16,21 @@ model and silently shipping a worse-quality draft is a P0.
 
 ### 1. Every call is tagged
 
-Every LLM call records `(backend, model, purpose, related_id)` in the
+Every LLM call records `(backend, model, purpose)` in the
 `llm_calls` table. The `purpose` is the chat_for tag (e.g.
-`draft_cold_email`, `classify_reply`, `seo_meta`). The `related_id`
-points at the artifact (touch, reply, page) that the call produced.
+`draft_cold_email`, `classify_reply`, `seo_meta`). The
+`related_id`/`related_kind` columns are **reserved but NOT yet
+populated** — the sink never sets them, so they are always NULL today
+(like `via_fallback`, see §2). The per-artifact join (pointing a call at
+the touch, reply, or page it produced) is **planned, not wired**.
 
-Operators can therefore answer at any time:
+Once that tagging lands, operators will be able to answer at any time:
 
 > "Show me every draft produced by Gemini-Flash in the last 24h
 > while Anthropic was rate-limiting us."
 
-…via a single SQL query against `llm_calls` joined with `touches`.
+…via a single SQL query against `llm_calls` joined with `touches`. Until
+then the join key does not exist.
 
 ### 2. Artifacts carry their provenance
 
@@ -54,8 +58,9 @@ rather than degrading to a secondary.
 |------------------|-----------------------------------|
 | DeepReasoning    | Claude (`claude-opus-4-8`)        |
 | Reasoning        | Claude (`claude-opus-4-8`)        |
+| Grounded         | Gemini (`gemini-1.5-flash`)       |
 | Bulk             | Gemini (`gemini-1.5-flash`)       |
-| LocalOnly        | LFI (deferred — see ADR-0003)     |
+| Sovereign        | LFI (deferred — see ADR-0003)     |
 
 Both `default_reasoning` and `default_deep_reasoning` resolve to the
 **same** Claude backend — reasoning vs deep-reasoning do not currently
@@ -74,13 +79,15 @@ router). The gate is a *registration* check, not a reachability or
 health check — it does not probe whether the backend is actually
 answering, just that one exists:
 
-- `salesman send-pending --for-real` — must have at least one usable
-  backend registered. (Default: Claude OR Gemini registered; without
-  either, exit non-zero.)
-- `salesman draft` — same.
+- `salesman draft` — must have at least one usable backend registered.
+  (Default: Claude OR Gemini registered; without either, exit non-zero.)
 - `salesman preflight --campaign X` — surfaces a backend-registration
-  line in the verdict; flips READY → BLOCKED when no required backend is
+  line in the verdict; flips READY → BLOCKED when NO backend at all is
   registered.
+
+`salesman send-pending --for-real` has **no** backend-registration check
+of its own — that gate lives upstream on `draft` and `preflight`, which
+must have run (and passed) before there are approved drafts to send.
 
 `salesman doctor` always runs and reports — it's the diagnostic.
 

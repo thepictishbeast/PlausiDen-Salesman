@@ -19,8 +19,11 @@ specification-by-types we have.
 
 We will use Rust 2024 edition for every Salesman crate. No Python,
 no Go, no JavaScript even for tooling. Where we genuinely need a
-non-Rust component (Postfix, Caddy, opendkim) we treat it as a
-configured external dependency, not an embedded subsystem.
+non-Rust component (Postfix, Caddy, opendkim, or the PlausiDen-Crawler
+TS/Playwright RPC the rest of the docs rely on) we treat it as a
+configured external dependency, not an embedded subsystem. So "no
+JavaScript" governs in-repo code (which is 100% Rust) — it does not bar
+calling out to a non-Rust service over an RPC boundary.
 
 ## Consequences
 
