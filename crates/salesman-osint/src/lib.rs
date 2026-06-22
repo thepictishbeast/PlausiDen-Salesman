@@ -2,12 +2,15 @@
 //! basic homepage scrape.
 //!
 //! Each adapter wraps a free-or-cheap public API:
+//! - DNS info — A/MX/TXT/NS lookups + provider inference (no auth)
 //! - GDELT  — recent news articles mentioning a query (no auth)
 //! - GitHub — org / repo discovery (REST API; works unauthenticated
 //!   with strict rate limits, or with a PAT)
 //! - HackerNews — Algolia-backed search of stories + comments
+//! - Wayback — historical homepage snapshots (no auth)
+//! - Wikipedia — entity summary (no auth)
 //!
-//! All three are wrapped as `Tool`s so the agent loop can drive them.
+//! All six are wrapped as `Tool`s so the agent loop can drive them.
 //!
 //! BUG ASSUMPTION: every API has rate limits. We don't enforce a
 //! global throttle here — caller (orchestrator) is expected to
