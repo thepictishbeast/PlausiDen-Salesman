@@ -686,3 +686,80 @@ async fn rate_cap_per_domain_aggregates_mailboxes() {
             .ok();
     }
 }
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing at a writable Postgres"]
+async fn campaign_cost_attribution_round_trip() {
+    use salesman_llm::{BackendKind, LlmCallSink};
+    use salesman_state::RELATED_KIND_CAMPAIGN;
+
+    let url = std::env::var("TEST_DATABASE_URL")
+        .expect("set TEST_DATABASE_URL to a writable postgres URL");
+    let state = State::connect(&url).await.expect("connect");
+    let cid = state
+        .ensure_campaign(&unique_campaign_name(), "test", "test")
+        .await
+        .expect("ensure_campaign");
+
+    // An attributed call (related_kind=campaign, related_id=cid) — this is
+    // exactly what `draft` now records via the LlmCallSink. Goes through the
+    // string -> UUID parse in record_call.
+    LlmCallSink::record_call(
+        &state,
+        BackendKind::Claude,
+        "claude-opus-4-8".into(),
+        100,
+        50,
+        0,
+        12,
+        12_345,
+        "draft_cold_email".into(),
+        Some(cid.0.to_string()),
+        Some(RELATED_KIND_CAMPAIGN.to_string()),
+    )
+    .await;
+
+    // An UNattributed call (related_id None) that must NOT count toward the
+    // campaign — proves attribution actually scopes the roll-up.
+    LlmCallSink::record_call(
+        &state,
+        BackendKind::Gemini,
+        "gemini-1.5-flash".into(),
+        10,
+        5,
+        0,
+        3,
+        999,
+        "classify_reply".into(),
+        None,
+        None,
+    )
+    .await;
+
+    // campaign_cost_so_far sees only the attributed call's cost.
+    let so_far = state.campaign_cost_so_far(cid).await.expect("cost_so_far");
+    assert_eq!(so_far, 12_345, "only the attributed call counts");
+
+    // campaign_cost_summary rolls it up for this campaign (1 call).
+    let summary = state.campaign_cost_summary(24).await.expect("summary");
+    let row = summary
+        .iter()
+        .find(|r| r.id.0 == cid.0)
+        .expect("campaign present in cost summary");
+    assert_eq!(row.spent_micro_usd, 12_345);
+    assert_eq!(row.calls, 1);
+
+    // cleanup (the unattributed row has a NULL related_id, so it never
+    // matches any campaign roll-up — harmless to leave).
+    let pool = state.pool();
+    sqlx::query("DELETE FROM llm_calls WHERE related_id = $1")
+        .bind(cid.0)
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM campaigns WHERE id = $1")
+        .bind(cid.0)
+        .execute(pool)
+        .await
+        .ok();
+}

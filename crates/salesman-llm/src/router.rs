@@ -28,6 +28,12 @@ pub trait LlmCallSink: Send + Sync + std::fmt::Debug {
         latency_ms: u64,
         cost_micro_usd: u64,
         purpose: String,
+        // Optional attribution to the source artifact (e.g.
+        // `related_kind = "campaign"`, `related_id = <campaign uuid>`),
+        // so cost can be rolled up per campaign. Opaque strings here —
+        // the state layer parses/stores them. `None` ⇒ unattributed.
+        related_id: Option<String>,
+        related_kind: Option<String>,
     );
 }
 
@@ -136,11 +142,31 @@ impl LlmRouter {
     }
 
     /// Route + record-cost wrapper. `purpose` is recorded for audit
-    /// (e.g. "draft", "qualify", "classify").
+    /// (e.g. "draft", "qualify", "classify"). The recorded `llm_calls`
+    /// row is left unattributed — use [`chat_for_attributed`] when the
+    /// call belongs to a campaign and you want per-campaign cost roll-ups.
     pub async fn chat_for(
         &self,
         hint: RouteHint,
         purpose: impl Into<String>,
+        req: ChatRequest,
+    ) -> Result<ChatResponse> {
+        self.chat_for_attributed(hint, purpose, None, None, req)
+            .await
+    }
+
+    /// Like [`chat_for`], but attributes the recorded `llm_calls` row to
+    /// a source artifact via `related_kind` (e.g. `"campaign"`) and
+    /// `related_id` (e.g. the campaign UUID as a string). Attribution
+    /// MUST be supplied at the call site because the artifact often does
+    /// not exist yet at record time — there is nothing to back-fill from.
+    /// `None`/`None` records the call unattributed (same as `chat_for`).
+    pub async fn chat_for_attributed(
+        &self,
+        hint: RouteHint,
+        purpose: impl Into<String>,
+        related_id: Option<String>,
+        related_kind: Option<String>,
         req: ChatRequest,
     ) -> Result<ChatResponse> {
         let kind = match hint {
@@ -183,6 +209,8 @@ impl LlmRouter {
                 resp.usage.latency_ms,
                 cost,
                 purpose.into(),
+                related_id,
+                related_kind,
             )
             .await;
         }
@@ -237,6 +265,110 @@ fn apply_operator_brief(req: &mut ChatRequest, brief: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{FinishReason, Usage};
+    use std::sync::Mutex;
+
+    #[derive(Debug)]
+    struct MockBackend;
+
+    #[async_trait]
+    impl LlmBackend for MockBackend {
+        fn kind(&self) -> BackendKind {
+            BackendKind::Claude
+        }
+        fn model(&self) -> &str {
+            "mock-model"
+        }
+        async fn chat(&self, _req: ChatRequest) -> Result<ChatResponse> {
+            Ok(ChatResponse {
+                message: Message {
+                    role: Role::Assistant,
+                    content: "ok".into(),
+                    tool_calls: vec![],
+                    tool_results: vec![],
+                },
+                usage: Usage {
+                    prompt_tokens: 10,
+                    output_tokens: 5,
+                    cache_hit_tokens: 0,
+                    cost_micro_usd: 0,
+                    latency_ms: 1,
+                },
+                finish_reason: FinishReason::Stop,
+                backend: None,
+                model: None,
+                via_fallback: false,
+            })
+        }
+    }
+
+    /// `(related_id, related_kind, purpose)` of a recorded call.
+    type RecordedCall = (Option<String>, Option<String>, String);
+
+    /// Sink that captures the attribution of the last recorded call so a
+    /// test can assert attribution threading.
+    #[derive(Debug, Default)]
+    struct CapturingSink {
+        last: Mutex<Option<RecordedCall>>,
+    }
+
+    #[async_trait]
+    impl LlmCallSink for CapturingSink {
+        #[allow(clippy::too_many_arguments)]
+        async fn record_call(
+            &self,
+            _backend: BackendKind,
+            _model: String,
+            _prompt_tokens: u32,
+            _output_tokens: u32,
+            _cache_hit_tokens: u32,
+            _latency_ms: u64,
+            _cost_micro_usd: u64,
+            purpose: String,
+            related_id: Option<String>,
+            related_kind: Option<String>,
+        ) {
+            *self.last.lock().unwrap() = Some((related_id, related_kind, purpose));
+        }
+    }
+
+    #[tokio::test]
+    async fn attribution_flows_to_sink() {
+        let sink = Arc::new(CapturingSink::default());
+        let mut router = LlmRouter::new();
+        router.register(Arc::new(MockBackend));
+        let router = router.with_sink(sink.clone());
+
+        // chat_for_attributed threads related_id/related_kind through.
+        router
+            .chat_for_attributed(
+                RouteHint::Reasoning,
+                "draft_cold_email",
+                Some("camp-123".to_string()),
+                Some("campaign".to_string()),
+                req(vec![user("hi")]),
+            )
+            .await
+            .unwrap();
+        let (rid, rkind, purpose) = sink
+            .last
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("sink recorded a call");
+        assert_eq!(rid.as_deref(), Some("camp-123"));
+        assert_eq!(rkind.as_deref(), Some("campaign"));
+        assert_eq!(purpose, "draft_cold_email");
+
+        // plain chat_for records the call UNattributed.
+        router
+            .chat_for(RouteHint::Reasoning, "x", req(vec![user("hi")]))
+            .await
+            .unwrap();
+        let (rid, rkind, _) = sink.last.lock().unwrap().clone().unwrap();
+        assert_eq!(rid, None);
+        assert_eq!(rkind, None);
+    }
 
     fn req(msgs: Vec<Message>) -> ChatRequest {
         ChatRequest {

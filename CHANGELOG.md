@@ -11,6 +11,18 @@ All notable changes to PlausiDen-Salesman documented here.
 
 ## [Unreleased]
 
+### Added — per-campaign cost attribution
+- `salesman draft --campaign X` now attributes each `draft_cold_email` LLM
+  call to its campaign (`related_kind="campaign"` + campaign id, via
+  `LlmRouter::chat_for_attributed` and the shared
+  `salesman_state::RELATED_KIND_CAMPAIGN` constant), so
+  `salesman campaign-costs` reports real per-campaign drafting spend. Other
+  LLM paths remain unattributed (each spans campaigns per command — follow-up).
+
+### Fixed
+- RFC 8058 `List-Unsubscribe-Post: One-Click` is emitted only when the HTTPS
+  per-recipient minter is configured — not for a `mailto:` static fallback.
+
 ### Added — Tier 0 Foundation (on `main`, per ROADMAP.md)
 - 15-crate Cargo workspace; domain model + `FunnelState` machine + typed IDs
 - Multi-LLM router (Claude + Gemini wire formats) + subscriber-CLI transport

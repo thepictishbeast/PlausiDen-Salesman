@@ -15,9 +15,9 @@ use sqlx::postgres::{PgPool, PgPoolOptions};
 pub mod query;
 pub use query::{
     CampaignCostRow, CostSummaryRow, DueProspect, LlmCallRecord, PipelineSummary,
-    ProspectWithFacts, PurposeCostRow, ReplyNeedingResponse, ReplyRow, SequenceStepInput,
-    SuppressionRow, TemplateStat, ThreadTurn, TouchSummary, TriggerEventInsert, TriggerEventRow,
-    UnclassifiedReply,
+    ProspectWithFacts, PurposeCostRow, RELATED_KIND_CAMPAIGN, ReplyNeedingResponse, ReplyRow,
+    SequenceStepInput, SuppressionRow, TemplateStat, ThreadTurn, TouchSummary, TriggerEventInsert,
+    TriggerEventRow, UnclassifiedReply,
 };
 
 /// Thin wrapper around a Postgres connection pool. Created at startup,
@@ -63,7 +63,21 @@ impl LlmCallSink for State {
         latency_ms: u64,
         cost_micro_usd: u64,
         purpose: String,
+        related_id: Option<String>,
+        related_kind: Option<String>,
     ) {
+        // `related_id` arrives as an opaque string from the llm layer;
+        // the column is a UUID. Parse best-effort — a malformed id means
+        // the call is recorded UNattributed (logged), never a hard error,
+        // because cost logging must not fail the inference path.
+        let related_id = related_id.and_then(|s| match uuid::Uuid::parse_str(&s) {
+            Ok(u) => Some(u),
+            Err(e) => {
+                tracing::warn!(related_id = %s, "%e" = %e,
+                    "llm cost: related_id is not a UUID — recording unattributed");
+                None
+            }
+        });
         let rec = query::LlmCallRecord {
             backend: backend.to_string(),
             model,
@@ -73,8 +87,8 @@ impl LlmCallSink for State {
             latency_ms,
             cost_micro_usd,
             purpose,
-            related_id: None,
-            related_kind: None,
+            related_id,
+            related_kind,
         };
         if let Err(e) = self.insert_llm_call(&rec).await {
             tracing::warn!("%e" = %e, "llm cost ledger insert failed (non-fatal)");

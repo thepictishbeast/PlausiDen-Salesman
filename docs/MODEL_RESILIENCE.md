@@ -18,19 +18,23 @@ model and silently shipping a worse-quality draft is a P0.
 
 Every LLM call records `(backend, model, purpose)` in the
 `llm_calls` table. The `purpose` is the chat_for tag (e.g.
-`draft_cold_email`, `classify_reply`, `seo_meta`). The
-`related_id`/`related_kind` columns are **reserved but NOT yet
-populated** — the sink never sets them, so they are always NULL today
-(like `via_fallback`, see §2). The per-artifact join (pointing a call at
-the touch, reply, or page it produced) is **planned, not wired**.
+`draft_cold_email`, `classify_reply`, `seo_meta`).
 
-Once that tagging lands, operators will be able to answer at any time:
+The `related_id`/`related_kind` columns attribute a call to a source
+artifact so cost can be rolled up. They are **populated for the campaign
+drafting path**: `salesman draft --campaign X` records every
+`draft_cold_email` call with `related_kind = "campaign"` and
+`related_id = <campaign uuid>` (the tool calls `chat_for_attributed`;
+the kind string is the shared `salesman_state::RELATED_KIND_CAMPAIGN`
+constant the cost queries also use). That is what makes
+`salesman campaign-costs` show real per-campaign drafting spend.
 
-> "Show me every draft produced by Gemini-Flash in the last 24h
-> while Anthropic was rate-limiting us."
-
-…via a single SQL query against `llm_calls` joined with `touches`. Until
-then the join key does not exist.
+The other LLM paths (`classify_reply`, `draft_reply`, `angle_picker`,
+`extract_interests`, `geo`, `comparison_page`, `case_study`, `seo_meta`)
+are still recorded **unattributed** (both columns NULL) — each spans
+multiple campaigns per command and needs per-item, not per-command,
+attribution, which is a follow-up. A malformed `related_id` is logged
+and recorded unattributed; it never fails the inference call.
 
 ### 2. Artifacts carry their provenance
 

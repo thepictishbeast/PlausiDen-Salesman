@@ -12,6 +12,13 @@ use salesman_core::{
     TouchOutcome,
 };
 use salesman_receipts::Receipt;
+
+/// `llm_calls.related_kind` value used to attribute an LLM call's cost to
+/// a campaign. The single source of truth shared by the producer (the
+/// CLI passes this when drafting) and the cost roll-up queries below, so
+/// the two can never silently drift (a mismatch would make per-campaign
+/// cost report zero with no error).
+pub const RELATED_KIND_CAMPAIGN: &str = "campaign";
 use sqlx::Row;
 
 /// Fire a Postgres NOTIFY on the `salesman_event` channel. Any LISTEN-er
@@ -3013,15 +3020,16 @@ impl State {
     /// Sums llm_calls.cost_micro_usd where related_id = campaign_id
     /// and related_kind = 'campaign'.
     pub async fn campaign_cost_so_far(&self, campaign_id: CampaignId) -> Result<i64> {
-        let row = sqlx::query(
+        let sql = format!(
             "SELECT COALESCE(SUM(cost_micro_usd), 0)::BIGINT AS total
              FROM llm_calls
-             WHERE related_kind = 'campaign' AND related_id = $1",
-        )
-        .bind(campaign_id.0)
-        .fetch_one(self.pool())
-        .await
-        .map_err(|e| Error::Db(e.to_string()))?;
+             WHERE related_kind = '{RELATED_KIND_CAMPAIGN}' AND related_id = $1"
+        );
+        let row = sqlx::query(&sql)
+            .bind(campaign_id.0)
+            .fetch_one(self.pool())
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
         Ok(row.try_get::<i64, _>("total").unwrap_or(0))
     }
 
@@ -3066,22 +3074,23 @@ impl State {
     /// Per-campaign cost breakdown for the cost report. Joins through
     /// llm_calls.related_id where related_kind='campaign'.
     pub async fn campaign_cost_summary(&self, since_hours: i64) -> Result<Vec<CampaignCostRow>> {
-        let rows = sqlx::query(
+        let sql = format!(
             "SELECT c.id, c.name, c.status, c.cost_cap_micro_usd,
                     COALESCE(SUM(l.cost_micro_usd), 0)::BIGINT AS spent_micro_usd,
                     COUNT(l.id)::BIGINT AS calls
              FROM campaigns c
              LEFT JOIN llm_calls l
                ON l.related_id = c.id
-              AND l.related_kind = 'campaign'
+              AND l.related_kind = '{RELATED_KIND_CAMPAIGN}'
               AND l.created_at > NOW() - ($1 || ' hours')::INTERVAL
              GROUP BY c.id, c.name, c.status, c.cost_cap_micro_usd
-             ORDER BY spent_micro_usd DESC",
-        )
-        .bind(since_hours.to_string())
-        .fetch_all(self.pool())
-        .await
-        .map_err(|e| Error::Db(e.to_string()))?;
+             ORDER BY spent_micro_usd DESC"
+        );
+        let rows = sqlx::query(&sql)
+            .bind(since_hours.to_string())
+            .fetch_all(self.pool())
+            .await
+            .map_err(|e| Error::Db(e.to_string()))?;
         Ok(rows
             .into_iter()
             .map(|r| CampaignCostRow {
